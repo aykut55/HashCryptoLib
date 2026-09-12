@@ -17,6 +17,14 @@
 # Debugger Files
 *.pdb
 
+# Microsoft Visual Studio
+.vs/
+*.suo
+*.user
+Debug/
+Release/
+x64/
+
 # Compiled Dynamic libraries
 *.so
 *.dylib
@@ -67,3 +75,14 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Embarcadero C++Builder
+*.local
+*.identcache
+*.stat
+*.dsk
+*.tvsconfig
+__history/
+__recovery/
+Win32/
+Win64/

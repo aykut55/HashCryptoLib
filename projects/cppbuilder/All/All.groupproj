@@ -1,0 +1,40 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
+  <PropertyGroup>
+    <ProjectGuid>{716D36BB-FA22-4F5A-9A70-03F912CF1010}</ProjectGuid>
+  </PropertyGroup>
+  <ItemGroup>
+    <Projects Include="..\AppBuilder\AppBuilder.cbproj"><Dependencies/></Projects>
+    <Projects Include="..\AppRunner\AppRunner.cbproj"><Dependencies/></Projects>
+    <Projects Include="..\DllBuilder\DllBuilder.cbproj"><Dependencies/></Projects>
+    <Projects Include="..\DllRunner\DllRunner.cbproj"><Dependencies/></Projects>
+    <Projects Include="..\LibBuilder\LibBuilder.cbproj"><Dependencies/></Projects>
+    <Projects Include="..\LibRunner\LibRunner.cbproj"><Dependencies/></Projects>
+  </ItemGroup>
+  <ProjectExtensions>
+    <Borland.Personality>Default.Personality.12</Borland.Personality>
+    <Borland.ProjectType/>
+    <BorlandProject><Default.Personality/></BorlandProject>
+  </ProjectExtensions>
+  <Target Name="AppBuilder"><MSBuild Projects="..\AppBuilder\AppBuilder.cbproj"/></Target>
+  <Target Name="AppBuilder:Clean"><MSBuild Projects="..\AppBuilder\AppBuilder.cbproj" Targets="Clean"/></Target>
+  <Target Name="AppBuilder:Make"><MSBuild Projects="..\AppBuilder\AppBuilder.cbproj" Targets="Make"/></Target>
+  <Target Name="AppRunner"><MSBuild Projects="..\AppRunner\AppRunner.cbproj"/></Target>
+  <Target Name="AppRunner:Clean"><MSBuild Projects="..\AppRunner\AppRunner.cbproj" Targets="Clean"/></Target>
+  <Target Name="AppRunner:Make"><MSBuild Projects="..\AppRunner\AppRunner.cbproj" Targets="Make"/></Target>
+  <Target Name="DllBuilder"><MSBuild Projects="..\DllBuilder\DllBuilder.cbproj"/></Target>
+  <Target Name="DllBuilder:Clean"><MSBuild Projects="..\DllBuilder\DllBuilder.cbproj" Targets="Clean"/></Target>
+  <Target Name="DllBuilder:Make"><MSBuild Projects="..\DllBuilder\DllBuilder.cbproj" Targets="Make"/></Target>
+  <Target Name="DllRunner"><MSBuild Projects="..\DllRunner\DllRunner.cbproj"/></Target>
+  <Target Name="DllRunner:Clean"><MSBuild Projects="..\DllRunner\DllRunner.cbproj" Targets="Clean"/></Target>
+  <Target Name="DllRunner:Make"><MSBuild Projects="..\DllRunner\DllRunner.cbproj" Targets="Make"/></Target>
+  <Target Name="LibBuilder"><MSBuild Projects="..\LibBuilder\LibBuilder.cbproj"/></Target>
+  <Target Name="LibBuilder:Clean"><MSBuild Projects="..\LibBuilder\LibBuilder.cbproj" Targets="Clean"/></Target>
+  <Target Name="LibBuilder:Make"><MSBuild Projects="..\LibBuilder\LibBuilder.cbproj" Targets="Make"/></Target>
+  <Target Name="LibRunner"><MSBuild Projects="..\LibRunner\LibRunner.cbproj"/></Target>
+  <Target Name="LibRunner:Clean"><MSBuild Projects="..\LibRunner\LibRunner.cbproj" Targets="Clean"/></Target>
+  <Target Name="LibRunner:Make"><MSBuild Projects="..\LibRunner\LibRunner.cbproj" Targets="Make"/></Target>
+  <Target Name="Build"><CallTarget Targets="AppBuilder;AppRunner;DllBuilder;DllRunner;LibBuilder;LibRunner"/></Target>
+  <Target Name="Clean"><CallTarget Targets="AppBuilder:Clean;AppRunner:Clean;DllBuilder:Clean;DllRunner:Clean;LibBuilder:Clean;LibRunner:Clean"/></Target>
+  <Target Name="Make"><CallTarget Targets="AppBuilder:Make;AppRunner:Make;DllBuilder:Make;DllRunner:Make;LibBuilder:Make;LibRunner:Make"/></Target>
+  <Import Project="$(BDS)\Bin\CodeGear.Group.Targets"/>
+</Project>

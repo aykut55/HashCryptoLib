@@ -1,0 +1,83 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
+  <PropertyGroup>
+    <ProjectGuid>{716D36BB-FA22-4F5A-9A70-03F912CF1001}</ProjectGuid>
+    <ProjectVersion>18.0</ProjectVersion>
+    <ProjectType>CppConsoleApplication</ProjectType>
+    <FrameworkType>None</FrameworkType>
+    <AppType>Console</AppType>
+    <Base>True</Base>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <Platform Condition="'$(Platform)'==''">Win32</Platform>
+    <ProjectName Condition="'$(ProjectName)'==''">AppRunner</ProjectName>
+    <TargetedPlatforms>3</TargetedPlatforms>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
+    <Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
+    <Base_Win32>true</Base_Win32>
+    <CfgParent>Base</CfgParent>
+  </PropertyGroup>
+  <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Base)'=='true') or '$(Base_Win64)'!=''">
+    <Base_Win64>true</Base_Win64>
+    <CfgParent>Base</CfgParent>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_1)'!=''">
+    <Cfg_1>true</Cfg_1>
+    <CfgParent>Base</CfgParent>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_2)'!=''">
+    <Cfg_2>true</Cfg_2>
+    <CfgParent>Base</CfgParent>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Base)'!=''">
+    <SanitizedProjectName>AppRunner</SanitizedProjectName>
+    <CryptoApiSourceDir>$(MSBuildProjectDirectory)\..\..\..\src</CryptoApiSourceDir>
+    <IncludePath>$(CryptoApiSourceDir)\include;$(CryptoApiSourceDir);$(BDSINCLUDE)\windows\sdk;$(BDSINCLUDE)\windows\crtl;$(BDSINCLUDE)\windows\rtl;$(IncludePath)</IncludePath>
+    <BCC_IncludePath>$(CryptoApiSourceDir)\include;$(CryptoApiSourceDir);$(BCC_IncludePath)</BCC_IncludePath>
+    <IntermediateOutputDir>.\build\$(Platform)\$(Config)\obj</IntermediateOutputDir>
+    <FinalOutputDir>.\build\$(Platform)\$(Config)\bin</FinalOutputDir>
+    <Multithreaded>true</Multithreaded>
+    <DynamicRTL>false</DynamicRTL>
+    <UsePackages>false</UsePackages>
+    <NoVCL>true</NoVCL>
+    <BCC_UseClassicCompiler>true</BCC_UseClassicCompiler>
+    <BCC_PCHCache>false</BCC_PCHCache>
+    <_TCHARMapping>char</_TCHARMapping>
+    <VerInfo_IncludeVerInfo>false</VerInfo_IncludeVerInfo>
+    <Manifest_File>(None)</Manifest_File>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Cfg_1)'!=''">
+    <BCC_DisableOptimizations>true</BCC_DisableOptimizations>
+    <BCC_SourceDebuggingOn>true</BCC_SourceDebuggingOn>
+    <BCC_DebugLineNumbers>true</BCC_DebugLineNumbers>
+    <ILINK_FullDebugInfo>true</ILINK_FullDebugInfo>
+    <Defines>_DEBUG;$(Defines)</Defines>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Cfg_2)'!=''">
+    <BCC_DisableOptimizations>false</BCC_DisableOptimizations>
+    <BCC_OptimizeForSpeed>true</BCC_OptimizeForSpeed>
+    <Defines>NDEBUG;$(Defines)</Defines>
+  </PropertyGroup>
+  <ItemGroup>
+    <CppCompile Include="Main.cpp"><BuildOrder>0</BuildOrder></CppCompile>
+    <BuildConfiguration Include="Base"><Key>Base</Key></BuildConfiguration>
+    <BuildConfiguration Include="Debug"><Key>Cfg_1</Key><CfgParent>Base</CfgParent></BuildConfiguration>
+    <BuildConfiguration Include="Release"><Key>Cfg_2</Key><CfgParent>Base</CfgParent></BuildConfiguration>
+  </ItemGroup>
+  <ProjectExtensions>
+    <Borland.Personality>CPlusPlusBuilder.Personality.12</Borland.Personality>
+    <Borland.ProjectType>CppConsoleApplication</Borland.ProjectType>
+    <BorlandProject>
+      <CPlusPlusBuilder.Personality>
+        <Source><Source Name="MainSource">Main.cpp</Source></Source>
+      </CPlusPlusBuilder.Personality>
+      <Platforms>
+        <Platform value="Win32">True</Platform>
+        <Platform value="Win64">True</Platform>
+      </Platforms>
+    </BorlandProject>
+    <ProjectFileVersion>12</ProjectFileVersion>
+  </ProjectExtensions>
+  <Import Project="$(BDS)\Bin\CodeGear.Cpp.Targets"/>
+</Project>
