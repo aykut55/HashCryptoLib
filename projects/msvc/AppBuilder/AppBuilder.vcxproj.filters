@@ -60,16 +60,40 @@
     <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp">
       <Filter>src\Providers</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\AsymmetricCipher.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\LegacyCipher.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderFactory.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderRegistry.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.cpp">
       <Filter>src\Providers\MicrosoftProvider</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.cpp">
       <Filter>src\Providers\CryptoPPProvider</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.cpp">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProvider.cpp">
       <Filter>src\Providers\BotanProvider</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.cpp">
+      <Filter>src\Providers\BotanProvider</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.cpp">
+      <Filter>src\Providers\OpenSslProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.cpp">
       <Filter>src\Providers\OpenSslProvider</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp">
@@ -101,16 +125,43 @@
     <ClInclude Include="..\..\..\src\Providers\AeadCipher.h">
       <Filter>src\Providers</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\AsymmetricCipher.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\LegacyCipher.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderRegistry.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.h">
       <Filter>src\Providers\MicrosoftProvider</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.h">
       <Filter>src\Providers\CryptoPPProvider</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.h">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProvider.h">
       <Filter>src\Providers\BotanProvider</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.h">
+      <Filter>src\Providers\BotanProvider</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.h">
+      <Filter>src\Providers\OpenSslProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.h">
       <Filter>src\Providers\OpenSslProvider</Filter>
     </ClInclude>
   </ItemGroup>

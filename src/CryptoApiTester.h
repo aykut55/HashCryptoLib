@@ -41,6 +41,39 @@ public:
     // UTF-8 only; wide strings are not passed to it directly).
     int RunVectorWideStringDataTest(void);
 
+    // Exercises the provider/algorithm Factory pattern (CreateProviderFactory) directly: for each
+    // ProviderKind, requests a factory, uses it to construct an IAeadCipher/ILegacyCipher for one
+    // algorithm known to be supported and one known to be unsupported by that specific provider,
+    // and round-trips data purely through the abstract interfaces the factory returns.
+    int RunProviderFactoryTest(void);
+
+    // File-based analogue of RunEncryptDecryptFileTest, but driven entirely by the Factory
+    // pattern instead of CCryptoApi's fixed CMicrosoftProvider: for each ProviderKind, writes an
+    // input file, encrypts it to disk via IAeadCipher::EncryptChunked (with progress reporting,
+    // just like EncryptFile), decrypts it back from disk via DecryptChunked with a second cipher
+    // instance from the same factory, and compares bytes.
+    int RunProviderFactoryFileTest(void);
+
+    // In-memory analogues of RunEncryptDecryptStringTest/BufferTest/BytesTest, driven by the
+    // Factory pattern: for each ProviderKind, round-trips the same payload shape (text, binary
+    // buffer, raw bytes) purely through a factory-selected IAeadCipher (AES-256-GCM). Just like
+    // CCryptoApi's own EncryptBuffer/EncryptBytes (both thin wrappers over the same private
+    // helper), the Buffer and Bytes variants here share one internal round-trip routine too.
+    int RunProviderFactoryStringTest(void);
+
+    int RunProviderFactoryBufferTest(void);
+
+    int RunProviderFactoryBytesTest(void);
+
+    // Selects PROVIDER_MICROSOFT via the Factory and exercises every AeadAlgorithm/
+    // LegacySymmetricAlgorithm/AsymmetricAlgorithm value the enums define: algorithms Microsoft/
+    // CNG actually supports get a full round-trip (SetKey/Encrypt/Decrypt for symmetric,
+    // GenerateKeyPair/Encrypt/Decrypt for RSA), the rest are verified as correctly rejected by
+    // SupportsAeadAlgorithm/SupportsLegacyAlgorithm/SupportsAsymmetricAlgorithm. Nothing here is
+    // hardcoded to "GCM only" -- whatever CreateProviderFactory(PROVIDER_MICROSOFT) reports as
+    // supported gets tested.
+    int RunMicrosoftProviderAllAlgorithmsTest(void);
+
     // Demonstrates that CCryptoApi's blocking calls can be driven from a background thread the
     // caller owns; CCryptoApi itself stays synchronous by design (see Rules.md/Plan.md ABI notes).
     int RunEncryptDecryptFileTestNonBlocking(void);

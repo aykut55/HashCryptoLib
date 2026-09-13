@@ -2,6 +2,7 @@
 
 #include "CryptoApi.h"
 #include "Definitions/Definitions.h"
+#include "Providers/CryptoProviderRegistry.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -229,6 +230,402 @@ bool ConvertUtf8ToWide(const char* utf8Text, int utf8Size, std::wstring& wideTex
 
     wideText.resize(static_cast<std::size_t>(wideSize));
     return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8Text, utf8Size, &wideText[0], wideSize) > 0;
+}
+// -----------------------------------------------------------------------------
+
+bool RoundTripAeadViaFactory(const char* testName, ICryptoProviderFactory& factory, AeadAlgorithm algorithm,
+                             const char* providerName, const char* algorithmName, bool expectSupported)
+{
+    const bool supported = factory.SupportsAeadAlgorithm(algorithm);
+    if (supported != expectSupported)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] SupportsAeadAlgorithm=" << supported << " expected=" << expectSupported << std::endl;
+        return false;
+    }
+
+    if (!expectSupported)
+    {
+        std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+                  << "] correctly unsupported" << std::endl;
+        return true;
+    }
+
+    std::unique_ptr<IAeadCipher> cipher = factory.CreateAeadCipher(algorithm);
+    if (!cipher)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] CreateAeadCipher returned null" << std::endl;
+        return false;
+    }
+
+    const unsigned int keySize = cipher->GetKeySize();
+    const unsigned int nonceSize = cipher->GetNonceSize();
+    const unsigned int tagSize = cipher->GetTagSize();
+
+    std::vector<unsigned char> key(keySize), nonce(nonceSize > 0 ? nonceSize : 1), tag(tagSize);
+    for (unsigned int index = 0; index < keySize; ++index) key[index] = static_cast<unsigned char>(index * 7 + 1);
+    for (unsigned int index = 0; index < nonceSize; ++index) nonce[index] = static_cast<unsigned char>(index * 3 + 2);
+
+    if (!cipher->SetKey(key.data(), keySize))
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] SetKey" << std::endl;
+        return false;
+    }
+
+    const char* plaintext = "provider factory round trip payload";
+    const std::size_t len = std::strlen(plaintext);
+    std::vector<unsigned char> ciphertext(len), decrypted(len);
+
+    if (!cipher->Encrypt(nonceSize > 0 ? nonce.data() : nullptr, nonceSize,
+                         reinterpret_cast<const unsigned char*>(plaintext), static_cast<unsigned int>(len),
+                         ciphertext.data(), tag.data(), tagSize) ||
+        !cipher->Decrypt(nonceSize > 0 ? nonce.data() : nullptr, nonceSize,
+                         ciphertext.data(), static_cast<unsigned int>(len),
+                         tag.data(), tagSize, decrypted.data()) ||
+        std::memcmp(plaintext, decrypted.data(), len) != 0)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] round-trip mismatch" << std::endl;
+        return false;
+    }
+
+    std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+              << "] round-trip via factory" << std::endl;
+    return true;
+}
+// -----------------------------------------------------------------------------
+
+bool RoundTripLegacyViaFactory(const char* testName, ICryptoProviderFactory& factory, LegacySymmetricAlgorithm algorithm,
+                               const char* providerName, const char* algorithmName, bool expectSupported)
+{
+    const bool supported = factory.SupportsLegacyAlgorithm(algorithm);
+    if (supported != expectSupported)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] SupportsLegacyAlgorithm=" << supported << " expected=" << expectSupported << std::endl;
+        return false;
+    }
+
+    if (!expectSupported)
+    {
+        std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+                  << "] correctly unsupported" << std::endl;
+        return true;
+    }
+
+    std::unique_ptr<ILegacyCipher> cipher = factory.CreateLegacyCipher(algorithm);
+    if (!cipher)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] CreateLegacyCipher returned null" << std::endl;
+        return false;
+    }
+
+    const unsigned int keySize = cipher->GetKeySize();
+    const unsigned int ivSize = cipher->GetIvSize();
+
+    std::vector<unsigned char> key(keySize);
+    std::vector<unsigned char> iv(ivSize > 0 ? ivSize : 1);
+    for (unsigned int index = 0; index < keySize; ++index) key[index] = static_cast<unsigned char>(index * 5 + 3);
+    for (unsigned int index = 0; index < ivSize; ++index) iv[index] = static_cast<unsigned char>(index * 11 + 4);
+
+    if (!cipher->SetKey(key.data(), keySize))
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] SetKey" << std::endl;
+        return false;
+    }
+
+    const char* plaintext = "provider factory legacy round trip payload spanning blocks";
+    const unsigned int len = static_cast<unsigned int>(std::strlen(plaintext));
+
+    unsigned int requiredCt = 0;
+    cipher->Encrypt(ivSize > 0 ? iv.data() : nullptr, ivSize,
+                    reinterpret_cast<const unsigned char*>(plaintext), len, nullptr, 0, &requiredCt);
+
+    std::vector<unsigned char> ciphertext(requiredCt);
+    unsigned int ctSize = 0;
+    if (!cipher->Encrypt(ivSize > 0 ? iv.data() : nullptr, ivSize,
+                         reinterpret_cast<const unsigned char*>(plaintext), len,
+                         ciphertext.data(), requiredCt, &ctSize))
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] Encrypt" << std::endl;
+        return false;
+    }
+
+    // Stream ciphers (e.g. RC4) keep their keystream position on the underlying key handle, so
+    // Encrypt() advances it; re-keying with the same bytes before Decrypt() resets the stream
+    // back to position 0. Harmless no-op for block ciphers (CBC/ECB/CFB).
+    if (!cipher->SetKey(key.data(), keySize))
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] SetKey (pre-decrypt reset)" << std::endl;
+        return false;
+    }
+
+    unsigned int requiredPt = 0;
+    cipher->Decrypt(ivSize > 0 ? iv.data() : nullptr, ivSize, ciphertext.data(), ctSize, nullptr, 0, &requiredPt);
+
+    std::vector<unsigned char> decrypted(requiredPt);
+    unsigned int ptSize = 0;
+    if (!cipher->Decrypt(ivSize > 0 ? iv.data() : nullptr, ivSize, ciphertext.data(), ctSize,
+                         decrypted.data(), requiredPt, &ptSize) ||
+        ptSize != len || std::memcmp(plaintext, decrypted.data(), len) != 0)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] Decrypt/mismatch" << std::endl;
+        return false;
+    }
+
+    std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+              << "] round-trip via factory" << std::endl;
+    return true;
+}
+// -----------------------------------------------------------------------------
+
+bool RoundTripAsymmetricViaFactory(const char* testName, ICryptoProviderFactory& factory, AsymmetricAlgorithm algorithm,
+                                   const char* providerName, const char* algorithmName, bool expectSupported)
+{
+    const bool supported = factory.SupportsAsymmetricAlgorithm(algorithm);
+    if (supported != expectSupported)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] SupportsAsymmetricAlgorithm=" << supported << " expected=" << expectSupported << std::endl;
+        return false;
+    }
+
+    if (!expectSupported)
+    {
+        std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+                  << "] correctly unsupported" << std::endl;
+        return true;
+    }
+
+    std::unique_ptr<IAsymmetricCipher> cipher = factory.CreateAsymmetricCipher(algorithm);
+    if (!cipher)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] CreateAsymmetricCipher returned null" << std::endl;
+        return false;
+    }
+
+    if (!cipher->GenerateKeyPair())
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] GenerateKeyPair" << std::endl;
+        return false;
+    }
+
+    const unsigned int maxPlaintextSize = cipher->GetMaxPlaintextSize();
+    const unsigned int ciphertextSize = cipher->GetCiphertextSize();
+
+    const char* plaintext = "provider factory asymmetric round trip payload";
+    const unsigned int len = static_cast<unsigned int>(std::strlen(plaintext));
+    if (len > maxPlaintextSize)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] plaintext (" << len << " bytes) exceeds max (" << maxPlaintextSize << " bytes)" << std::endl;
+        return false;
+    }
+
+    std::vector<unsigned char> ciphertext(ciphertextSize);
+    unsigned int actualCiphertextSize = 0;
+    if (!cipher->Encrypt(reinterpret_cast<const unsigned char*>(plaintext), len,
+                        ciphertext.data(), ciphertextSize, &actualCiphertextSize))
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] Encrypt" << std::endl;
+        return false;
+    }
+
+    unsigned int requiredPlaintextSize = 0;
+    cipher->Decrypt(ciphertext.data(), actualCiphertextSize, nullptr, 0, &requiredPlaintextSize);
+
+    std::vector<unsigned char> decrypted(requiredPlaintextSize);
+    unsigned int decryptedSize = 0;
+    if (!cipher->Decrypt(ciphertext.data(), actualCiphertextSize, decrypted.data(), requiredPlaintextSize, &decryptedSize) ||
+        decryptedSize != len || std::memcmp(plaintext, decrypted.data(), len) != 0)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] Decrypt/mismatch" << std::endl;
+        return false;
+    }
+
+    std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+              << "] round-trip via factory (maxPlaintext=" << maxPlaintextSize << " ciphertext=" << actualCiphertextSize << ")" << std::endl;
+    return true;
+}
+// -----------------------------------------------------------------------------
+
+const char* AeadAlgorithmName(AeadAlgorithm algorithm)
+{
+    switch (algorithm)
+    {
+        case AEAD_AES_128_GCM:        return "AES-128-GCM";
+        case AEAD_AES_192_GCM:        return "AES-192-GCM";
+        case AEAD_AES_256_GCM:        return "AES-256-GCM";
+        case AEAD_AES_128_CCM:        return "AES-128-CCM";
+        case AEAD_AES_192_CCM:        return "AES-192-CCM";
+        case AEAD_AES_256_CCM:        return "AES-256-CCM";
+        case AEAD_AES_128_EAX:        return "AES-128-EAX";
+        case AEAD_AES_192_EAX:        return "AES-192-EAX";
+        case AEAD_AES_256_EAX:        return "AES-256-EAX";
+        case AEAD_AES_128_SIV:        return "AES-128-SIV";
+        case AEAD_AES_256_SIV:        return "AES-256-SIV";
+        case AEAD_AES_128_GCM_SIV:    return "AES-128-GCM-SIV";
+        case AEAD_AES_256_GCM_SIV:    return "AES-256-GCM-SIV";
+        case AEAD_CHACHA20_POLY1305:  return "ChaCha20-Poly1305";
+        case AEAD_TWOFISH_GCM:        return "Twofish-GCM";
+        case AEAD_SERPENT_GCM:        return "Serpent-GCM";
+        case AEAD_CAMELLIA_GCM:       return "Camellia-GCM";
+        default:                      return "?";
+    }
+}
+// -----------------------------------------------------------------------------
+
+const char* LegacyAlgorithmName(LegacySymmetricAlgorithm algorithm)
+{
+    switch (algorithm)
+    {
+        case LEGACY_AES_128_CBC: return "AES-128-CBC";
+        case LEGACY_AES_192_CBC: return "AES-192-CBC";
+        case LEGACY_AES_256_CBC: return "AES-256-CBC";
+        case LEGACY_AES_128_CTR: return "AES-128-CTR";
+        case LEGACY_AES_192_CTR: return "AES-192-CTR";
+        case LEGACY_AES_256_CTR: return "AES-256-CTR";
+        case LEGACY_AES_128_CFB: return "AES-128-CFB";
+        case LEGACY_AES_192_CFB: return "AES-192-CFB";
+        case LEGACY_AES_256_CFB: return "AES-256-CFB";
+        case LEGACY_AES_128_OFB: return "AES-128-OFB";
+        case LEGACY_AES_192_OFB: return "AES-192-OFB";
+        case LEGACY_AES_256_OFB: return "AES-256-OFB";
+        case LEGACY_AES_128_ECB: return "AES-128-ECB";
+        case LEGACY_AES_192_ECB: return "AES-192-ECB";
+        case LEGACY_AES_256_ECB: return "AES-256-ECB";
+        case LEGACY_RC2_CBC:     return "RC2-CBC";
+        case LEGACY_RC2_ECB:     return "RC2-ECB";
+        case LEGACY_DES_CBC:     return "DES-CBC";
+        case LEGACY_DES_ECB:     return "DES-ECB";
+        case LEGACY_3DES_CBC:    return "3DES-CBC";
+        case LEGACY_3DES_ECB:    return "3DES-ECB";
+        case LEGACY_RC4:         return "RC4";
+        default:                 return "?";
+    }
+}
+// -----------------------------------------------------------------------------
+
+const char* AsymmetricAlgorithmName(AsymmetricAlgorithm algorithm)
+{
+    switch (algorithm)
+    {
+        case ASYMMETRIC_RSA_1024: return "RSA-1024";
+        case ASYMMETRIC_RSA_2048: return "RSA-2048";
+        case ASYMMETRIC_RSA_3072: return "RSA-3072";
+        case ASYMMETRIC_RSA_4096: return "RSA-4096";
+        default:                  return "?";
+    }
+}
+// -----------------------------------------------------------------------------
+
+int RunProviderFactoryInMemoryRoundTrip(const char* testName, const unsigned char* inputData, std::size_t inputSize)
+{
+    struct ProviderCase
+    {
+        ProviderKind kind;
+        const char* name;
+    };
+
+    const ProviderCase providerCases[] =
+    {
+        { PROVIDER_MICROSOFT, "Microsoft" },
+        { PROVIDER_CRYPTOPP,  "CryptoPP" },
+        { PROVIDER_BOTAN,     "Botan" },
+        { PROVIDER_OPENSSL,   "OpenSSL" }
+    };
+
+    int failures = 0;
+
+    for (std::size_t caseIndex = 0; caseIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++caseIndex)
+    {
+        const ProviderKind kind = providerCases[caseIndex].kind;
+        const char* name = providerCases[caseIndex].name;
+
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+        std::unique_ptr<IAeadCipher> cipher = factory ? factory->CreateAeadCipher(AEAD_AES_256_GCM) : nullptr;
+        std::unique_ptr<IRandomSource> randomSource = factory ? factory->CreateRandomSource() : nullptr;
+        if (!cipher || !randomSource)
+        {
+            std::cout << testName << ": FAILED [" << name << "] CreateProviderFactory/CreateAeadCipher/CreateRandomSource" << std::endl;
+            ++failures;
+            continue;
+        }
+
+        const unsigned int keySize = cipher->GetKeySize();
+        const unsigned int chunkSize = 512u * 1024u; // smaller than inputSize so progress fires more than once
+
+        std::vector<unsigned char> key(keySize);
+        for (unsigned int index = 0; index < keySize; ++index) key[index] = static_cast<unsigned char>(index * 13 + 7);
+
+        if (!cipher->SetKey(key.data(), keySize))
+        {
+            std::cout << testName << ": FAILED [" << name << "] SetKey" << std::endl;
+            ++failures;
+            continue;
+        }
+
+        unsigned int requiredCiphertextSize = 0;
+        cipher->EncryptChunked(*randomSource, inputData, static_cast<unsigned int>(inputSize), chunkSize,
+                               nullptr, 0, &requiredCiphertextSize, nullptr, nullptr);
+
+        std::vector<unsigned char> ciphertext(requiredCiphertextSize);
+        unsigned int ciphertextSize = 0;
+        if (!cipher->EncryptChunked(*randomSource, inputData, static_cast<unsigned int>(inputSize), chunkSize,
+                                    ciphertext.data(), requiredCiphertextSize, &ciphertextSize,
+                                    &PrintFileProgress, nullptr))
+        {
+            std::cout << testName << ": FAILED [" << name << "] EncryptChunked" << std::endl;
+            ++failures;
+            continue;
+        }
+
+        std::cout << std::endl;
+
+        unsigned int requiredPlaintextSize = 0;
+        cipher->DecryptChunked(ciphertext.data(), ciphertextSize, nullptr, 0, &requiredPlaintextSize, nullptr, nullptr);
+
+        std::vector<unsigned char> decrypted(requiredPlaintextSize);
+        unsigned int decryptedSize = 0;
+        if (!cipher->DecryptChunked(ciphertext.data(), ciphertextSize, decrypted.data(), requiredPlaintextSize, &decryptedSize,
+                                    &PrintFileProgress, nullptr))
+        {
+            std::cout << testName << ": FAILED [" << name << "] DecryptChunked" << std::endl;
+            ++failures;
+            continue;
+        }
+
+        std::cout << std::endl;
+
+        if (decryptedSize != inputSize || std::memcmp(inputData, decrypted.data(), inputSize) != 0)
+        {
+            std::cout << testName << ": FAILED [" << name << "] round-trip mismatch" << std::endl;
+            ++failures;
+            continue;
+        }
+
+        std::cout << testName << ": PASSED [" << name << "/AES-256-GCM] (" << inputSize << " bytes)" << std::endl;
+    }
+
+    if (failures != 0)
+    {
+        std::cout << testName << ": " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+
+    std::cout << testName << ": PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+    return NO_ERROR;
 }
 // -----------------------------------------------------------------------------
 
@@ -1269,6 +1666,416 @@ int CCryptoApiTester::RunVectorWideStringDataTest(void)
         }
 
         std::cout << "RunVectorWideStringDataTest: PASSED (" << inputWideStrings.size() << " wide strings)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryTest(void)
+{
+    try
+    {
+        int failures = 0;
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_MICROSOFT);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryTest: FAILED CreateProviderFactory(PROVIDER_MICROSOFT)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_256_GCM, "Microsoft", "AES-256-GCM", true)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_CBC, "Microsoft", "AES-256-CBC", true)) ++failures;
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_TWOFISH_GCM, "Microsoft", "Twofish-GCM", false)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_CTR, "Microsoft", "AES-256-CTR", false)) ++failures;
+            }
+        }
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_CRYPTOPP);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryTest: FAILED CreateProviderFactory(PROVIDER_CRYPTOPP)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_256_GCM, "CryptoPP", "AES-256-GCM", true)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_CBC, "CryptoPP", "AES-256-CBC", true)) ++failures;
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_128_SIV, "CryptoPP", "AES-128-SIV", false)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_CTR, "CryptoPP", "AES-256-CTR", true)) ++failures;
+            }
+        }
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_BOTAN);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryTest: FAILED CreateProviderFactory(PROVIDER_BOTAN)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_256_GCM, "Botan", "AES-256-GCM", true)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_CBC, "Botan", "AES-256-CBC", true)) ++failures;
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_128_SIV, "Botan", "AES-128-SIV", true)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_ECB, "Botan", "AES-256-ECB", false)) ++failures;
+            }
+        }
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_OPENSSL);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryTest: FAILED CreateProviderFactory(PROVIDER_OPENSSL)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_256_GCM, "OpenSSL", "AES-256-GCM", true)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_CBC, "OpenSSL", "AES-256-CBC", true)) ++failures;
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_128_EAX, "OpenSSL", "AES-128-EAX", false)) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_ECB, "OpenSSL", "AES-256-ECB", true)) ++failures;
+            }
+        }
+
+        if (failures != 0)
+        {
+            std::cout << "RunProviderFactoryTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunProviderFactoryTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryFileTest(void)
+{
+    try
+    {
+        struct ProviderCase
+        {
+            ProviderKind kind;
+            const char* name;
+        };
+
+        const ProviderCase providerCases[] =
+        {
+            { PROVIDER_MICROSOFT, "Microsoft" },
+            { PROVIDER_CRYPTOPP,  "CryptoPP" },
+            { PROVIDER_BOTAN,     "Botan" },
+            { PROVIDER_OPENSSL,   "OpenSSL" }
+        };
+
+        const char* inputFilePath = "cryptoapi_factory_filetest_in.bin";
+        const char* encryptedFilePath = "cryptoapi_factory_filetest_enc.bin";
+        const char* decryptedFilePath = "cryptoapi_factory_filetest_out.bin";
+
+        std::vector<unsigned char> inputData(2 * 1048576 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int failures = 0;
+
+        for (std::size_t caseIndex = 0; caseIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++caseIndex)
+        {
+            const ProviderKind kind = providerCases[caseIndex].kind;
+            const char* name = providerCases[caseIndex].name;
+
+            if (!WriteTesterFile(inputFilePath, inputData))
+            {
+                std::cout << "RunProviderFactoryFileTest: FAILED [" << name << "] write input file" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+            std::unique_ptr<IAeadCipher> encryptCipher = factory ? factory->CreateAeadCipher(AEAD_AES_256_GCM) : nullptr;
+            std::unique_ptr<IRandomSource> randomSource = factory ? factory->CreateRandomSource() : nullptr;
+            if (!encryptCipher || !randomSource)
+            {
+                std::cout << "RunProviderFactoryFileTest: FAILED [" << name << "] CreateProviderFactory/CreateAeadCipher/CreateRandomSource" << std::endl;
+                std::remove(inputFilePath);
+                ++failures;
+                continue;
+            }
+
+            const unsigned int keySize = encryptCipher->GetKeySize();
+            const unsigned int chunkSize = 512u * 1024u; // deliberately smaller than inputData.size() so PrintFileProgress fires more than once
+
+            std::vector<unsigned char> key(keySize);
+            for (unsigned int index = 0; index < keySize; ++index) key[index] = static_cast<unsigned char>(index * 13 + 7);
+
+            if (!encryptCipher->SetKey(key.data(), keySize))
+            {
+                std::cout << "RunProviderFactoryFileTest: FAILED [" << name << "] SetKey (encrypt)" << std::endl;
+                std::remove(inputFilePath);
+                ++failures;
+                continue;
+            }
+
+            unsigned int requiredEncryptSize = 0;
+            encryptCipher->EncryptChunked(*randomSource, &inputData[0], static_cast<unsigned int>(inputData.size()), chunkSize,
+                                          nullptr, 0, &requiredEncryptSize, nullptr, nullptr);
+
+            std::vector<unsigned char> encryptedFileData(requiredEncryptSize);
+            unsigned int encryptedSize = 0;
+            if (!encryptCipher->EncryptChunked(*randomSource, &inputData[0], static_cast<unsigned int>(inputData.size()), chunkSize,
+                                               encryptedFileData.data(), requiredEncryptSize, &encryptedSize,
+                                               &PrintFileProgress, nullptr) ||
+                !WriteTesterFile(encryptedFilePath, encryptedFileData))
+            {
+                std::cout << "RunProviderFactoryFileTest: FAILED [" << name << "] EncryptChunked/write encrypted file" << std::endl;
+                std::remove(inputFilePath);
+                ++failures;
+                continue;
+            }
+
+            std::cout << std::endl;
+
+            // Decrypt side: a fresh cipher instance from the same factory/algorithm, exactly as a
+            // separate decrypt run (e.g. a different process later) would do it. The record stream
+            // is self-delimited, so DecryptChunked needs no chunkSize argument.
+            std::unique_ptr<IAeadCipher> decryptCipher = factory->CreateAeadCipher(AEAD_AES_256_GCM);
+            std::vector<unsigned char> encryptedFileReadBack;
+            if (!decryptCipher || !decryptCipher->SetKey(key.data(), keySize) ||
+                !ReadTesterFile(encryptedFilePath, encryptedFileReadBack))
+            {
+                std::cout << "RunProviderFactoryFileTest: FAILED [" << name << "] read encrypted file / SetKey" << std::endl;
+                std::remove(inputFilePath);
+                std::remove(encryptedFilePath);
+                ++failures;
+                continue;
+            }
+
+            unsigned int requiredDecryptSize = 0;
+            decryptCipher->DecryptChunked(&encryptedFileReadBack[0], static_cast<unsigned int>(encryptedFileReadBack.size()),
+                                          nullptr, 0, &requiredDecryptSize, nullptr, nullptr);
+
+            std::vector<unsigned char> decryptedData(requiredDecryptSize);
+            unsigned int decryptedSize = 0;
+            if (!decryptCipher->DecryptChunked(&encryptedFileReadBack[0], static_cast<unsigned int>(encryptedFileReadBack.size()),
+                                               decryptedData.data(), requiredDecryptSize, &decryptedSize,
+                                               &PrintFileProgress, nullptr) ||
+                !WriteTesterFile(decryptedFilePath, decryptedData))
+            {
+                std::cout << "RunProviderFactoryFileTest: FAILED [" << name << "] DecryptChunked/tag verify" << std::endl;
+                std::remove(inputFilePath);
+                std::remove(encryptedFilePath);
+                ++failures;
+                continue;
+            }
+
+            std::cout << std::endl;
+
+            std::vector<unsigned char> outputData;
+            const bool readOk = ReadTesterFile(decryptedFilePath, outputData);
+
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+
+            if (!readOk || outputData.size() != inputData.size() ||
+                std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0)
+            {
+                std::cout << "RunProviderFactoryFileTest: FAILED [" << name << "] content mismatch" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::cout << "RunProviderFactoryFileTest: PASSED [" << name << "/AES-256-GCM] ("
+                      << inputData.size() << " bytes)" << std::endl;
+        }
+
+        if (failures != 0)
+        {
+            std::cout << "RunProviderFactoryFileTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunProviderFactoryFileTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryStringTest(void)
+{
+    try
+    {
+        std::vector<char> inputText(2 * 1048576 + 321);
+        for (std::size_t index = 0; index < inputText.size(); ++index)
+        {
+            inputText[index] = static_cast<char>('A' + (index % 26));
+        }
+
+        return RunProviderFactoryInMemoryRoundTrip("RunProviderFactoryStringTest",
+                                                   reinterpret_cast<const unsigned char*>(&inputText[0]),
+                                                   inputText.size());
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryBufferTest(void)
+{
+    try
+    {
+        std::vector<unsigned char> inputBuffer(2 * 1048576 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        return RunProviderFactoryInMemoryRoundTrip("RunProviderFactoryBufferTest", &inputBuffer[0], inputBuffer.size());
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryBytesTest(void)
+{
+    try
+    {
+        std::vector<unsigned char> inputBuffer(2 * 1048576 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        return RunProviderFactoryInMemoryRoundTrip("RunProviderFactoryBytesTest", &inputBuffer[0], inputBuffer.size());
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunMicrosoftProviderAllAlgorithmsTest(void)
+{
+    try
+    {
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_MICROSOFT);
+        if (!factory)
+        {
+            std::cout << "RunMicrosoftProviderAllAlgorithmsTest: FAILED CreateProviderFactory(PROVIDER_MICROSOFT)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const AeadAlgorithm aeadAlgorithms[] =
+        {
+            AEAD_AES_128_GCM, AEAD_AES_192_GCM, AEAD_AES_256_GCM,
+            AEAD_AES_128_CCM, AEAD_AES_192_CCM, AEAD_AES_256_CCM,
+            AEAD_AES_128_EAX, AEAD_AES_192_EAX, AEAD_AES_256_EAX,
+            AEAD_AES_128_SIV, AEAD_AES_256_SIV,
+            AEAD_AES_128_GCM_SIV, AEAD_AES_256_GCM_SIV,
+            AEAD_CHACHA20_POLY1305, AEAD_TWOFISH_GCM, AEAD_SERPENT_GCM, AEAD_CAMELLIA_GCM
+        };
+
+        const LegacySymmetricAlgorithm legacyAlgorithms[] =
+        {
+            LEGACY_AES_128_CBC, LEGACY_AES_192_CBC, LEGACY_AES_256_CBC,
+            LEGACY_AES_128_CTR, LEGACY_AES_192_CTR, LEGACY_AES_256_CTR,
+            LEGACY_AES_128_CFB, LEGACY_AES_192_CFB, LEGACY_AES_256_CFB,
+            LEGACY_AES_128_OFB, LEGACY_AES_192_OFB, LEGACY_AES_256_OFB,
+            LEGACY_AES_128_ECB, LEGACY_AES_192_ECB, LEGACY_AES_256_ECB,
+            LEGACY_RC2_CBC, LEGACY_RC2_ECB,
+            LEGACY_DES_CBC, LEGACY_DES_ECB,
+            LEGACY_3DES_CBC, LEGACY_3DES_ECB,
+            LEGACY_RC4
+        };
+
+        const AsymmetricAlgorithm asymmetricAlgorithms[] =
+        {
+            ASYMMETRIC_RSA_1024, ASYMMETRIC_RSA_2048, ASYMMETRIC_RSA_3072, ASYMMETRIC_RSA_4096
+        };
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t index = 0; index < sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]); ++index)
+        {
+            const AeadAlgorithm algorithm = aeadAlgorithms[index];
+            const bool supported = factory->SupportsAeadAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAeadViaFactory("RunMicrosoftProviderAllAlgorithmsTest", *factory, algorithm, "Microsoft", AeadAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]); ++index)
+        {
+            const LegacySymmetricAlgorithm algorithm = legacyAlgorithms[index];
+            const bool supported = factory->SupportsLegacyAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripLegacyViaFactory("RunMicrosoftProviderAllAlgorithmsTest", *factory, algorithm, "Microsoft", LegacyAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]); ++index)
+        {
+            const AsymmetricAlgorithm algorithm = asymmetricAlgorithms[index];
+            const bool supported = factory->SupportsAsymmetricAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAsymmetricViaFactory("RunMicrosoftProviderAllAlgorithmsTest", *factory, algorithm, "Microsoft", AsymmetricAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        const std::size_t totalCount = sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]) +
+                                       sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]) +
+                                       sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]);
+
+        if (failures != 0)
+        {
+            std::cout << "RunMicrosoftProviderAllAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderAllAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and round-tripped, "
+                  << (totalCount - static_cast<std::size_t>(supportedCount))
+                  << " correctly rejected)" << std::endl;
         return NO_ERROR;
     }
     catch (...)

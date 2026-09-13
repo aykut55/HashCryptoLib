@@ -16,6 +16,7 @@ int main()
     cryptoApiTester.RunEncryptDecryptBytesTest();
 #endif
 
+#if 0
     cryptoApiTester.RunEncryptStringMultilingualTest();
 
     cryptoApiTester.RunPrimitiveDataTest();
@@ -25,7 +26,18 @@ int main()
     cryptoApiTester.RunVectorDataTest();
 
     cryptoApiTester.RunVectorWideStringDataTest();
+#endif
+/*
+    cryptoApiTester.RunProviderFactoryTest();
 
+    cryptoApiTester.RunProviderFactoryFileTest();
+
+    cryptoApiTester.RunProviderFactoryStringTest();
+
+    cryptoApiTester.RunProviderFactoryBufferTest();
+
+    cryptoApiTester.RunProviderFactoryBytesTest();
+*/
 #if 0
     cryptoApiTester.RunEncryptDecryptFileTestNonBlocking();
 
@@ -35,6 +47,8 @@ int main()
 
     cryptoApiTester.RunEncryptDecryptBytesTestNonBlocking();
 #endif
+
+    cryptoApiTester.RunMicrosoftProviderAllAlgorithmsTest();
 
     return 0;
 }

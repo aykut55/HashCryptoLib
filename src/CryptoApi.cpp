@@ -265,7 +265,7 @@ int CCryptoApi::encryptBuffer(const unsigned char* key, const int keySize, const
         IAeadCipher& cipher = provider;
         IRandomSource& randomSource = provider;
 
-        if (!provider.Initialize())
+        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
         {
             return UNEXPECTED_ERROR;
         }
@@ -349,7 +349,7 @@ int CCryptoApi::decryptBuffer(const unsigned char* key, const int keySize, const
         CMicrosoftProvider provider;
         IAeadCipher& cipher = provider;
 
-        if (!provider.Initialize())
+        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
         {
             return UNEXPECTED_ERROR;
         }
@@ -429,7 +429,7 @@ int CCryptoApi::encryptBuffer(const char* password, const int passwordSize, cons
         IRandomSource& randomSource = provider;
         IKeyDerivation& keyDerivation = provider;
 
-        if (!provider.Initialize())
+        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
         {
             return UNEXPECTED_ERROR;
         }
@@ -563,7 +563,7 @@ int CCryptoApi::decryptBuffer(const char* password, const int passwordSize, cons
         CMicrosoftProvider provider;
         IKeyDerivation& keyDerivation = provider;
 
-        if (!provider.Initialize())
+        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
         {
             return UNEXPECTED_ERROR;
         }
@@ -909,7 +909,7 @@ int CCryptoApi::EncryptFile(const char* password, const char* inputFilePath, con
         IRandomSource& randomSource = provider;
         IKeyDerivation& keyDerivation = provider;
 
-        if (!provider.Initialize())
+        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
         {
             outputHandle.reset();
             deleteFileBestEffort(wideOutputFilePath);
@@ -1058,7 +1058,7 @@ int CCryptoApi::DecryptFile(const char* password, const char* inputFilePath, con
         IAeadCipher& cipher = provider;
         IKeyDerivation& keyDerivation = provider;
 
-        if (!provider.Initialize())
+        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
         {
             outputHandle.reset();
             deleteFileBestEffort(wideOutputFilePath);

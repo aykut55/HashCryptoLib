@@ -9,15 +9,66 @@ namespace CryptoApiNS
 
 namespace
 {
-    const unsigned int BOTAN_PROVIDER_KEY_SIZE = 32;
-    const unsigned int BOTAN_PROVIDER_NONCE_SIZE = 12;
-    const unsigned int BOTAN_PROVIDER_TAG_SIZE = 16;
+    const char* AeadAlgorithmName(const AeadAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case AEAD_AES_128_GCM: return "AES-128/GCM";
+        case AEAD_AES_192_GCM: return "AES-192/GCM";
+        case AEAD_AES_256_GCM: return "AES-256/GCM";
+        case AEAD_AES_128_CCM: return "AES-128/CCM";
+        case AEAD_AES_192_CCM: return "AES-192/CCM";
+        case AEAD_AES_256_CCM: return "AES-256/CCM";
+        case AEAD_AES_128_EAX: return "AES-128/EAX";
+        case AEAD_AES_192_EAX: return "AES-192/EAX";
+        case AEAD_AES_256_EAX: return "AES-256/EAX";
+        case AEAD_AES_128_SIV: return "AES-128/SIV";
+        case AEAD_AES_256_SIV: return "AES-256/SIV";
+        case AEAD_AES_128_GCM_SIV: return "AES-128/GCM-SIV";
+        case AEAD_AES_256_GCM_SIV: return "AES-256/GCM-SIV";
+        case AEAD_CHACHA20_POLY1305: return "ChaCha20Poly1305";
+        case AEAD_TWOFISH_GCM: return "Twofish/GCM";
+        case AEAD_SERPENT_GCM: return "Serpent/GCM";
+        case AEAD_CAMELLIA_GCM: return "Camellia-256/GCM";
+        default: return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    const char* LegacyAlgorithmName(const LegacySymmetricAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case LEGACY_AES_128_CBC: return "AES-128/CBC/PKCS7";
+        case LEGACY_AES_192_CBC: return "AES-192/CBC/PKCS7";
+        case LEGACY_AES_256_CBC: return "AES-256/CBC/PKCS7";
+        case LEGACY_AES_128_CTR: return "AES-128/CTR-BE";
+        case LEGACY_AES_192_CTR: return "AES-192/CTR-BE";
+        case LEGACY_AES_256_CTR: return "AES-256/CTR-BE";
+        case LEGACY_AES_128_CFB: return "AES-128/CFB";
+        case LEGACY_AES_192_CFB: return "AES-192/CFB";
+        case LEGACY_AES_256_CFB: return "AES-256/CFB";
+        case LEGACY_AES_128_OFB: return "AES-128/OFB";
+        case LEGACY_AES_192_OFB: return "AES-192/OFB";
+        case LEGACY_AES_256_OFB: return "AES-256/OFB";
+        case LEGACY_AES_128_ECB:
+        case LEGACY_AES_192_ECB:
+        case LEGACY_AES_256_ECB:
+        default:
+            // Botan 3.x deliberately has no standalone ECB Cipher_Mode factory entry.
+            return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct CBotanProvider::Impl
 {
-    std::unique_ptr<Botan::AEAD_Mode> encryption;
-    std::unique_ptr<Botan::AEAD_Mode> decryption;
+    std::unique_ptr<Botan::AEAD_Mode> aeadEncryption;
+    std::unique_ptr<Botan::AEAD_Mode> aeadDecryption;
+    std::unique_ptr<Botan::Cipher_Mode> legacyEncryption;
+    std::unique_ptr<Botan::Cipher_Mode> legacyDecryption;
+    bool legacySelected = false;
 };
 
 CBotanProvider::~CBotanProvider()
@@ -34,9 +85,69 @@ bool CBotanProvider::Initialize(void)
 {
     try
     {
-        impl_->encryption = Botan::AEAD_Mode::create("AES-256/GCM", Botan::Cipher_Dir::Encryption);
-        impl_->decryption = Botan::AEAD_Mode::create("AES-256/GCM", Botan::Cipher_Dir::Decryption);
-        return impl_->encryption != nullptr && impl_->decryption != nullptr;
+        return impl_ != nullptr;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::SelectAlgorithm(const AeadAlgorithm algorithm)
+{
+    try
+    {
+        const char* name = AeadAlgorithmName(algorithm);
+        if (name == nullptr)
+        {
+            return false;
+        }
+
+        std::unique_ptr<Botan::AEAD_Mode> encryption = Botan::AEAD_Mode::create(name, Botan::Cipher_Dir::Encryption);
+        std::unique_ptr<Botan::AEAD_Mode> decryption = Botan::AEAD_Mode::create(name, Botan::Cipher_Dir::Decryption);
+        if (!encryption || !decryption)
+        {
+            return false;
+        }
+
+        impl_->aeadEncryption = std::move(encryption);
+        impl_->aeadDecryption = std::move(decryption);
+        impl_->legacyEncryption.reset();
+        impl_->legacyDecryption.reset();
+        impl_->legacySelected = false;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::SelectAlgorithm(const LegacySymmetricAlgorithm algorithm)
+{
+    try
+    {
+        const char* name = LegacyAlgorithmName(algorithm);
+        if (name == nullptr)
+        {
+            return false;
+        }
+
+        std::unique_ptr<Botan::Cipher_Mode> encryption = Botan::Cipher_Mode::create(name, Botan::Cipher_Dir::Encryption);
+        std::unique_ptr<Botan::Cipher_Mode> decryption = Botan::Cipher_Mode::create(name, Botan::Cipher_Dir::Decryption);
+        if (!encryption || !decryption)
+        {
+            return false;
+        }
+
+        impl_->legacyEncryption = std::move(encryption);
+        impl_->legacyDecryption = std::move(decryption);
+        impl_->aeadEncryption.reset();
+        impl_->aeadDecryption.reset();
+        impl_->legacySelected = true;
+        return true;
     }
     catch (...)
     {
@@ -47,19 +158,18 @@ bool CBotanProvider::Initialize(void)
 
 unsigned int CBotanProvider::GetKeySize(void) const
 {
-    return BOTAN_PROVIDER_KEY_SIZE;
-}
-// -----------------------------------------------------------------------------
-
-unsigned int CBotanProvider::GetNonceSize(void) const
-{
-    return BOTAN_PROVIDER_NONCE_SIZE;
-}
-// -----------------------------------------------------------------------------
-
-unsigned int CBotanProvider::GetTagSize(void) const
-{
-    return BOTAN_PROVIDER_TAG_SIZE;
+    try
+    {
+        if (impl_->legacySelected)
+        {
+            return impl_->legacyEncryption ? static_cast<unsigned int>(impl_->legacyEncryption->minimum_keylength()) : 0;
+        }
+        return impl_->aeadEncryption ? static_cast<unsigned int>(impl_->aeadEncryption->minimum_keylength()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
 }
 // -----------------------------------------------------------------------------
 
@@ -67,14 +177,29 @@ bool CBotanProvider::SetKey(const unsigned char* key, const unsigned int keySize
 {
     try
     {
-        if (key == nullptr || keySize != BOTAN_PROVIDER_KEY_SIZE ||
-            !impl_->encryption || !impl_->decryption)
+        if (key == nullptr)
         {
             return false;
         }
 
-        impl_->encryption->set_key(key, keySize);
-        impl_->decryption->set_key(key, keySize);
+        if (impl_->legacySelected)
+        {
+            if (!impl_->legacyEncryption || !impl_->legacyDecryption || !impl_->legacyEncryption->valid_keylength(keySize))
+            {
+                return false;
+            }
+            impl_->legacyEncryption->set_key(key, keySize);
+            impl_->legacyDecryption->set_key(key, keySize);
+        }
+        else
+        {
+            if (!impl_->aeadEncryption || !impl_->aeadDecryption || !impl_->aeadEncryption->valid_keylength(keySize))
+            {
+                return false;
+            }
+            impl_->aeadEncryption->set_key(key, keySize);
+            impl_->aeadDecryption->set_key(key, keySize);
+        }
         return true;
     }
     catch (...)
@@ -84,19 +209,45 @@ bool CBotanProvider::SetKey(const unsigned char* key, const unsigned int keySize
 }
 // -----------------------------------------------------------------------------
 
+unsigned int CBotanProvider::GetNonceSize(void) const
+{
+    try
+    {
+        return impl_->aeadEncryption ? static_cast<unsigned int>(impl_->aeadEncryption->default_nonce_length()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetTagSize(void) const
+{
+    try
+    {
+        return impl_->aeadEncryption ? static_cast<unsigned int>(impl_->aeadEncryption->tag_size()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool CBotanProvider::Encrypt(const unsigned char* nonce, const unsigned int nonceSize, const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, unsigned char* tag, const unsigned int tagSize)
 {
     try
     {
-        if (nonce == nullptr || tag == nullptr ||
+        if (!impl_->aeadEncryption || nonce == nullptr || tag == nullptr ||
             (inputBufferSize > 0 && (inputBuffer == nullptr || outputBuffer == nullptr)))
         {
             return false;
         }
 
         Botan::secure_vector<uint8_t> buffer(inputBuffer, inputBuffer + inputBufferSize);
-        impl_->encryption->start(nonce, nonceSize);
-        impl_->encryption->finish(buffer);
+        impl_->aeadEncryption->start(nonce, nonceSize);
+        impl_->aeadEncryption->finish(buffer);
 
         if (buffer.size() != static_cast<std::size_t>(inputBufferSize) + tagSize)
         {
@@ -122,7 +273,7 @@ bool CBotanProvider::Decrypt(const unsigned char* nonce, const unsigned int nonc
 {
     try
     {
-        if (nonce == nullptr || tag == nullptr ||
+        if (!impl_->aeadDecryption || nonce == nullptr || tag == nullptr ||
             (inputBufferSize > 0 && (inputBuffer == nullptr || outputBuffer == nullptr)))
         {
             return false;
@@ -133,8 +284,8 @@ bool CBotanProvider::Decrypt(const unsigned char* nonce, const unsigned int nonc
         buffer.insert(buffer.end(), inputBuffer, inputBuffer + inputBufferSize);
         buffer.insert(buffer.end(), tag, tag + tagSize);
 
-        impl_->decryption->start(nonce, nonceSize);
-        impl_->decryption->finish(buffer);
+        impl_->aeadDecryption->start(nonce, nonceSize);
+        impl_->aeadDecryption->finish(buffer);
 
         if (buffer.size() != inputBufferSize)
         {
@@ -146,6 +297,123 @@ bool CBotanProvider::Decrypt(const unsigned char* nonce, const unsigned int nonc
             std::memcpy(outputBuffer, buffer.data(), inputBufferSize);
         }
 
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetIvSize(void) const
+{
+    try
+    {
+        return impl_->legacyEncryption ? static_cast<unsigned int>(impl_->legacyEncryption->default_nonce_length()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetBlockSize(void) const
+{
+    // Informational only: Encrypt/Decrypt below size buffers via Botan's own output_length(),
+    // not manual block-size arithmetic. All supported legacy algorithms here are AES-based.
+    return 16;
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Encrypt(const unsigned char* iv, const unsigned int ivSize, const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->legacyEncryption || outputBufferSize == nullptr)
+        {
+            return false;
+        }
+        if (iv == nullptr && ivSize > 0)
+        {
+            return false;
+        }
+        if (inputBufferSize > 0 && inputBuffer == nullptr)
+        {
+            return false;
+        }
+
+        const size_t required = impl_->legacyEncryption->output_length(inputBufferSize);
+        if (outputBufferCapacity == 0 || outputBuffer == nullptr || outputBufferCapacity < required)
+        {
+            *outputBufferSize = static_cast<unsigned int>(required);
+            return false;
+        }
+
+        Botan::secure_vector<uint8_t> buffer(inputBuffer, inputBuffer + inputBufferSize);
+        impl_->legacyEncryption->start(iv, ivSize);
+        impl_->legacyEncryption->finish(buffer);
+
+        if (buffer.size() > outputBufferCapacity)
+        {
+            *outputBufferSize = static_cast<unsigned int>(buffer.size());
+            return false;
+        }
+
+        if (!buffer.empty())
+        {
+            std::memcpy(outputBuffer, buffer.data(), buffer.size());
+        }
+        *outputBufferSize = static_cast<unsigned int>(buffer.size());
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Decrypt(const unsigned char* iv, const unsigned int ivSize, const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->legacyDecryption || outputBufferSize == nullptr)
+        {
+            return false;
+        }
+        if (iv == nullptr && ivSize > 0)
+        {
+            return false;
+        }
+        if (inputBufferSize > 0 && inputBuffer == nullptr)
+        {
+            return false;
+        }
+
+        const size_t required = impl_->legacyDecryption->output_length(inputBufferSize);
+        if (outputBufferCapacity == 0 || outputBuffer == nullptr || outputBufferCapacity < required)
+        {
+            *outputBufferSize = static_cast<unsigned int>(required);
+            return false;
+        }
+
+        Botan::secure_vector<uint8_t> buffer(inputBuffer, inputBuffer + inputBufferSize);
+        impl_->legacyDecryption->start(iv, ivSize);
+        impl_->legacyDecryption->finish(buffer);
+
+        if (buffer.size() > outputBufferCapacity)
+        {
+            *outputBufferSize = static_cast<unsigned int>(buffer.size());
+            return false;
+        }
+
+        if (!buffer.empty())
+        {
+            std::memcpy(outputBuffer, buffer.data(), buffer.size());
+        }
+        *outputBufferSize = static_cast<unsigned int>(buffer.size());
         return true;
     }
     catch (...)

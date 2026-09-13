@@ -172,10 +172,19 @@
     <ClInclude Include="..\..\..\src\Providers\RandomSource.h" />
     <ClInclude Include="..\..\..\src\Providers\KeyDerivation.h" />
     <ClInclude Include="..\..\..\src\Providers\AeadCipher.h" />
+    <ClInclude Include="..\..\..\src\Providers\AsymmetricCipher.h" />
+    <ClInclude Include="..\..\..\src\Providers\LegacyCipher.h" />
+    <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderRegistry.h" />
     <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -184,10 +193,18 @@
     <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp" />
     <ClCompile Include="..\..\..\src\Providers\KeyDerivation.cpp" />
     <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\AsymmetricCipher.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\LegacyCipher.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderRegistry.cpp" />
     <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.cpp" />
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
          e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
          $(Platform) picks the right one. -->

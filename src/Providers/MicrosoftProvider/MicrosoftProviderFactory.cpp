@@ -1,0 +1,129 @@
+#include "MicrosoftProviderFactory.h"
+#include "MicrosoftProvider.h"
+
+namespace CryptoApiNS
+{
+
+CMicrosoftProviderFactory::~CMicrosoftProviderFactory()
+{
+}
+// -----------------------------------------------------------------------------
+
+CMicrosoftProviderFactory::CMicrosoftProviderFactory()
+{
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProviderFactory::SupportsAeadAlgorithm(const AeadAlgorithm algorithm) const
+{
+    try
+    {
+        CMicrosoftProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IAeadCipher> CMicrosoftProviderFactory::CreateAeadCipher(const AeadAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CMicrosoftProvider> provider(new CMicrosoftProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProviderFactory::SupportsLegacyAlgorithm(const LegacySymmetricAlgorithm algorithm) const
+{
+    try
+    {
+        CMicrosoftProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<ILegacyCipher> CMicrosoftProviderFactory::CreateLegacyCipher(const LegacySymmetricAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CMicrosoftProvider> provider(new CMicrosoftProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IRandomSource> CMicrosoftProviderFactory::CreateRandomSource()
+{
+    try
+    {
+        return std::unique_ptr<IRandomSource>(new CMicrosoftProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProviderFactory::SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const
+{
+    try
+    {
+        CMicrosoftProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IAsymmetricCipher> CMicrosoftProviderFactory::CreateAsymmetricCipher(const AsymmetricAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CMicrosoftProvider> provider(new CMicrosoftProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+} // namespace CryptoApiNS
