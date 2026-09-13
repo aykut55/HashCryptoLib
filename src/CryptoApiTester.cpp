@@ -2085,6 +2085,333 @@ int CCryptoApiTester::RunMicrosoftProviderAllAlgorithmsTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunCryptoPPProviderAllAlgorithmsTest(void)
+{
+    try
+    {
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_CRYPTOPP);
+        if (!factory)
+        {
+            std::cout << "RunCryptoPPProviderAllAlgorithmsTest: FAILED CreateProviderFactory(PROVIDER_CRYPTOPP)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const AeadAlgorithm aeadAlgorithms[] =
+        {
+            AEAD_AES_128_GCM, AEAD_AES_192_GCM, AEAD_AES_256_GCM,
+            AEAD_AES_128_CCM, AEAD_AES_192_CCM, AEAD_AES_256_CCM,
+            AEAD_AES_128_EAX, AEAD_AES_192_EAX, AEAD_AES_256_EAX,
+            AEAD_AES_128_SIV, AEAD_AES_256_SIV,
+            AEAD_AES_128_GCM_SIV, AEAD_AES_256_GCM_SIV,
+            AEAD_CHACHA20_POLY1305, AEAD_TWOFISH_GCM, AEAD_SERPENT_GCM, AEAD_CAMELLIA_GCM
+        };
+
+        const LegacySymmetricAlgorithm legacyAlgorithms[] =
+        {
+            LEGACY_AES_128_CBC, LEGACY_AES_192_CBC, LEGACY_AES_256_CBC,
+            LEGACY_AES_128_CTR, LEGACY_AES_192_CTR, LEGACY_AES_256_CTR,
+            LEGACY_AES_128_CFB, LEGACY_AES_192_CFB, LEGACY_AES_256_CFB,
+            LEGACY_AES_128_OFB, LEGACY_AES_192_OFB, LEGACY_AES_256_OFB,
+            LEGACY_AES_128_ECB, LEGACY_AES_192_ECB, LEGACY_AES_256_ECB,
+            LEGACY_RC2_CBC, LEGACY_RC2_ECB,
+            LEGACY_DES_CBC, LEGACY_DES_ECB,
+            LEGACY_3DES_CBC, LEGACY_3DES_ECB,
+            LEGACY_RC4
+        };
+
+        const AsymmetricAlgorithm asymmetricAlgorithms[] =
+        {
+            ASYMMETRIC_RSA_1024, ASYMMETRIC_RSA_2048, ASYMMETRIC_RSA_3072, ASYMMETRIC_RSA_4096
+        };
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t index = 0; index < sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]); ++index)
+        {
+            const AeadAlgorithm algorithm = aeadAlgorithms[index];
+            const bool supported = factory->SupportsAeadAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAeadViaFactory("RunCryptoPPProviderAllAlgorithmsTest", *factory, algorithm, "CryptoPP", AeadAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]); ++index)
+        {
+            const LegacySymmetricAlgorithm algorithm = legacyAlgorithms[index];
+            const bool supported = factory->SupportsLegacyAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripLegacyViaFactory("RunCryptoPPProviderAllAlgorithmsTest", *factory, algorithm, "CryptoPP", LegacyAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]); ++index)
+        {
+            const AsymmetricAlgorithm algorithm = asymmetricAlgorithms[index];
+            const bool supported = factory->SupportsAsymmetricAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAsymmetricViaFactory("RunCryptoPPProviderAllAlgorithmsTest", *factory, algorithm, "CryptoPP", AsymmetricAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        const std::size_t totalCount = sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]) +
+                                       sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]) +
+                                       sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]);
+
+        if (failures != 0)
+        {
+            std::cout << "RunCryptoPPProviderAllAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderAllAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and round-tripped, "
+                  << (totalCount - static_cast<std::size_t>(supportedCount))
+                  << " correctly rejected)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderAllAlgorithmsTest(void)
+{
+    try
+    {
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_BOTAN);
+        if (!factory)
+        {
+            std::cout << "RunBotanProviderAllAlgorithmsTest: FAILED CreateProviderFactory(PROVIDER_BOTAN)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const AeadAlgorithm aeadAlgorithms[] =
+        {
+            AEAD_AES_128_GCM, AEAD_AES_192_GCM, AEAD_AES_256_GCM,
+            AEAD_AES_128_CCM, AEAD_AES_192_CCM, AEAD_AES_256_CCM,
+            AEAD_AES_128_EAX, AEAD_AES_192_EAX, AEAD_AES_256_EAX,
+            AEAD_AES_128_SIV, AEAD_AES_256_SIV,
+            AEAD_AES_128_GCM_SIV, AEAD_AES_256_GCM_SIV,
+            AEAD_CHACHA20_POLY1305, AEAD_TWOFISH_GCM, AEAD_SERPENT_GCM, AEAD_CAMELLIA_GCM
+        };
+
+        const LegacySymmetricAlgorithm legacyAlgorithms[] =
+        {
+            LEGACY_AES_128_CBC, LEGACY_AES_192_CBC, LEGACY_AES_256_CBC,
+            LEGACY_AES_128_CTR, LEGACY_AES_192_CTR, LEGACY_AES_256_CTR,
+            LEGACY_AES_128_CFB, LEGACY_AES_192_CFB, LEGACY_AES_256_CFB,
+            LEGACY_AES_128_OFB, LEGACY_AES_192_OFB, LEGACY_AES_256_OFB,
+            LEGACY_AES_128_ECB, LEGACY_AES_192_ECB, LEGACY_AES_256_ECB,
+            LEGACY_RC2_CBC, LEGACY_RC2_ECB,
+            LEGACY_DES_CBC, LEGACY_DES_ECB,
+            LEGACY_3DES_CBC, LEGACY_3DES_ECB,
+            LEGACY_RC4
+        };
+
+        const AsymmetricAlgorithm asymmetricAlgorithms[] =
+        {
+            ASYMMETRIC_RSA_1024, ASYMMETRIC_RSA_2048, ASYMMETRIC_RSA_3072, ASYMMETRIC_RSA_4096
+        };
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t index = 0; index < sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]); ++index)
+        {
+            const AeadAlgorithm algorithm = aeadAlgorithms[index];
+            const bool supported = factory->SupportsAeadAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAeadViaFactory("RunBotanProviderAllAlgorithmsTest", *factory, algorithm, "Botan", AeadAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]); ++index)
+        {
+            const LegacySymmetricAlgorithm algorithm = legacyAlgorithms[index];
+            const bool supported = factory->SupportsLegacyAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripLegacyViaFactory("RunBotanProviderAllAlgorithmsTest", *factory, algorithm, "Botan", LegacyAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]); ++index)
+        {
+            const AsymmetricAlgorithm algorithm = asymmetricAlgorithms[index];
+            const bool supported = factory->SupportsAsymmetricAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAsymmetricViaFactory("RunBotanProviderAllAlgorithmsTest", *factory, algorithm, "Botan", AsymmetricAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        const std::size_t totalCount = sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]) +
+                                       sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]) +
+                                       sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]);
+
+        if (failures != 0)
+        {
+            std::cout << "RunBotanProviderAllAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderAllAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and round-tripped, "
+                  << (totalCount - static_cast<std::size_t>(supportedCount))
+                  << " correctly rejected)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderAllAlgorithmsTest(void)
+{
+    try
+    {
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_OPENSSL);
+        if (!factory)
+        {
+            std::cout << "RunOpenSslProviderAllAlgorithmsTest: FAILED CreateProviderFactory(PROVIDER_OPENSSL)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const AeadAlgorithm aeadAlgorithms[] =
+        {
+            AEAD_AES_128_GCM, AEAD_AES_192_GCM, AEAD_AES_256_GCM,
+            AEAD_AES_128_CCM, AEAD_AES_192_CCM, AEAD_AES_256_CCM,
+            AEAD_AES_128_EAX, AEAD_AES_192_EAX, AEAD_AES_256_EAX,
+            AEAD_AES_128_SIV, AEAD_AES_256_SIV,
+            AEAD_AES_128_GCM_SIV, AEAD_AES_256_GCM_SIV,
+            AEAD_CHACHA20_POLY1305, AEAD_TWOFISH_GCM, AEAD_SERPENT_GCM, AEAD_CAMELLIA_GCM
+        };
+
+        const LegacySymmetricAlgorithm legacyAlgorithms[] =
+        {
+            LEGACY_AES_128_CBC, LEGACY_AES_192_CBC, LEGACY_AES_256_CBC,
+            LEGACY_AES_128_CTR, LEGACY_AES_192_CTR, LEGACY_AES_256_CTR,
+            LEGACY_AES_128_CFB, LEGACY_AES_192_CFB, LEGACY_AES_256_CFB,
+            LEGACY_AES_128_OFB, LEGACY_AES_192_OFB, LEGACY_AES_256_OFB,
+            LEGACY_AES_128_ECB, LEGACY_AES_192_ECB, LEGACY_AES_256_ECB,
+            LEGACY_RC2_CBC, LEGACY_RC2_ECB,
+            LEGACY_DES_CBC, LEGACY_DES_ECB,
+            LEGACY_3DES_CBC, LEGACY_3DES_ECB,
+            LEGACY_RC4
+        };
+
+        const AsymmetricAlgorithm asymmetricAlgorithms[] =
+        {
+            ASYMMETRIC_RSA_1024, ASYMMETRIC_RSA_2048, ASYMMETRIC_RSA_3072, ASYMMETRIC_RSA_4096
+        };
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t index = 0; index < sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]); ++index)
+        {
+            const AeadAlgorithm algorithm = aeadAlgorithms[index];
+            const bool supported = factory->SupportsAeadAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAeadViaFactory("RunOpenSslProviderAllAlgorithmsTest", *factory, algorithm, "OpenSSL", AeadAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]); ++index)
+        {
+            const LegacySymmetricAlgorithm algorithm = legacyAlgorithms[index];
+            const bool supported = factory->SupportsLegacyAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripLegacyViaFactory("RunOpenSslProviderAllAlgorithmsTest", *factory, algorithm, "OpenSSL", LegacyAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]); ++index)
+        {
+            const AsymmetricAlgorithm algorithm = asymmetricAlgorithms[index];
+            const bool supported = factory->SupportsAsymmetricAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAsymmetricViaFactory("RunOpenSslProviderAllAlgorithmsTest", *factory, algorithm, "OpenSSL", AsymmetricAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        const std::size_t totalCount = sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]) +
+                                       sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]) +
+                                       sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]);
+
+        if (failures != 0)
+        {
+            std::cout << "RunOpenSslProviderAllAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderAllAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and round-tripped, "
+                  << (totalCount - static_cast<std::size_t>(supportedCount))
+                  << " correctly rejected)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::runNonBlocking(const char* testName, int (CCryptoApiTester::*testMethod)(void))
 {
     try

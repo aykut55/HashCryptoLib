@@ -50,5 +50,11 @@ int main()
 
     cryptoApiTester.RunMicrosoftProviderAllAlgorithmsTest();
 
+    cryptoApiTester.RunCryptoPPProviderAllAlgorithmsTest();
+
+    cryptoApiTester.RunBotanProviderAllAlgorithmsTest();
+
+    cryptoApiTester.RunOpenSslProviderAllAlgorithmsTest();
+
     return 0;
 }

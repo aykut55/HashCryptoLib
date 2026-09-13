@@ -74,6 +74,15 @@ public:
     // supported gets tested.
     int RunMicrosoftProviderAllAlgorithmsTest(void);
 
+    // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_CRYPTOPP instead.
+    int RunCryptoPPProviderAllAlgorithmsTest(void);
+
+    // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_BOTAN instead.
+    int RunBotanProviderAllAlgorithmsTest(void);
+
+    // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_OPENSSL instead.
+    int RunOpenSslProviderAllAlgorithmsTest(void);
+
     // Demonstrates that CCryptoApi's blocking calls can be driven from a background thread the
     // caller owns; CCryptoApi itself stays synchronous by design (see Rules.md/Plan.md ABI notes).
     int RunEncryptDecryptFileTestNonBlocking(void);
