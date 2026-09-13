@@ -1,0 +1,13 @@
+# 
+prefix=D:\Aykut\HashCryptoLib\3rdParty\openssl402\_install\x64
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+modulesdir=${libdir}/ossl-modules
+
+Name: OpenSSL-libcrypto
+Description: OpenSSL cryptography library
+Version: 4.0.2
+Libs: -L${libdir} -lcrypto
+Libs.private: ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib
+Cflags: -I${includedir}

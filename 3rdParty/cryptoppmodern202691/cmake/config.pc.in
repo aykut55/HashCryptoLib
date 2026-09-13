@@ -1,0 +1,14 @@
+# cryptopp-modern package configuration file
+
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=@PC_LIBDIR@
+includedir=@PC_INCLUDEDIR@
+datadir=@PC_DATAROOTDIR@/cryptopp
+
+Name: cryptopp-modern
+URL: https://github.com/cryptopp-modern/cryptopp-modern
+Description: Modern C++ cryptography library - fork of Crypto++ (built with CMake)
+Version: @cryptopp-modern_VERSION@
+
+Cflags: -I${includedir}
+Libs: -L${libdir} @MODULE_LINK_LIBS@

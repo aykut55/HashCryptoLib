@@ -86,3 +86,26 @@ __history/
 __recovery/
 Win32/
 Win64/
+
+# OpenSSL vendor tree (3rdParty/openssl402): only Configure/Configurations/crypto/ssl/providers/
+# include/apps are needed to build libcrypto/libssl. demos/test/fuzz/external-vendor dirs are
+# large, irrelevant to the build, and bundle many sample/test private keys that trip GitHub's
+# secret scanner.
+3rdParty/openssl402/demos/
+3rdParty/openssl402/test/
+3rdParty/openssl402/fuzz/
+3rdParty/openssl402/wycheproof/
+3rdParty/openssl402/tlsfuzzer/
+3rdParty/openssl402/tlslite-ng/
+3rdParty/openssl402/python-ecdsa/
+3rdParty/openssl402/oqs-provider/
+3rdParty/openssl402/pkcs11-provider/
+3rdParty/openssl402/cloudflare-quiche/
+3rdParty/openssl402/VMS/
+3rdParty/openssl402/doc/
+3rdParty/openssl402/**/*.pem
+3rdParty/openssl402/configdata.pm
+3rdParty/openssl402/makefile
+3rdParty/openssl402/_libs/
+3rdParty/openssl402/_install/
+3rdParty/openssl402/_build_*/

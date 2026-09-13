@@ -1,0 +1,316 @@
+# cryptopp-modern Development Roadmap
+
+**Current Version:** 2026.9.1
+
+---
+
+## Vision
+
+**cryptopp-modern** is an actively maintained, modernized fork of Crypto++ featuring:
+- Modern cryptographic algorithms (BLAKE3, Argon2, post-quantum)
+- Better code organization and structure
+- Comprehensive documentation
+- Active development and community engagement
+- Calendar versioning for clarity
+
+---
+
+## Phase 1: Foundation ✅ COMPLETE
+
+**Goal:** Establish working fork with essential modern algorithms
+
+### Completed
+- ✅ **BLAKE3 Cryptographic Hash** - Modern, fast hash function
+- ✅ **Argon2 Password Hashing** - RFC 9106 (Argon2d, Argon2i, Argon2id)
+- ✅ **Calendar Versioning** - Clear release dates (YEAR.MONTH.INCREMENT)
+- ✅ **Security Patches** - PKCS#1 v1.5 depadding timing hardening, ESIGN improvements
+- ✅ **Repository Setup** - GitHub repository with documentation
+- ✅ **Build System** - Working GNUmakefile builds
+
+**Release:** v2025.11.0
+
+---
+
+## Phase 2: Organization ✅ COMPLETE
+
+**Goal:** Modernize project structure for better navigation
+
+### Completed
+- ✅ **Header Organization** - All 194 headers in `include/cryptopp/` directory
+- ✅ **Source Organization** - 204 source files organized into categorized `src/` subdirectories:
+  - `src/core/` - Core infrastructure (37 files)
+  - `src/hash/` - Hash functions (32 files)
+  - `src/kdf/` - Key derivation (2 files)
+  - `src/symmetric/` - Block/stream ciphers (58 files)
+  - `src/pubkey/` - Public key cryptography (26 files)
+  - `src/mac/` - Message authentication codes (6 files)
+  - `src/modes/` - Cipher modes (9 files)
+  - `src/encoding/` - Encoding/compression (8 files)
+  - `src/random/` - Random number generation (9 files)
+  - `src/util/` - Utilities (3 files)
+  - `src/test/` - Test files (23 files)
+- ✅ **Include Path Updates** - All source files updated to `<cryptopp/header.h>` format
+- ✅ **Build System Updates** - GNUmakefile and MSVC project files updated
+- ✅ **Backward Compatibility** - Maintained flat `include/cryptopp/` structure for drop-in replacement
+- ✅ **Testing Verified** - All tests pass across all platforms
+
+---
+
+## Phase 3: CMake Build System ✅ COMPLETE
+
+**Goal:** Add CMake alongside existing build system
+
+### Completed
+- ✅ **Modern CMakeLists.txt** - CMake 3.20+ with full feature support
+- ✅ **Target Exports** - Proper `find_package(cryptopp-modern)` and `cryptopp::cryptopp` target
+- ✅ **Install Rules** - Headers, libraries, and CMake config files
+- ✅ **CMake Presets** - default, debug, release, msvc, ci-linux, ci-macos, ci-windows, no-asm
+- ✅ **SIMD Detection** - Automatic detection and per-file compiler flags (SSE, AVX, AES-NI, SHA-NI)
+- ✅ **Cross-Platform** - Tested on Windows (MSVC, MinGW), Linux (GCC, Clang), macOS (Apple Clang)
+- ✅ **pkg-config Support** - Generated .pc file for traditional build systems
+
+**Note:** Both CMake and GNUmakefile are maintained as build options.
+
+---
+
+## Phase 4: Documentation ✅ COMPLETE
+
+**Goal:** Comprehensive, modern documentation site
+
+### Completed
+- ✅ **Documentation Website** - Hugo + Hextra theme at [cryptopp-modern.com](https://cryptopp-modern.com)
+- ✅ **Getting Started Guide** - Installation and Quick Start tutorials
+- ✅ **Algorithm Reference** - 60+ pages organized by category (hash, KDF, symmetric, MAC, pubkey, utilities)
+- ✅ **Code Examples** - Production-ready examples for all major algorithms
+- ✅ **Migration Guide** - Complete guide for migrating from Crypto++ 8.9.0
+- ✅ **Educational Content** - Beginner's guide, security concepts, password hashing best practices
+- ✅ **Published** - Live at https://cryptopp-modern.com
+
+---
+
+
+## Phase 5: CI/CD & Quality ✅ COMPLETE
+
+**Goal:** Automated testing and quality assurance
+
+### Completed
+- ✅ **Unified CI Workflow** - Single `build-and-test.yml` covering all platforms and build systems
+- ✅ **CMake CI Testing**
+  - Linux (GCC + Ninja)
+  - macOS (Clang + Ninja)
+  - Windows (MSVC)
+  - No-ASM build (pure C++ fallbacks)
+  - Installation and `find_package()` integration test
+- ✅ **Makefile CI Testing**
+  - Linux GCC 11/12/13 with C++14/17/20
+  - Linux Clang 15/16/17 with C++14/17/20
+  - macOS Apple Clang with C++14/17/20
+  - Windows MSVC x64/Win32
+- ✅ **Security Testing**
+  - Address Sanitizer (ASan)
+  - UndefinedBehavior Sanitizer (UBSan)
+- ✅ **Build Verification**
+  - 50+ build configurations per push
+  - Validation tests and test vectors on all platforms
+
+### Planned (Future)
+- **Code Quality Enhancements**
+  - Memory Sanitizer (MSan)
+  - Static analysis (clang-tidy, cppcheck)
+  - Code coverage reporting
+  - Benchmark tracking
+
+---
+
+## Phase 6: Post-Quantum Cryptography ✅ COMPLETE
+
+**Goal:** Implement NIST FIPS standardized post-quantum algorithms
+
+### Completed
+- ✅ **ML-KEM (FIPS 203)** - Module-Lattice Key Encapsulation Mechanism
+  - ML-KEM-512 (Level 1, 128-bit security)
+  - ML-KEM-768 (Level 3, 192-bit security)
+  - ML-KEM-1024 (Level 5, 256-bit security)
+  - NTT-based polynomial multiplication for performance
+  - Compliant with FIPS 203 final specification
+- ✅ **ML-DSA (FIPS 204)** - Module-Lattice Digital Signature Algorithm
+  - ML-DSA-44 (Level 2, 128-bit security)
+  - ML-DSA-65 (Level 3, 192-bit security)
+  - ML-DSA-87 (Level 5, 256-bit security)
+  - Based on CRYSTALS-Dilithium reference implementation
+  - PK_Signer/PK_Verifier interface integration
+- ✅ **SLH-DSA (FIPS 205)** - Stateless Hash-Based Digital Signature Algorithm
+  - All 12 parameter sets (SHA-2 and SHAKE variants)
+  - 128-bit, 192-bit, and 256-bit security levels
+  - Small (s) and fast (f) variants
+- ✅ **LMS/HSS (SP 800-208)** - Stateful Hash-Based Signatures
+  - LMS single-tree (H5, H10 parameter sets with SHA-256; LM-OTS W=1, W=2, W=4, W=8)
+  - HSS hierarchical (uniform L=1 to L=4 sets, plus mixed per-level parameter support)
+  - PK_StatefulSigner framework (explicit stateful signing API)
+  - SignerStateStore backend contract with FileStateStore reference implementation
+  - RFC 8554 Appendix F interop verified
+- ✅ **X-Wing** - Hybrid KEM combining X25519 + ML-KEM-768 (IETF draft)
+
+---
+
+## Phase 7: Stateful Hash Signatures ✅ COMPLETE
+
+**Goal:** NIST SP 800-208 stateful hash-based signatures, primarily for
+firmware and code-signing use cases where one-time signing keys are
+acceptable.
+
+### Completed
+- ✅ **LMS / HSS** - Leighton-Micali Signatures and Hierarchical Signature
+  System per RFC 8554 / SP 800-208 (shipped 2026.6.0)
+- ✅ **Signer state store** - File-backed durable state for one-time-key safety (shipped 2026.6.0)
+- ✅ **Mixed-parameter HSS** - Per-level LMS/LM-OTS parameters (shipped 2026.8.0)
+
+---
+
+## Contributing
+
+We welcome contributions in these areas:
+
+- **Bug Reports** - Find and report issues
+- **New Algorithms** - Implement modern crypto algorithms
+- **Documentation** - Improve docs and examples
+- **Testing** - Add tests and test vectors
+- **Build System** - Improve CMake and cross-platform support
+- **Packaging** - Help with package manager integration
+
+See [FORK.md](FORK.md) for project details and direction.
+
+---
+
+## Version History
+
+### 2026.9.1 (September 2026) - ARM Acceleration, Apple arm64 Dispatch, HSS Error Paths
+- **ARM acceleration** - CRC32 and PMULL probes could not find `arm_simd.h` since 2025.12.0; hardware paths restored (#91)
+- **Apple arm64** - Hardware AES, PMULL, SHA-1, SHA-256, with optional CRC32, SHA-3 and SHA-512 via `sysctl` (#92)
+- **HSS error paths** - Cache rebuild after a failed signing attempt, transactional LMS/HSS key generation (#99); subtree rebuild guard (#98)
+- **CMake** - Shared and static in one pass (#86), `BUILD_SHARED_LIBS` (#90), exported include directory (#94), per-configuration pkg-config and ctest (#95, #96), `-Werror`-proof probes and `CRYPTOPP_WERROR` (#100), AVX-512 fallback (#101), single target-architecture probe (#88)
+
+### 2026.9.0 (September 2026) - PKCS#1 v1.5 Security Fix, RFC 9802 LMS Encoding
+- **PKCS#1 v1.5 security fix** - Heap buffer overflow in decryption of malformed ciphertexts, present since 2025.11.0 (GHSA-9g8r-h7q5-x8pc)
+- **RFC 9802 LMS encoding** - Standalone LMS public keys use the HSS L=1 SPKI form; single-level HSS parameter sets added (#75)
+- **PQC key hardening** - Transactional BER decoding and unset-key encode guards for ML-KEM, ML-DSA, SLH-DSA, LMS and HSS (#83); transactional ML-KEM key generation (#84)
+- **FileStateStore durability** - Parent-directory flush on state-file creation, POSIX (#78)
+- **Packaging** - `CRYPTOPP_INSTALL_CRYPTEST` (#76), absolute install dirs in pkg-config (#77)
+- **Warnings** - C++20 enum arithmetic (#80), BLAKE3 SIMD constants and x86 feature checks (#82), MSVC and Clang cleanups (#74)
+
+### 2026.8.1 (August 2026) - BLAKE3 Multi-Chunk Hashing Fixes
+- **BLAKE3 multi-chunk** - Parent chaining-value byte order on big-endian targets, zero padding of partial final blocks, and an out-of-bounds read in the wide hashing paths (#65)
+- **DEFLATE HLIT** - Malformed streams could trigger an out-of-bounds write in the inflator (#67, weidai11/cryptopp#1368)
+- **Shared-build cryptest** - `dynamic_cast` failures under hidden visibility, seen on FreeBSD with Clang and libc++ (#64)
+
+### 2026.8.0 (August 2026) - Shared Libraries, Mixed-Parameter HSS, and Hardening
+- **Unix shared libraries** - `libcryptopp.so`/`.dylib` builds; independent ABI series starting at `libcryptopp.so.9` (#48)
+- **Mixed-parameter HSS** - Per-level LMS/LM-OTS parameters, `HSS_SHA256_H10W4_H5W8_L2`, LM-OTS W1/W2/W4 (#56)
+- **ChaCha SIMD fix** - Counter carry in the NEON, SSE2, and Altivec backends (weidai11/cryptopp#1362)
+- **Input validation** - BLAKE3 runtime checks (#57), zero-length AEAD tags rejected (#58), zero PBKDF iterations rejected (#59)
+- **Build and CI** - MSVC MASM object-path fix and Windows ARM64 CI (#43)
+
+### 2026.7.1 (July 2026) - Packaging
+- **Install locations** - CMake and pkg-config files install under `${CMAKE_INSTALL_LIBDIR}` (#47)
+- **pkg-config name** - `libcryptopp.pc` restored, with a `cryptopp-modern.pc` alias (#51)
+- **Archives** - `.tar.gz` releases added and repository line endings normalised (#49)
+- **Release signing** - Signing key and verification steps published (#46)
+
+### 2026.7.0 (July 2026) - SLH-DSA External Interface and Stateful-Signing Hardening
+- **SLH-DSA external interface** - FIPS 205 external pure signatures, interoperable with OpenSSL, X.509, and CMS; `SLHDSA_MessageAccumulator::SetContext` for explicit context. Signatures from 2026.3.0 through 2026.6.0 use the internal message form and are not interoperable with the external-interface format introduced in 2026.7.0
+- **Stateful-signing hardening** - LMS/HSS sign paths fail closed on invalid state reservations; `StateReservation` bound to its issuing store
+- **FileStateStore hardening** - State-file size validation on open, zero-capacity rejection, POSIX exclusive locking with retry on interrupted I/O
+- **C++11 baseline** - HSS capacity helpers and public-header hygiene fixed; LMS internals moved out of the public header
+
+### 2026.6.0 (June 2026) - LMS/HSS Stateful Signatures
+- **LMS/HSS stateful hash-based signatures** - LMS single-tree (H5, H10 with W=8) and HSS hierarchical (L=2, L=3) signatures following NIST SP 800-208 and RFC 8554
+- **Stateful signing API** - `PK_StatefulSigner` deliberately not a subtype of `PK_Signer`; `SignerStateStore` contract ensures a reserved index can never be reissued
+- **FileStateStore** - Durable file-backed state store with write-ahead persistence, HMAC-SHA256 integrity, fail-closed poisoning, and platform-specific flush handling
+- **ASN.1 wiring** - RFC 9708 `id-alg-hss-lms-hashsig` OID in RFC 9802 X.509 SubjectPublicKeyInfo public keys; library-local PKCS#8 wrapper for private keys
+- **PQC Save/Load tests** - Round-trip coverage for ML-KEM, ML-DSA, and SLH-DSA
+- **Android x86 CI** - `x86_64` and `x86` build coverage added
+- **Sanitizer CI fix** - `cryptest tv` output now included in the checked log
+- **Legacy compiler CI** - GCC 9-10 and Clang 11-14 lanes added
+
+### 2026.5.2 (May 2026) - Security and Conformance Patch
+- **ASN.1 DERReencode depth cap** - 32-level cap matching OpenSSL `ASN1_MAX_CONSTRUCTED_NEST`; prevents stack exhaustion on nested constructed indefinite BER (upstream Crypto++ issue 1353)
+- **Ed25519 signature scalar canonicality** - Donna and NaCl verifiers reject `S >= L` per RFC 8032 (upstream Crypto++ issue 1352, signature-scalar part)
+- **Ed25519 small-order public keys** - `ed25519PublicKey::Validate` rejects small-order keys at level 2 or higher (upstream Crypto++ issue 1352, small-order part)
+
+### 2026.5.1 (May 2026) - Correctness and Build Fixes
+- **BLAKE3 AArch64 Correctness** - Removed broken fork-local NEON single-block compress; AArch64 now uses the portable path, matching the BLAKE3 reference (Issue #27)
+- **Android CMake** - Restored automatic staging of `cpu-features.h` so CMake builds find the NDK header without manual setup (Issue #27)
+- **armv7 NEON Build** - Replaced AArch64-only intrinsic in `rot8_neon` with a portable form (Issue #27)
+- **CI Coverage** - Added Android build-only jobs and legacy GCC 9/10 / Clang 13/14 matrices; bumped `actions/checkout` to v5
+- **Test Coverage** - `ValidateBLAKE3` now part of the default validation suite
+
+### 2026.5.0 (May 2026) - Security Hardening
+- **CVE-2023-50980 Hardening** - Strict trinomial/pentanomial ordering and 4096 field-degree cap in `BERDecodeGF2NP`
+- **CVE-2023-50981 Hardening** - Rabin private-key primality checks now throw `BERDecodeError`; `ModularSquareRoot` loops capped at 10000 iterations
+- **Version Metadata** - Fixed drift between in-tree constants and released version (Issue #23)
+
+### 2026.4.0 (April 2026) - Security Fix
+- **Ed25519 Canonicality** - Fixed accepting non-canonical public keys (Issue #1348)
+- Regression test covering canonical and non-canonical y vectors
+
+### 2026.3.0 (March 2026) - Post-Quantum Cryptography Release
+- **ML-KEM (FIPS 203)** - Module-Lattice Key Encapsulation (512/768/1024)
+- **ML-DSA (FIPS 204)** - Module-Lattice Digital Signatures (44/65/87)
+- **SLH-DSA (FIPS 205)** - Stateless Hash-Based Signatures (all 12 parameter sets)
+- **X-Wing** - Hybrid KEM combining X25519 + ML-KEM-768 (IETF draft)
+- ASN.1/DER key encoding for PQC algorithms (PKCS#8, X.509)
+- NIST ACVP test vectors for all PQC algorithms
+- Updated build systems (GNUmakefile, nmake, Visual Studio)
+
+### 2026.2.1 (February 2026) - Correctness Fix
+- **DSA/ECDSA Fix** - Fixed invalid signature (r=0 or s=0) in release builds (Issue #1342)
+
+### 2026.2.0 (February 2026) - Security Release
+- **CVE-2024-28285 Fix** - Hardened hybrid DL decryption (ElGamal, ECIES, DLIES) against fault injection
+- **No-Write-on-Failure** - Plaintext buffer untouched unless decryption succeeds
+- **Blinded Verification** - Detects faulted key-agreement computations before releasing plaintext
+
+### 2026.1.0 (January 2026) - New Algorithms Release
+- **BLAKE3 AVX-512** - 16-way parallel chunk hashing
+  - over 4000 MiB/s on supported processors
+  - Automatic runtime CPU detection with graceful fallback
+- **XAES-256-GCM** - Extended-nonce AES-GCM (C2SP specification)
+  - 256-bit (32-byte) nonces safe for random generation
+  - Solves nonce management problem for AES-GCM users
+- **AES-CTR-HMAC** - Encrypt-then-MAC authenticated encryption
+  - Template-based: works with any block cipher and hash function
+  - HKDF key derivation for encryption and MAC keys
+- Hardened XAES-256-GCM and AES-CTR-HMAC against misuse
+- Improved exception safety and portability
+- Dropped non-standard stdext namespace usage
+
+### 2025.12.0 (December 2025) - Organization & CMake Release
+- Complete project reorganization (Phase 2)
+- Organized 204 source files into categorized `src/` directories
+- Maintained backward compatibility with flat include structure
+- Modern CMake build system with presets and `find_package()` support (Phase 3)
+- BLAKE3 SIMD parallel chunk processing
+  - SSE4.1 4-way and AVX2 8-way parallel hashing (~2500 MiB/s)
+  - ARM NEON support with graceful fallback
+- Unified CI/CD workflow with 50+ build configurations (Phase 5)
+- Updated build systems (GNUmakefile, MSVC, nmake, CMake)
+- Comprehensive documentation (CMAKE.md, GNUMAKEFILE.md, GETTING_STARTED.md)
+- Comprehensive testing across all platforms
+
+### 2025.11.0 (November 2025) - Foundation Release
+- First release with calendar versioning
+- Added BLAKE3 cryptographic hash
+- Added Argon2 password hashing (d/i/id variants)
+- Added PKCS#1 v1.5 depadding timing hardening
+- Improved ESIGN static analyzer compatibility
+
+---
+
+## Questions or Suggestions?
+
+- **GitHub Issues:** [Report bugs or request features](https://github.com/cryptopp-modern/cryptopp-modern/issues)
+- **GitHub Discussions:** [Ask questions or discuss ideas](https://github.com/cryptopp-modern/cryptopp-modern/discussions)
+
+---
+
+**Maintained By:** [CoraleSoft](https://github.com/Coralesoft)

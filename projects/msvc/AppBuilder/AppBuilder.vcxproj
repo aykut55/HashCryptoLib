@@ -77,7 +77,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;$(ProjectDir)..\..\..\3rdParty;$(ProjectDir)..\..\..\3rdParty\botan3130\$(Platform);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;$(ProjectDir)..\..\..\3rdParty;$(ProjectDir)..\..\..\3rdParty\botan3130\$(Platform);$(ProjectDir)..\..\..\3rdParty\openssl402\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <!-- Botan's amalgamation headers require C++20 (std::span, concepts, etc.). -->
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
@@ -93,6 +93,20 @@
     <ClCompile>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- OpenSSL's libcrypto.lib is built per-Platform/Configuration under openssl402\_libs (see
+       openssl402\openssl.vcxproj and its build-scripts); enable-static-vcruntime was used when
+       building it so its CRT matches ours. Static linking also needs these system libs per
+       OpenSSL's NOTES-WINDOWS.md. -->
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\openssl402\_libs\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libcrypto.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- libcrypto.lib's PDB (ossl_static.pdb) isn't archived alongside it, so the linker warns
+           LNK4099 for every OpenSSL object; harmless (no debug info for OpenSSL internals), so
+           silence it rather than leave noise in the build log. -->
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -161,6 +175,7 @@
     <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h" />
     <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.h" />
     <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -172,6 +187,7 @@
     <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp" />
     <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.cpp" />
     <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.cpp" />
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
          e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
          $(Platform) picks the right one. -->
@@ -180,10 +196,23 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Builds cryptlib.lib automatically (if missing/stale) whenever AppBuilder is built, and
-         links it in; the output folders under 3rdParty\cryptopp890 are build artifacts and safe
-         to delete, they are regenerated from this reference. -->
+         links it in; the output folders under cryptopp890 are build artifacts and safe to delete,
+         they are regenerated from this reference.
+         CryptoPPModernProvider and 3rdParty\cryptoppmodern202691 remain on disk but are
+         intentionally NOT wired in here: getting cryptoppmodern202691\cryptlib.vcxproj to resolve
+         as a ProjectReference reliably during SOLUTION (.sln) builds hit an unresolved MSBuild
+         AssignProjectConfiguration issue (it silently fails to resolve/link only in solution
+         builds, while the identical setup works fine building AppBuilder.vcxproj standalone) that
+         wasn't worth blocking on. -->
     <ProjectReference Include="..\..\..\3rdParty\cryptopp890\cryptlib.vcxproj">
       <Project>{c39f4b46-6e89-4074-902e-ca57073044d2}</Project>
+    </ProjectReference>
+    <!-- Makefile-type project (see 3rdParty\openssl402\openssl.vcxproj); this only orders the
+         build so libcrypto.lib exists first. It does not auto-link like a normal ProjectReference
+         (that's why AdditionalDependencies/AdditionalLibraryDirectories above list it explicitly). -->
+    <ProjectReference Include="..\..\..\3rdParty\openssl402\openssl.vcxproj">
+      <Project>{5e6a1e2d-8c3f-4d4a-9b1e-2f7a6c9d0e11}</Project>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1,0 +1,383 @@
+# CMake Build System
+
+This document describes the CMake build system for cryptopp-modern.
+
+## Requirements
+
+- **CMake 3.20** or higher
+- **C++11** compatible compiler (C++14 or higher recommended)
+- **Ninja** (recommended) or Make for Linux/macOS
+- **Visual Studio 2022** for Windows MSVC builds
+
+## Quick Start
+
+### Linux / macOS
+
+```bash
+# Configure with default preset (Release, Ninja)
+cmake --preset=default
+
+# Build
+cmake --build build/default -j$(nproc)
+
+# Run tests
+./build/default/cryptest.exe v
+
+# Install (optional)
+sudo cmake --install build/default --prefix /usr/local
+```
+
+### Windows (MSVC)
+
+```powershell
+# Configure with MSVC preset
+cmake --preset=msvc
+
+# Build Release configuration
+cmake --build build/msvc --config Release
+
+# Run tests
+./build/msvc/Release/cryptest.exe v
+```
+
+### Windows (MinGW)
+
+```bash
+# Configure with default preset
+cmake --preset=default
+
+# Build
+cmake --build build/default -j10
+
+# Run tests
+./build/default/cryptest.exe v
+```
+
+## CMake Presets
+
+The project includes `CMakePresets.json` with pre-configured build configurations:
+
+| Preset | Generator | Build Type | Description |
+|--------|-----------|------------|-------------|
+| `default` | Ninja | Release | Default build for Linux/macOS/MinGW |
+| `debug` | Ninja | Debug | Debug build with symbols |
+| `release` | Ninja | Release | Optimized release build |
+| `relwithdebinfo` | Ninja | RelWithDebInfo | Release with debug info |
+| `msvc` | Visual Studio 17 2022 | - | Windows MSVC build |
+| `msvc-debug` | Visual Studio 17 2022 | Debug | MSVC debug build |
+| `msvc-release` | Visual Studio 17 2022 | Release | MSVC release build |
+| `no-asm` | Ninja | Release | Pure C++ (no assembly) |
+| `install-test` | Ninja | Release | For testing installation |
+| `ci-linux` | Ninja | Release | CI configuration for Linux |
+| `ci-macos` | Ninja | Release | CI configuration for macOS |
+| `ci-windows` | Visual Studio 17 2022 | - | CI configuration for Windows |
+
+### Using Presets
+
+```bash
+# List available presets
+cmake --list-presets
+
+# Configure with a specific preset
+cmake --preset=debug
+
+# Build with a specific preset
+cmake --build --preset=debug
+```
+
+## CMake Options
+
+### General Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `CRYPTOPP_BUILD_TESTING` | `ON` | Build the test executable (cryptest.exe) and register the CTest suite |
+| `CRYPTOPP_INSTALL` | `ON` | Generate install targets |
+| `CRYPTOPP_INSTALL_CRYPTEST` | `CRYPTOPP_BUILD_TESTING` | Install cryptest.exe with its TestData and TestVectors. Set explicitly to install cryptest without the test suite, or to run the suite without installing cryptest |
+| `CRYPTOPP_BUILD_SHARED` | `BUILD_SHARED_LIBS` if defined, else `OFF` | Build a shared library (Unix-like platforms only; not supported on Windows) |
+| `CRYPTOPP_BUILD_STATIC` | `NOT CRYPTOPP_BUILD_SHARED` | Build a static library. Enable together with `CRYPTOPP_BUILD_SHARED` to build both in one pass |
+| `CRYPTOPP_USE_OPENMP` | `OFF` | Enable OpenMP for parallel algorithms |
+| `CRYPTOPP_WERROR` | `OFF` | Treat compiler warnings as errors (GCC and Clang) |
+| `CRYPTOPP_INCLUDE_PREFIX` | `cryptopp` | Header installation directory name |
+
+`CRYPTOPP_INSTALL_CRYPTEST` takes its default from `CRYPTOPP_BUILD_TESTING` on the first configure of a build directory. Like all CMake options the value is then cached, so changing `CRYPTOPP_BUILD_TESTING` in an existing build directory does not re-derive it; set it explicitly or start from a fresh build directory. Installing cryptest also requires `CRYPTOPP_INSTALL` (which is `ON` by default).
+
+`CRYPTOPP_BUILD_SHARED` takes its default from the standard `BUILD_SHARED_LIBS` variable when that is defined, so `-DBUILD_SHARED_LIBS=ON` on its own builds the shared library, with the same first-configure caching. An explicit `CRYPTOPP_BUILD_SHARED` takes precedence, which lets a project that sets `BUILD_SHARED_LIBS` for its own targets keep this library static. Building both libraries still requires `CRYPTOPP_BUILD_STATIC=ON` alongside either shared selector.
+
+`CRYPTOPP_BUILD_STATIC` defaults the same way from `CRYPTOPP_BUILD_SHARED`, with the same caching caveat: turning `CRYPTOPP_BUILD_SHARED` on in an existing build directory leaves the cached `CRYPTOPP_BUILD_STATIC=ON` in place and yields both libraries; start from a fresh build directory or set both options explicitly. At least one of the two must be enabled, and disabling both fails at configure time.
+
+### x86/x64 SIMD Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `CRYPTOPP_DISABLE_ASM` | `OFF` | Disable all assembly optimizations |
+| `CRYPTOPP_DISABLE_SSSE3` | `OFF` | Disable SSSE3 instructions |
+| `CRYPTOPP_DISABLE_SSE4` | `OFF` | Disable SSE4.1/SSE4.2 instructions |
+| `CRYPTOPP_DISABLE_AESNI` | `OFF` | Disable AES-NI instructions |
+| `CRYPTOPP_DISABLE_CLMUL` | `OFF` | Disable CLMUL (carryless multiply) |
+| `CRYPTOPP_DISABLE_SHA` | `OFF` | Disable SHA-NI instructions |
+| `CRYPTOPP_DISABLE_AVX` | `OFF` | Disable AVX instructions |
+| `CRYPTOPP_DISABLE_AVX2` | `OFF` | Disable AVX2 instructions |
+
+### ARM Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `CRYPTOPP_DISABLE_ARM_NEON` | `OFF` | Disable ARM NEON |
+| `CRYPTOPP_DISABLE_ARM_AES` | `OFF` | Disable ARM AES instructions |
+| `CRYPTOPP_DISABLE_ARM_PMULL` | `OFF` | Disable ARM PMULL |
+| `CRYPTOPP_DISABLE_ARM_SHA` | `OFF` | Disable ARM SHA instructions |
+
+### PowerPC Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `CRYPTOPP_DISABLE_ALTIVEC` | `OFF` | Disable Altivec |
+| `CRYPTOPP_DISABLE_POWER7` | `OFF` | Disable POWER7 optimizations |
+| `CRYPTOPP_DISABLE_POWER8` | `OFF` | Disable POWER8 optimizations |
+| `CRYPTOPP_DISABLE_POWER9` | `OFF` | Disable POWER9 optimizations |
+
+### Example: Custom Build
+
+```bash
+# Build without assembly (pure C++)
+cmake -B build -DCRYPTOPP_DISABLE_ASM=ON
+
+# Build without tests
+cmake -B build -DCRYPTOPP_BUILD_TESTING=OFF
+
+# Build with OpenMP
+cmake -B build -DCRYPTOPP_USE_OPENMP=ON
+```
+
+## Shared Library (Unix)
+
+On Linux, macOS and other Unix-like platforms the library can be built shared:
+
+```bash
+cmake -B build -DCRYPTOPP_BUILD_SHARED=ON
+cmake --build build
+```
+
+Windows remains static-only; `CRYPTOPP_BUILD_SHARED=ON` or `BUILD_SHARED_LIBS=ON` fails at configure time. The old Windows DLL was the FIPS module, which is abandoned, and its hand-maintained export set is gone.
+
+Unix shared builds compile with default symbol visibility, so the full API is exported. When tests are enabled, cryptest links against the shared library and the validation suite runs against it.
+
+To build the shared and static libraries in one pass:
+
+```bash
+cmake -B build -DCRYPTOPP_BUILD_SHARED=ON -DCRYPTOPP_BUILD_STATIC=ON
+```
+
+The sources are compiled once per library, and the install contains both libraries and both CMake export files: the same layout that two separate configure passes produce. cryptest links the shared library in this mode.
+
+### SONAME and ABI version
+
+The SONAME carries an ABI version that is independent of the calendar release version. It comes from the `CRYPTOPP_ABI_VERSION` macro in `include/cryptopp/config_ver.h`, is read by both the CMake and GNUmakefile builds, and increments only for ABI-incompatible changes. On Linux the installed files look like:
+
+```
+libcryptopp.so            -> libcryptopp.so.9
+libcryptopp.so.9          -> libcryptopp.so.2026.9.1    (SONAME)
+libcryptopp.so.2026.9.1                                 (real file)
+```
+
+On macOS the ABI version sets the dylib `compatibility_version` and the release version sets `current_version`.
+
+The ABI series continues from upstream Crypto++'s `libcryptopp.so.8`: cryptopp-modern is based on the 8.x ABI line and includes public API additions, so `libcryptopp.so.9` identifies it as the next ABI generation. The two runtime libraries can be installed side by side, and a binary linked against one never binds to the other.
+
+## Using cryptopp-modern in Your CMake Project
+
+After installing cryptopp-modern, you can use it in your CMake project:
+
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(myapp)
+
+# Find cryptopp-modern
+find_package(cryptopp-modern REQUIRED)
+
+# Create your executable
+add_executable(myapp main.cpp)
+
+# Link against cryptopp
+target_link_libraries(myapp PRIVATE cryptopp::cryptopp)
+```
+
+### Build Your Project
+
+```bash
+cmake -B build -DCMAKE_PREFIX_PATH=/path/to/cryptopp-install
+cmake --build build
+```
+
+### Component Selection
+
+You can explicitly request the static or shared library, which is the reliable way to pick one from an install that provides both:
+
+```cmake
+find_package(cryptopp-modern REQUIRED COMPONENTS static)
+```
+
+The two components are mutually exclusive within one `find_package` call. Without a component, the selection follows `cryptopp_SHARED_LIBS` if set, then `BUILD_SHARED_LIBS`, then whichever library the install provides (static preferred). Either way the imported target is `cryptopp::cryptopp`, and the first `find_package` call in a scope decides its type.
+
+## Installation
+
+### Default Installation
+
+```bash
+cmake --preset=default
+cmake --build build/default
+sudo cmake --install build/default
+```
+
+### Custom Installation Prefix
+
+```bash
+cmake -B build -DCMAKE_INSTALL_PREFIX=/opt/cryptopp
+cmake --build build
+cmake --install build
+```
+
+### What Gets Installed
+
+| Directory | Contents |
+|-----------|----------|
+| `include/cryptopp/` | All header files |
+| `lib/` | Static library (`libcryptopp.a` or `cryptopp.lib`) |
+| `lib/pkgconfig/` | pkg-config files (`libcryptopp.pc` and the `cryptopp-modern.pc` alias) |
+| `lib/cmake/cryptopp-modern/` | CMake config files for `find_package()` |
+| `share/cryptopp/` | TestData and TestVectors (with `CRYPTOPP_INSTALL_CRYPTEST`) |
+| `bin/` | Test executable (`cryptest.exe`, with `CRYPTOPP_INSTALL_CRYPTEST`) |
+
+## SIMD Auto-Detection
+
+The build system automatically detects CPU capabilities and enables appropriate SIMD optimizations:
+
+### x86/x64
+- SSE2, SSSE3, SSE4.1, SSE4.2
+- AVX, AVX2
+- AES-NI (hardware AES acceleration)
+- CLMUL (carryless multiplication for GCM)
+- SHA-NI (hardware SHA acceleration)
+
+**BLAKE3 Parallel Hashing**: BLAKE3 uses SSE4.1 (4-way), AVX2 (8-way), and AVX-512 (16-way) parallel chunk processing for high performance (~2500 MiB/s with AVX2, over 4000 MiB/s with AVX-512).
+
+### ARM
+- NEON
+- AES instructions
+- PMULL
+- SHA instructions
+
+### PowerPC
+- Altivec
+- POWER7/8/9 optimizations
+
+The appropriate compiler flags are automatically applied to specific source files that use these instructions.
+
+## Running Tests
+
+### Using CTest
+
+```bash
+# Configure and build
+cmake --preset=default
+cmake --build build/default
+
+# Run CTest
+ctest --preset=default
+```
+
+### Running cryptest Directly
+
+```bash
+# Validation tests
+./build/default/cryptest.exe v
+
+# Test vectors
+./build/default/cryptest.exe tv all
+
+# Benchmarks
+./build/default/cryptest.exe b
+
+# Specific algorithm test
+./build/default/cryptest.exe tv aes
+```
+
+## Troubleshooting
+
+### Ninja Not Found
+
+Install Ninja:
+- **Linux**: `sudo apt-get install ninja-build`
+- **macOS**: `brew install ninja`
+- **Windows**: `choco install ninja` or download from [ninja-build.org](https://ninja-build.org/)
+
+Or use a different generator:
+```bash
+cmake -B build -G "Unix Makefiles"
+```
+
+### MSVC Not Found
+
+Ensure Visual Studio 2022 is installed with the "Desktop development with C++" workload.
+
+### Tests Fail to Find TestVectors
+
+The CMake build automatically copies `TestData/` and `TestVectors/` to the build directory. If running from a different directory, set the working directory to the build directory.
+
+### Static Linking on MinGW
+
+The CMake build automatically adds static linking flags for MinGW to avoid runtime DLL dependencies:
+```
+-static -static-libgcc -static-libstdc++
+```
+
+## File Structure
+
+```
+cryptopp-modern/
+├── CMakeLists.txt           # Main CMake build file
+├── CMakePresets.json        # Build presets
+├── cmake/
+│   ├── cmake_minimum_required.cmake
+│   ├── ConfigFiles.cmake    # Package config generation
+│   ├── config.pc.in         # pkg-config template
+│   ├── config-alias.pc.in   # pkg-config compatibility alias
+│   ├── cryptopp-modernConfig.cmake  # find_package() config
+│   ├── GetGitRevisionDescription.cmake
+│   ├── GetGitRevisionDescription.cmake.in
+│   ├── sources.cmake        # Source file lists
+│   └── TargetArch.cmake     # Architecture detection
+├── include/cryptopp/        # Header files
+├── src/                     # Source files (organized by category, including src/pqc/)
+├── TestData/                # Test data files
+└── TestVectors/             # Test vector files
+```
+
+## Comparison with GNUmakefile
+
+Both build systems are maintained and produce compatible results:
+
+| Feature | CMake | GNUmakefile |
+|---------|-------|-------------|
+| Cross-platform | Yes | Yes (with caveats) |
+| IDE integration | Excellent | Limited |
+| `find_package()` support | Yes | No |
+| Presets | Yes | No |
+| SIMD auto-detection | Yes | Yes |
+| Parallel builds | Yes | Yes |
+| Installation | Yes | Yes |
+
+Choose CMake for:
+- IDE integration (VS Code, CLion, Visual Studio)
+- Using cryptopp-modern as a dependency in CMake projects
+- Cross-platform development
+
+Choose GNUmakefile for:
+- Simple command-line builds
+- Compatibility with existing Crypto++ workflows
+- Minimal dependencies
+
+## License
+
+The CMake build system is distributed under the same license as cryptopp-modern (Boost Software License 1.0).
