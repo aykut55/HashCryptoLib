@@ -184,7 +184,6 @@
          to delete, they are regenerated from this reference. -->
     <ProjectReference Include="..\..\..\3rdParty\cryptopp890\cryptlib.vcxproj">
       <Project>{c39f4b46-6e89-4074-902e-ca57073044d2}</Project>
-      <AdditionalProperties>PlatformToolset=v143;WindowsTargetPlatformVersion=10.0</AdditionalProperties>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
