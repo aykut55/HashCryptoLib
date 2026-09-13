@@ -1,7 +1,7 @@
 #include "Utils.h"
 
 #include "../CryptoApi.h"
-#include "../Defiinions/Definitions.h"
+#include "../Definitions/Definitions.h"
 
 #include <string>
 

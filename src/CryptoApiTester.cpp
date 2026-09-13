@@ -1,7 +1,7 @@
 #include "CryptoApiTester.h"
 
 #include "CryptoApi.h"
-#include "Defiinions/Definitions.h"
+#include "Definitions/Definitions.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -19,11 +19,23 @@
     <Filter Include="src\Utils">
       <UniqueIdentifier>{6F4AB120-A99D-4B03-9157-3CC920F76718}</UniqueIdentifier>
     </Filter>
-    <Filter Include="src\Defiinions">
+    <Filter Include="src\Definitions">
       <UniqueIdentifier>{A23B142A-6FC1-4F73-994E-D4DE13151B50}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\Providers">
       <UniqueIdentifier>{2B6E6E2A-8B0B-4F1E-9C7B-6C1A9C4E2F31}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\CryptoPPProvider">
+      <UniqueIdentifier>{7A1C3E4F-9B2D-4A6E-8C1F-3D5B6E7A8F90}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\MicrosoftProvider">
+      <UniqueIdentifier>{9E2D4F6A-1B3C-4D5E-8F7A-2C3B4A5D6E70}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\BotanProvider">
+      <UniqueIdentifier>{3F5A7C9E-2D4B-4F6A-9C8E-1B3D5F7A9C0E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="3rdParty">
+      <UniqueIdentifier>{5C8E2A4D-6F1B-4D3C-8A7E-9F2C4B6D8E0A}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -45,8 +57,17 @@
     <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp">
       <Filter>src\Providers</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\src\Providers\BCryptProvider.cpp">
-      <Filter>src\Providers</Filter>
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.cpp">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProvider.cpp">
+      <Filter>src\Providers\BotanProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp">
+      <Filter>3rdParty</Filter>
     </ClCompile>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
@@ -56,8 +77,8 @@
     <ClInclude Include="..\..\..\src\Utils\Utils.h">
       <Filter>src\Utils</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\src\Defiinions\Definitions.h">
-      <Filter>src\Defiinions</Filter>
+    <ClInclude Include="..\..\..\src\Definitions\Definitions.h">
+      <Filter>src\Definitions</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\CryptoApi.h">
       <Filter>src</Filter>
@@ -74,8 +95,14 @@
     <ClInclude Include="..\..\..\src\Providers\AeadCipher.h">
       <Filter>src\Providers</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\src\Providers\BCryptProvider.h">
-      <Filter>src\Providers</Filter>
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.h">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProvider.h">
+      <Filter>src\Providers\BotanProvider</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

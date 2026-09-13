@@ -1,7 +1,7 @@
 #include "CryptoApi.h"
 #include "Utils/Utils.h"
-#include "Defiinions/Definitions.h"
-#include "Providers/BCryptProvider.h"
+#include "Definitions/Definitions.h"
+#include "Providers/MicrosoftProvider/MicrosoftProvider.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -261,7 +261,7 @@ int CCryptoApi::encryptBuffer(const unsigned char* key, const int keySize, const
             return INVALID_ARGUMENT;
         }
 
-        CBCryptProvider provider;
+        CMicrosoftProvider provider;
         IAeadCipher& cipher = provider;
         IRandomSource& randomSource = provider;
 
@@ -346,7 +346,7 @@ int CCryptoApi::decryptBuffer(const unsigned char* key, const int keySize, const
             return INVALID_ARGUMENT;
         }
 
-        CBCryptProvider provider;
+        CMicrosoftProvider provider;
         IAeadCipher& cipher = provider;
 
         if (!provider.Initialize())
@@ -424,7 +424,7 @@ int CCryptoApi::encryptBuffer(const char* password, const int passwordSize, cons
             return INVALID_ARGUMENT;
         }
 
-        CBCryptProvider provider;
+        CMicrosoftProvider provider;
         IAeadCipher& cipher = provider;
         IRandomSource& randomSource = provider;
         IKeyDerivation& keyDerivation = provider;
@@ -560,7 +560,7 @@ int CCryptoApi::decryptBuffer(const char* password, const int passwordSize, cons
             return INVALID_ARGUMENT;
         }
 
-        CBCryptProvider provider;
+        CMicrosoftProvider provider;
         IKeyDerivation& keyDerivation = provider;
 
         if (!provider.Initialize())
@@ -904,7 +904,7 @@ int CCryptoApi::EncryptFile(const char* password, const char* inputFilePath, con
         const unsigned long long totalBytes = static_cast<unsigned long long>(inputFileSize.QuadPart);
         unsigned long long processedBytes = 0;
 
-        CBCryptProvider provider;
+        CMicrosoftProvider provider;
         IAeadCipher& cipher = provider;
         IRandomSource& randomSource = provider;
         IKeyDerivation& keyDerivation = provider;
@@ -1054,7 +1054,7 @@ int CCryptoApi::DecryptFile(const char* password, const char* inputFilePath, con
         const unsigned long long totalBytes = static_cast<unsigned long long>(inputFileSize.QuadPart);
         unsigned long long processedBytes = 0;
 
-        CBCryptProvider provider;
+        CMicrosoftProvider provider;
         IAeadCipher& cipher = provider;
         IKeyDerivation& keyDerivation = provider;
 

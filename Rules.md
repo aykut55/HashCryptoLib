@@ -86,14 +86,16 @@ private:
 - Win32 yapılandırmalarında `ARCH_X86` ve `ARCH_WIN32`; x64 yapılandırmalarında `ARCH_X64` ve `ARCH_WIN64` tanımlanır.
 - Debug yapılandırmalarında `BUILD_DEBUG`, Release yapılandırmalarında `BUILD_RELEASE` tanımlanır.
 - Her yapılandırmada `MultiProcessorCompilation` varsayılanı `true` olur.
+- Her yapılandırmada dil standardı C++20 (`LanguageStandard: stdcpp20`) olarak ayarlanır. Bu kural yalnız `projects/msvc` altındaki projeler içindir; `projects/cppbuilder` (Borland/C++Builder) projelerine taşınmaz (bkz. Plan.md bölüm 2.3 — Botan gibi C++20 gerektiren bağımlılıklar kendi modülünde kalır, Borland istemciye zorunluluk olarak yansımaz).
 - Proje Visual Studio filtre dosyası kullanıyorsa yeni kaynak ve başlık dosyaları uygun filtrelere eklenir.
 
-Örnek çok işlemcili derleme ayarı:
+Örnek çok işlemcili derleme ve dil standardı ayarı:
 
 ```xml
 <ItemDefinitionGroup>
   <ClCompile>
     <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    <LanguageStandard>stdcpp20</LanguageStandard>
   </ClCompile>
 </ItemDefinitionGroup>
 ```

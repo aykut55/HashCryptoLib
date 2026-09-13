@@ -77,7 +77,21 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;$(ProjectDir)..\..\..\3rdParty;$(ProjectDir)..\..\..\3rdParty\botan3130\$(Platform);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- Botan's amalgamation headers require C++20 (std::span, concepts, etc.). -->
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- cryptlib.lib is built with the static CRT (MultiThreadedDebug/MultiThreaded); match it here
+       so the whole project links against the same CRT as the Crypto++ provider's dependency. -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -140,11 +154,13 @@
     <ClInclude Include="..\..\..\src\CryptoApi.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
-    <ClInclude Include="..\..\..\src\Defiinions\Definitions.h" />
+    <ClInclude Include="..\..\..\src\Definitions\Definitions.h" />
     <ClInclude Include="..\..\..\src\Providers\RandomSource.h" />
     <ClInclude Include="..\..\..\src\Providers\KeyDerivation.h" />
     <ClInclude Include="..\..\..\src\Providers\AeadCipher.h" />
-    <ClInclude Include="..\..\..\src\Providers\BCryptProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProvider.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -153,8 +169,23 @@
     <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp" />
     <ClCompile Include="..\..\..\src\Providers\KeyDerivation.cpp" />
     <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp" />
-    <ClCompile Include="..\..\..\src\Providers\BCryptProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProvider.cpp" />
+    <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
+         e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
+         $(Platform) picks the right one. -->
+    <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp" />
     <ClCompile Include="Main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Builds cryptlib.lib automatically (if missing/stale) whenever AppBuilder is built, and
+         links it in; the output folders under 3rdParty\cryptopp890 are build artifacts and safe
+         to delete, they are regenerated from this reference. -->
+    <ProjectReference Include="..\..\..\3rdParty\cryptopp890\cryptlib.vcxproj">
+      <Project>{c39f4b46-6e89-4074-902e-ca57073044d2}</Project>
+      <AdditionalProperties>PlatformToolset=v143;WindowsTargetPlatformVersion=10.0</AdditionalProperties>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

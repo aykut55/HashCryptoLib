@@ -7,7 +7,7 @@
 #define CRYPTOAPI_BUILD_DATE_RAW __DATE__
 #define CRYPTOAPI_BUILD_TIME __TIME__
 
-#include "Defiinions/Definitions.h"
+#include "Definitions/Definitions.h"
 
 namespace CryptoApiNS
 {
