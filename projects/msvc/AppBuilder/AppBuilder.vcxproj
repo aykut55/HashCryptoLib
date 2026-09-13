@@ -175,6 +175,7 @@
     <ClInclude Include="..\..\..\src\Providers\AsymmetricCipher.h" />
     <ClInclude Include="..\..\..\src\Providers\LegacyCipher.h" />
     <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h" />
+    <ClInclude Include="..\..\..\src\Providers\AlgorithmCapabilityMatrix.h" />
     <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Providers\CryptoProviderRegistry.h" />
     <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h" />

@@ -134,6 +134,9 @@
     <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h">
       <Filter>src\Providers</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\AlgorithmCapabilityMatrix.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h">
       <Filter>src\Providers</Filter>
     </ClInclude>
