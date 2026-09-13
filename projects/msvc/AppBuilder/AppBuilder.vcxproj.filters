@@ -13,10 +13,69 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="src">
+      <UniqueIdentifier>{f0ce8f87-e9ea-4f8a-bcce-9b5963f1a12b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Utils">
+      <UniqueIdentifier>{6F4AB120-A99D-4B03-9157-3CC920F76718}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Defiinions">
+      <UniqueIdentifier>{A23B142A-6FC1-4F73-994E-D4DE13151B50}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers">
+      <UniqueIdentifier>{2B6E6E2A-8B0B-4F1E-9C7B-6C1A9C4E2F31}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
+      <Filter>src\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\CryptoApi.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\CryptoApiTester.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\KeyDerivation.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\BCryptProvider.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\src\Utils\Utils.h">
+      <Filter>src\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Defiinions\Definitions.h">
+      <Filter>src\Defiinions</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\CryptoApi.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\CryptoApiTester.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\RandomSource.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\KeyDerivation.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\AeadCipher.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\BCryptProvider.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

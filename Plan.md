@@ -202,6 +202,8 @@ Tasarlanan aileler: `BasicSource<T, Traits>`, `BasicSink<T, Traits>`, `Batch<TIt
 Önemli sınırlar:
 
 - `std::string` bir dosya yolu da metin de olabileceğinden örtük tahmin yapılmaz: `FileSource(path)` ve `TextSource(text, encoding)` ayrıdır.
+- `EncryptBuffer` ve `DecryptBuffer` raw byte buffer'ları işler; input/output verisine Unicode veya ANSI dönüşümü uygulanmaz. `password` UTF-8 metindir ve `passwordSize` byte cinsinden verilir.
+- `EncryptFile` ve `DecryptFile` dosya yolu parametreleri UTF-8 metindir; Windows dosya API'lerine açık UTF-8 dönüşümüyle aktarılır.
 - `UnicodeString` UTF-8'e açık kuralla dönüştürülür. `AnsiString` için code page belirtilir; sistem varsayılanına sessiz bağımlılık kurulmaz.
 - Byte container kabulünde eleman türü ve erişim biçimi doğrulanır. Her `T` nesnesinin belleğini `sizeof(T)` ile şifreleyen genel API bulunmaz.
 - Uygulama nesneleri için açık `Serializer<T>` gerekir; padding, pointer, endian ve sürüm bağımlılığı taşıyan ham nesne belleği taşınabilir veri sayılmaz.
