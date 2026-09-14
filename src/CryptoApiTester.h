@@ -59,6 +59,17 @@ public:
 
     int RunOpenSslProviderEncryptDecryptBytesTest(void);
 
+    // Exercises CCryptoApi's RSA surface (GenerateAsymmetricKeyPair/EncryptWithPublicKey/
+    // DecryptWithPrivateKey/GetMaxAsymmetricPlaintextSize/GetAsymmetricCiphertextSize) via the
+    // 3-argument constructor, one full independent method per provider (no shared helper).
+    int RunMicrosoftProviderAsymmetricTest(void);
+
+    int RunCryptoPPProviderAsymmetricTest(void);
+
+    int RunBotanProviderAsymmetricTest(void);
+
+    int RunOpenSslProviderAsymmetricTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

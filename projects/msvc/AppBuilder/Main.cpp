@@ -51,6 +51,16 @@ int main()
 #endif
 
 #if 0
+    cryptoApiTester.RunMicrosoftProviderAsymmetricTest();
+
+    cryptoApiTester.RunCryptoPPProviderAsymmetricTest();
+
+    cryptoApiTester.RunBotanProviderAsymmetricTest();
+
+    cryptoApiTester.RunOpenSslProviderAsymmetricTest();
+#endif
+
+#if 0
     cryptoApiTester.RunEncryptStringMultilingualTest();
 
     cryptoApiTester.RunPrimitiveDataTest();

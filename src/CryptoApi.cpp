@@ -223,12 +223,17 @@ CCryptoApi::~CCryptoApi()
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM)
+CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
@@ -1216,6 +1221,181 @@ int CCryptoApi::DecryptFile(const char* password, const char* inputFilePath, con
     }
     catch (...)
     {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::GenerateAsymmetricKeyPair(void)
+{
+    try
+    {
+        if (!asymmetricCipher_)
+        {
+            std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+            if (!providerFactory)
+            {
+                return UNEXPECTED_ERROR;
+            }
+
+            asymmetricCipher_ = providerFactory->CreateAsymmetricCipher(asymmetricAlgorithm_);
+            if (!asymmetricCipher_)
+            {
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        return asymmetricCipher_->GenerateKeyPair() ? NO_ERROR : UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::GetMaxAsymmetricPlaintextSize(void) const
+{
+    try
+    {
+        return asymmetricCipher_ ? static_cast<int>(asymmetricCipher_->GetMaxPlaintextSize()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::GetAsymmetricCiphertextSize(void) const
+{
+    try
+    {
+        return asymmetricCipher_ ? static_cast<int>(asymmetricCipher_->GetCiphertextSize()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::EncryptWithPublicKey(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (!asymmetricCipher_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int requiredSize = asymmetricCipher_->GetCiphertextSize();
+        if (requiredSize == 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(requiredSize))
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(requiredSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        unsigned int actualSize = 0;
+        if (!asymmetricCipher_->Encrypt(inputBuffer, static_cast<unsigned int>(inputBufferSize),
+                                        outputBuffer, static_cast<unsigned int>(outputBufferCapacity),
+                                        &actualSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(actualSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::DecryptWithPrivateKey(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (!asymmetricCipher_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned int requiredSize = 0;
+        asymmetricCipher_->Decrypt(inputBuffer, static_cast<unsigned int>(inputBufferSize), nullptr, 0, &requiredSize);
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(requiredSize))
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(requiredSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        unsigned int actualSize = 0;
+        if (!asymmetricCipher_->Decrypt(inputBuffer, static_cast<unsigned int>(inputBufferSize),
+                                        outputBuffer, static_cast<unsigned int>(outputBufferCapacity),
+                                        &actualSize))
+        {
+            return INVALID_DATA;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(actualSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
         return UNEXPECTED_ERROR;
     }
 }

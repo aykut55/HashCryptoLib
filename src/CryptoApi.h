@@ -10,8 +10,12 @@
 #include "Definitions/Definitions.h"
 #include "Providers/ProviderTypes.h"
 
+#include <memory>
+
 namespace CryptoApiNS
 {
+
+class IAsymmetricCipher;
 
 class CCryptoApi
 {
@@ -19,6 +23,7 @@ public:
     virtual ~CCryptoApi();
              CCryptoApi();
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm);
+             CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm);
 
     const char* GetVersion(void) const;
 
@@ -94,6 +99,31 @@ public:
                      ProgressCallback onProgress,
                      void* progressUserData);
 
+    // RSA (self-contained round trip): generates a fresh key pair for this instance's
+    // asymmetricAlgorithm (see the 3-argument constructor); the private key never leaves this
+    // instance. Must be called once before EncryptWithPublicKey/DecryptWithPrivateKey/
+    // GetMaxAsymmetricPlaintextSize/GetAsymmetricCiphertextSize; calling it again rotates to a
+    // fresh key pair (old ciphertexts become undecryptable).
+    int GenerateAsymmetricKeyPair(void);
+
+    // Largest plaintext EncryptWithPublicKey can accept in one call; 0 before a key pair exists.
+    int GetMaxAsymmetricPlaintextSize(void) const;
+
+    // Exact ciphertext size EncryptWithPublicKey produces; 0 before a key pair exists.
+    int GetAsymmetricCiphertextSize(void) const;
+
+    // Typical use is wrapping a small symmetric key, not general-purpose data encryption --
+    // inputBufferSize is bounded by GetMaxAsymmetricPlaintextSize(). No chunking, no password.
+    int EncryptWithPublicKey( const unsigned char* inputBuffer, const int inputBufferSize,
+                             const int outputBufferCapacity,
+                             unsigned char* outputBuffer,
+                             int* outputBufferSize);
+
+    int DecryptWithPrivateKey( const unsigned char* inputBuffer, const int inputBufferSize,
+                              const int outputBufferCapacity,
+                              unsigned char* outputBuffer,
+                              int* outputBufferSize);
+
 protected:
 
 private:
@@ -142,6 +172,13 @@ private:
     // instance's lifetime (see CCryptoApi(const ProviderKind, const AeadAlgorithm)).
     ProviderKind providerKind_;
     AeadAlgorithm aeadAlgorithm_;
+
+    // RSA algorithm this instance uses for GenerateAsymmetricKeyPair; fixed for the instance's
+    // lifetime. asymmetricCipher_ is null until GenerateAsymmetricKeyPair() succeeds, and then
+    // holds the key pair for the instance's lifetime (see EncryptWithPublicKey/
+    // DecryptWithPrivateKey above).
+    AsymmetricAlgorithm asymmetricAlgorithm_;
+    std::unique_ptr<IAsymmetricCipher> asymmetricCipher_;
 
 };
 

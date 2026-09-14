@@ -2704,6 +2704,362 @@ int CCryptoApiTester::RunOpenSslProviderEncryptDecryptBytesTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunMicrosoftProviderAsymmetricTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048);
+
+        const int keyPairStatus = cryptoApi.GenerateAsymmetricKeyPair();
+        if (keyPairStatus != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED GenerateAsymmetricKeyPair status=" << keyPairStatus << std::endl;
+            return keyPairStatus;
+        }
+
+        const int maxPlaintextSize = cryptoApi.GetMaxAsymmetricPlaintextSize();
+        const int ciphertextSize = cryptoApi.GetAsymmetricCiphertextSize();
+        if (maxPlaintextSize <= 0 || ciphertextSize <= 0)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED sizes maxPlaintext=" << maxPlaintextSize
+                      << " ciphertext=" << ciphertextSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char plaintext[] = "RSA round trip via CCryptoApi";
+        const int plaintextSize = static_cast<int>(sizeof(plaintext) - 1);
+        if (plaintextSize > maxPlaintextSize)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED plaintext exceeds max" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int requiredCiphertextSize = 0;
+        int status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, 0, nullptr, &requiredCiphertextSize);
+        if (status != BUFFER_TOO_SMALL || requiredCiphertextSize != ciphertextSize)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> ciphertext(requiredCiphertextSize);
+        int actualCiphertextSize = 0;
+        status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, requiredCiphertextSize, &ciphertext[0], &actualCiphertextSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED EncryptWithPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredPlaintextSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, 0, nullptr, &requiredPlaintextSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> decrypted(requiredPlaintextSize);
+        int decryptedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, requiredPlaintextSize, decrypted.empty() ? nullptr : &decrypted[0], &decryptedSize);
+        if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(decrypted.data(), plaintext, plaintextSize) != 0)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderAsymmetricTest: PASSED (maxPlaintext=" << maxPlaintextSize
+                  << " ciphertext=" << ciphertextSize << ")" << std::endl;
+
+        // Tampered ciphertext must fail OAEP integrity, not silently return garbage.
+        std::vector<unsigned char> tampered(ciphertext.begin(), ciphertext.begin() + actualCiphertextSize);
+        tampered[0] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(requiredPlaintextSize);
+        int tamperedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&tampered[0], actualCiphertextSize, requiredPlaintextSize, tamperedOutput.empty() ? nullptr : &tamperedOutput[0], &tamperedSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderAsymmetricTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderAsymmetricTest: PASSED tampered ciphertext rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderAsymmetricTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048);
+
+        const int keyPairStatus = cryptoApi.GenerateAsymmetricKeyPair();
+        if (keyPairStatus != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED GenerateAsymmetricKeyPair status=" << keyPairStatus << std::endl;
+            return keyPairStatus;
+        }
+
+        const int maxPlaintextSize = cryptoApi.GetMaxAsymmetricPlaintextSize();
+        const int ciphertextSize = cryptoApi.GetAsymmetricCiphertextSize();
+        if (maxPlaintextSize <= 0 || ciphertextSize <= 0)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED sizes maxPlaintext=" << maxPlaintextSize
+                      << " ciphertext=" << ciphertextSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char plaintext[] = "RSA round trip via CCryptoApi";
+        const int plaintextSize = static_cast<int>(sizeof(plaintext) - 1);
+        if (plaintextSize > maxPlaintextSize)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED plaintext exceeds max" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int requiredCiphertextSize = 0;
+        int status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, 0, nullptr, &requiredCiphertextSize);
+        if (status != BUFFER_TOO_SMALL || requiredCiphertextSize != ciphertextSize)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> ciphertext(requiredCiphertextSize);
+        int actualCiphertextSize = 0;
+        status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, requiredCiphertextSize, &ciphertext[0], &actualCiphertextSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED EncryptWithPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredPlaintextSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, 0, nullptr, &requiredPlaintextSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> decrypted(requiredPlaintextSize);
+        int decryptedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, requiredPlaintextSize, decrypted.empty() ? nullptr : &decrypted[0], &decryptedSize);
+        if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(decrypted.data(), plaintext, plaintextSize) != 0)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderAsymmetricTest: PASSED (maxPlaintext=" << maxPlaintextSize
+                  << " ciphertext=" << ciphertextSize << ")" << std::endl;
+
+        // Tampered ciphertext must fail OAEP integrity, not silently return garbage.
+        std::vector<unsigned char> tampered(ciphertext.begin(), ciphertext.begin() + actualCiphertextSize);
+        tampered[0] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(requiredPlaintextSize);
+        int tamperedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&tampered[0], actualCiphertextSize, requiredPlaintextSize, tamperedOutput.empty() ? nullptr : &tamperedOutput[0], &tamperedSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderAsymmetricTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderAsymmetricTest: PASSED tampered ciphertext rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderAsymmetricTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048);
+
+        const int keyPairStatus = cryptoApi.GenerateAsymmetricKeyPair();
+        if (keyPairStatus != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED GenerateAsymmetricKeyPair status=" << keyPairStatus << std::endl;
+            return keyPairStatus;
+        }
+
+        const int maxPlaintextSize = cryptoApi.GetMaxAsymmetricPlaintextSize();
+        const int ciphertextSize = cryptoApi.GetAsymmetricCiphertextSize();
+        if (maxPlaintextSize <= 0 || ciphertextSize <= 0)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED sizes maxPlaintext=" << maxPlaintextSize
+                      << " ciphertext=" << ciphertextSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char plaintext[] = "RSA round trip via CCryptoApi";
+        const int plaintextSize = static_cast<int>(sizeof(plaintext) - 1);
+        if (plaintextSize > maxPlaintextSize)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED plaintext exceeds max" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int requiredCiphertextSize = 0;
+        int status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, 0, nullptr, &requiredCiphertextSize);
+        if (status != BUFFER_TOO_SMALL || requiredCiphertextSize != ciphertextSize)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> ciphertext(requiredCiphertextSize);
+        int actualCiphertextSize = 0;
+        status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, requiredCiphertextSize, &ciphertext[0], &actualCiphertextSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED EncryptWithPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredPlaintextSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, 0, nullptr, &requiredPlaintextSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> decrypted(requiredPlaintextSize);
+        int decryptedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, requiredPlaintextSize, decrypted.empty() ? nullptr : &decrypted[0], &decryptedSize);
+        if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(decrypted.data(), plaintext, plaintextSize) != 0)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderAsymmetricTest: PASSED (maxPlaintext=" << maxPlaintextSize
+                  << " ciphertext=" << ciphertextSize << ")" << std::endl;
+
+        // Tampered ciphertext must fail OAEP integrity, not silently return garbage.
+        std::vector<unsigned char> tampered(ciphertext.begin(), ciphertext.begin() + actualCiphertextSize);
+        tampered[0] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(requiredPlaintextSize);
+        int tamperedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&tampered[0], actualCiphertextSize, requiredPlaintextSize, tamperedOutput.empty() ? nullptr : &tamperedOutput[0], &tamperedSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunBotanProviderAsymmetricTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderAsymmetricTest: PASSED tampered ciphertext rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderAsymmetricTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048);
+
+        const int keyPairStatus = cryptoApi.GenerateAsymmetricKeyPair();
+        if (keyPairStatus != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED GenerateAsymmetricKeyPair status=" << keyPairStatus << std::endl;
+            return keyPairStatus;
+        }
+
+        const int maxPlaintextSize = cryptoApi.GetMaxAsymmetricPlaintextSize();
+        const int ciphertextSize = cryptoApi.GetAsymmetricCiphertextSize();
+        if (maxPlaintextSize <= 0 || ciphertextSize <= 0)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED sizes maxPlaintext=" << maxPlaintextSize
+                      << " ciphertext=" << ciphertextSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char plaintext[] = "RSA round trip via CCryptoApi";
+        const int plaintextSize = static_cast<int>(sizeof(plaintext) - 1);
+        if (plaintextSize > maxPlaintextSize)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED plaintext exceeds max" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int requiredCiphertextSize = 0;
+        int status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, 0, nullptr, &requiredCiphertextSize);
+        if (status != BUFFER_TOO_SMALL || requiredCiphertextSize != ciphertextSize)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> ciphertext(requiredCiphertextSize);
+        int actualCiphertextSize = 0;
+        status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, requiredCiphertextSize, &ciphertext[0], &actualCiphertextSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED EncryptWithPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredPlaintextSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, 0, nullptr, &requiredPlaintextSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> decrypted(requiredPlaintextSize);
+        int decryptedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, requiredPlaintextSize, decrypted.empty() ? nullptr : &decrypted[0], &decryptedSize);
+        if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(decrypted.data(), plaintext, plaintextSize) != 0)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderAsymmetricTest: PASSED (maxPlaintext=" << maxPlaintextSize
+                  << " ciphertext=" << ciphertextSize << ")" << std::endl;
+
+        // Tampered ciphertext must fail OAEP integrity, not silently return garbage.
+        std::vector<unsigned char> tampered(ciphertext.begin(), ciphertext.begin() + actualCiphertextSize);
+        tampered[0] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(requiredPlaintextSize);
+        int tamperedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&tampered[0], actualCiphertextSize, requiredPlaintextSize, tamperedOutput.empty() ? nullptr : &tamperedOutput[0], &tamperedSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderAsymmetricTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderAsymmetricTest: PASSED tampered ciphertext rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try

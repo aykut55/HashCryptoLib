@@ -99,3 +99,7 @@ private:
   </ClCompile>
 </ItemDefinitionGroup>
 ```
+
+## 3rdParty bağımlılıkları
+
+- `3rdParty/botan3130/x64/botan_all.h`, `x64/botan_all.cpp`, `Win32/botan_all.h`, `Win32/botan_all.cpp` git'e commit edilmez (`.gitignore`). Bu dosyalar `configure.py` ile yerel üretilen build artifact'lardır; `CBotanProvider` kullanan herhangi bir proje derlenmeden önce yeniden üretilmeleri gerekir. Üretme komutları ve modül listesi (RSA için `rsa` + `eme_oaep` ikisi de zorunlu) için bkz. `3rdParty/BOTAN_AMALGAMATION.md`.
