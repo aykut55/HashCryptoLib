@@ -2,6 +2,7 @@
 #define CRYPTOAPI_PROVIDERS_BOTAN_PROVIDER_H
 
 #include "Providers/AeadCipher.h"
+#include "Providers/AsymmetricCipher.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/RandomSource.h"
@@ -11,7 +12,7 @@
 namespace CryptoApiNS
 {
 
-class CBotanProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher
+class CBotanProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher
 {
 public:
     virtual ~CBotanProvider();
@@ -66,6 +67,20 @@ public:
 
     // IRandomSource
     virtual bool GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize);
+
+    // IAsymmetricCipher
+    virtual bool SelectAlgorithm(const AsymmetricAlgorithm algorithm);
+    virtual bool GenerateKeyPair(void);
+    virtual unsigned int GetMaxPlaintextSize(void) const;
+    virtual unsigned int GetCiphertextSize(void) const;
+
+    virtual bool Encrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize,
+                        unsigned char* outputBuffer, const unsigned int outputBufferCapacity,
+                        unsigned int* outputBufferSize);
+
+    virtual bool Decrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize,
+                        unsigned char* outputBuffer, const unsigned int outputBufferCapacity,
+                        unsigned int* outputBufferSize);
 
 protected:
 

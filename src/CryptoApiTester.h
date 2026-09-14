@@ -20,6 +20,45 @@ public:
 
     int RunEncryptDecryptBytesTest(void);
 
+    // Variants of RunEncryptDecryptFileTest/StringTest/BufferTest/BytesTest that construct
+    // CCryptoApi via CCryptoApi(const ProviderKind, const AeadAlgorithm) instead of the no-arg
+    // constructor (which defaults to PROVIDER_MICROSOFT/AEAD_AES_256_GCM), so each one proves the
+    // constructor-selected provider/algorithm is actually threaded through CCryptoApi's password
+    // KDF + chunked encrypt/decrypt path end to end, not just the raw Factory/IAeadCipher path
+    // RunProviderFactoryTest already covers. One full, independent method per provider/type pair
+    // (no shared helper) so a failure names its own provider and payload shape directly.
+    int RunMicrosoftProviderEncryptDecryptFileTest(void);
+
+    int RunMicrosoftProviderEncryptDecryptStringTest(void);
+
+    int RunMicrosoftProviderEncryptDecryptBufferTest(void);
+
+    int RunMicrosoftProviderEncryptDecryptBytesTest(void);
+
+    int RunCryptoPPProviderEncryptDecryptFileTest(void);
+
+    int RunCryptoPPProviderEncryptDecryptStringTest(void);
+
+    int RunCryptoPPProviderEncryptDecryptBufferTest(void);
+
+    int RunCryptoPPProviderEncryptDecryptBytesTest(void);
+
+    int RunBotanProviderEncryptDecryptFileTest(void);
+
+    int RunBotanProviderEncryptDecryptStringTest(void);
+
+    int RunBotanProviderEncryptDecryptBufferTest(void);
+
+    int RunBotanProviderEncryptDecryptBytesTest(void);
+
+    int RunOpenSslProviderEncryptDecryptFileTest(void);
+
+    int RunOpenSslProviderEncryptDecryptStringTest(void);
+
+    int RunOpenSslProviderEncryptDecryptBufferTest(void);
+
+    int RunOpenSslProviderEncryptDecryptBytesTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

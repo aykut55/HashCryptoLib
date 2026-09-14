@@ -108,15 +108,34 @@ std::unique_ptr<IKeyDerivation> CBotanProviderFactory::CreateKeyDerivation()
 
 bool CBotanProviderFactory::SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const
 {
-    (void)algorithm;
-    return false; // Not wired yet; Botan does have RSA, just not implemented here.
+    try
+    {
+        CBotanProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 // -----------------------------------------------------------------------------
 
 std::unique_ptr<IAsymmetricCipher> CBotanProviderFactory::CreateAsymmetricCipher(const AsymmetricAlgorithm algorithm)
 {
-    (void)algorithm;
-    return nullptr;
+    try
+    {
+        std::unique_ptr<CBotanProvider> provider(new CBotanProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 // -----------------------------------------------------------------------------
 

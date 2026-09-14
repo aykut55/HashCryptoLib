@@ -2,6 +2,7 @@
 
 #include "openssl/evp.h"
 #include "openssl/rand.h"
+#include "openssl/rsa.h"
 
 #include <cstring>
 #include <vector>
@@ -79,6 +80,21 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Asymmetric (RSA-OAEP-SHA256) ------------------------------------------------------------
+
+    unsigned int AsymmetricKeyBits(const AsymmetricAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case ASYMMETRIC_RSA_1024: return 1024;
+        case ASYMMETRIC_RSA_2048: return 2048;
+        case ASYMMETRIC_RSA_3072: return 3072;
+        case ASYMMETRIC_RSA_4096: return 4096;
+        default:                  return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct COpenSslProvider::Impl
@@ -95,10 +111,14 @@ struct COpenSslProvider::Impl
     unsigned int tagSize;
     unsigned int blockSize;
 
+    unsigned int rsaKeyBits;
+    bool rsaKeyGenerated;
+    EVP_PKEY* rsaKey;
+
     Impl()
         : cipher(nullptr), encryptCtx(EVP_CIPHER_CTX_new()), decryptCtx(EVP_CIPHER_CTX_new()),
           legacySelected(false), isCcm(false), isPadded(false), keySize(0), ivOrNonceSize(0),
-          tagSize(0), blockSize(0)
+          tagSize(0), blockSize(0), rsaKeyBits(0), rsaKeyGenerated(false), rsaKey(nullptr)
     {
     }
     // -----------------------------------------------------------------------------
@@ -110,6 +130,10 @@ struct COpenSslProvider::Impl
         if (cipher != nullptr)
         {
             EVP_CIPHER_free(cipher);
+        }
+        if (rsaKey != nullptr)
+        {
+            EVP_PKEY_free(rsaKey);
         }
     }
     // -----------------------------------------------------------------------------
@@ -548,6 +572,230 @@ bool COpenSslProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned
         }
 
         return RAND_bytes(buffer, static_cast<int>(bufferSize)) == 1;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
+{
+    try
+    {
+        const unsigned int keyBits = AsymmetricKeyBits(algorithm);
+        if (keyBits == 0)
+        {
+            return false;
+        }
+
+        impl_->rsaKeyBits = keyBits;
+        impl_->rsaKeyGenerated = false;
+        if (impl_->rsaKey != nullptr)
+        {
+            EVP_PKEY_free(impl_->rsaKey);
+            impl_->rsaKey = nullptr;
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::GenerateKeyPair(void)
+{
+    try
+    {
+        if (impl_->rsaKeyBits == 0)
+        {
+            return false;
+        }
+
+        EVP_PKEY_CTX* genCtx = EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr);
+        if (genCtx == nullptr)
+        {
+            return false;
+        }
+
+        if (EVP_PKEY_keygen_init(genCtx) != 1 ||
+            EVP_PKEY_CTX_set_rsa_keygen_bits(genCtx, static_cast<int>(impl_->rsaKeyBits)) != 1)
+        {
+            EVP_PKEY_CTX_free(genCtx);
+            return false;
+        }
+
+        EVP_PKEY* newKey = nullptr;
+        if (EVP_PKEY_generate(genCtx, &newKey) != 1)
+        {
+            EVP_PKEY_CTX_free(genCtx);
+            return false;
+        }
+
+        EVP_PKEY_CTX_free(genCtx);
+
+        if (impl_->rsaKey != nullptr)
+        {
+            EVP_PKEY_free(impl_->rsaKey);
+        }
+        impl_->rsaKey = newKey;
+        impl_->rsaKeyGenerated = true;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int COpenSslProvider::GetMaxPlaintextSize(void) const
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || impl_->rsaKey == nullptr)
+        {
+            return 0;
+        }
+
+        const int keyBytes = EVP_PKEY_get_size(impl_->rsaKey);
+        const int oaepOverhead = 2 * 32 + 2; // SHA-256 OAEP: 2*hashLen + 2
+        return keyBytes > oaepOverhead ? static_cast<unsigned int>(keyBytes - oaepOverhead) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int COpenSslProvider::GetCiphertextSize(void) const
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || impl_->rsaKey == nullptr)
+        {
+            return 0;
+        }
+
+        return static_cast<unsigned int>(EVP_PKEY_get_size(impl_->rsaKey));
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::Encrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || impl_->rsaKey == nullptr || outputBufferSize == nullptr ||
+            (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return false;
+        }
+
+        EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, impl_->rsaKey, nullptr);
+        if (ctx == nullptr)
+        {
+            return false;
+        }
+
+        if (EVP_PKEY_encrypt_init(ctx) != 1 ||
+            EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) != 1 ||
+            EVP_PKEY_CTX_set_rsa_oaep_md(ctx, EVP_sha256()) != 1 ||
+            EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, EVP_sha256()) != 1)
+        {
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        size_t requiredSize = 0;
+        if (EVP_PKEY_encrypt(ctx, nullptr, &requiredSize, inputBuffer, inputBufferSize) != 1)
+        {
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < requiredSize)
+        {
+            *outputBufferSize = static_cast<unsigned int>(requiredSize);
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        size_t actualSize = requiredSize;
+        if (EVP_PKEY_encrypt(ctx, outputBuffer, &actualSize, inputBuffer, inputBufferSize) != 1)
+        {
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        EVP_PKEY_CTX_free(ctx);
+        *outputBufferSize = static_cast<unsigned int>(actualSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::Decrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || impl_->rsaKey == nullptr || outputBufferSize == nullptr ||
+            (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return false;
+        }
+
+        EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, impl_->rsaKey, nullptr);
+        if (ctx == nullptr)
+        {
+            return false;
+        }
+
+        if (EVP_PKEY_decrypt_init(ctx) != 1 ||
+            EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) != 1 ||
+            EVP_PKEY_CTX_set_rsa_oaep_md(ctx, EVP_sha256()) != 1 ||
+            EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, EVP_sha256()) != 1)
+        {
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        size_t requiredSize = 0;
+        if (EVP_PKEY_decrypt(ctx, nullptr, &requiredSize, inputBuffer, inputBufferSize) != 1)
+        {
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < requiredSize)
+        {
+            *outputBufferSize = static_cast<unsigned int>(requiredSize);
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        size_t actualSize = requiredSize;
+        if (EVP_PKEY_decrypt(ctx, outputBuffer, &actualSize, inputBuffer, inputBufferSize) != 1)
+        {
+            EVP_PKEY_CTX_free(ctx);
+            return false;
+        }
+
+        EVP_PKEY_CTX_free(ctx);
+        *outputBufferSize = static_cast<unsigned int>(actualSize);
+        return true;
     }
     catch (...)
     {

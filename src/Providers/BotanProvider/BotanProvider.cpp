@@ -60,6 +60,21 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Asymmetric (RSA-OAEP-SHA256) ------------------------------------------------------------
+
+    unsigned int AsymmetricKeyBits(const AsymmetricAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case ASYMMETRIC_RSA_1024: return 1024;
+        case ASYMMETRIC_RSA_2048: return 2048;
+        case ASYMMETRIC_RSA_3072: return 3072;
+        case ASYMMETRIC_RSA_4096: return 4096;
+        default:                  return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct CBotanProvider::Impl
@@ -69,6 +84,10 @@ struct CBotanProvider::Impl
     std::unique_ptr<Botan::Cipher_Mode> legacyEncryption;
     std::unique_ptr<Botan::Cipher_Mode> legacyDecryption;
     bool legacySelected = false;
+
+    unsigned int rsaKeyBits = 0;
+    bool rsaKeyGenerated = false;
+    std::unique_ptr<Botan::RSA_PrivateKey> rsaPrivateKey;
 };
 
 CBotanProvider::~CBotanProvider()
@@ -465,6 +484,161 @@ bool CBotanProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned i
 
         Botan::System_RNG rng;
         rng.randomize(buffer, bufferSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
+{
+    try
+    {
+        const unsigned int keyBits = AsymmetricKeyBits(algorithm);
+        if (keyBits == 0)
+        {
+            return false;
+        }
+
+        impl_->rsaKeyBits = keyBits;
+        impl_->rsaKeyGenerated = false;
+        impl_->rsaPrivateKey.reset();
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::GenerateKeyPair(void)
+{
+    try
+    {
+        if (impl_->rsaKeyBits == 0)
+        {
+            return false;
+        }
+
+        Botan::AutoSeeded_RNG rng;
+        impl_->rsaPrivateKey.reset(new Botan::RSA_PrivateKey(rng, impl_->rsaKeyBits));
+        impl_->rsaKeyGenerated = true;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetMaxPlaintextSize(void) const
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || !impl_->rsaPrivateKey)
+        {
+            return 0;
+        }
+
+        Botan::AutoSeeded_RNG rng;
+        Botan::PK_Encryptor_EME encryptor(*impl_->rsaPrivateKey, rng, "OAEP(SHA-256)");
+        return static_cast<unsigned int>(encryptor.maximum_input_size());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetCiphertextSize(void) const
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || !impl_->rsaPrivateKey)
+        {
+            return 0;
+        }
+
+        return impl_->rsaKeyBits / 8;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Encrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || !impl_->rsaPrivateKey || outputBufferSize == nullptr ||
+            (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return false;
+        }
+
+        Botan::AutoSeeded_RNG rng;
+        Botan::PK_Encryptor_EME encryptor(*impl_->rsaPrivateKey, rng, "OAEP(SHA-256)");
+        const size_t requiredSize = encryptor.ciphertext_length(inputBufferSize);
+        if (outputBuffer == nullptr || outputBufferCapacity < requiredSize)
+        {
+            *outputBufferSize = static_cast<unsigned int>(requiredSize);
+            return false;
+        }
+
+        const std::vector<uint8_t> ciphertext = encryptor.encrypt(inputBuffer, inputBufferSize, rng);
+        if (ciphertext.size() > outputBufferCapacity)
+        {
+            *outputBufferSize = static_cast<unsigned int>(ciphertext.size());
+            return false;
+        }
+
+        if (!ciphertext.empty())
+        {
+            std::memcpy(outputBuffer, ciphertext.data(), ciphertext.size());
+        }
+        *outputBufferSize = static_cast<unsigned int>(ciphertext.size());
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Decrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || !impl_->rsaPrivateKey || outputBufferSize == nullptr ||
+            (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return false;
+        }
+
+        Botan::AutoSeeded_RNG rng;
+        Botan::PK_Decryptor_EME decryptor(*impl_->rsaPrivateKey, rng, "OAEP(SHA-256)");
+        const Botan::secure_vector<uint8_t> plaintext = decryptor.decrypt(inputBuffer, inputBufferSize);
+
+        if (outputBuffer == nullptr || outputBufferCapacity < plaintext.size())
+        {
+            *outputBufferSize = static_cast<unsigned int>(plaintext.size());
+            return false;
+        }
+
+        if (!plaintext.empty())
+        {
+            std::memcpy(outputBuffer, plaintext.data(), plaintext.size());
+        }
+        *outputBufferSize = static_cast<unsigned int>(plaintext.size());
         return true;
     }
     catch (...)

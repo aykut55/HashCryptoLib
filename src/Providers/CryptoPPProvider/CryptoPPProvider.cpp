@@ -8,8 +8,10 @@
 #include "cryptopp890/filters.h"
 #include "cryptopp890/gcm.h"
 #include "cryptopp890/modes.h"
+#include "cryptopp890/oaep.h"
 #include "cryptopp890/osrng.h"
 #include "cryptopp890/pwdbased.h"
+#include "cryptopp890/rsa.h"
 #include "cryptopp890/secblock.h"
 #include "cryptopp890/serpent.h"
 #include "cryptopp890/sha.h"
@@ -348,6 +350,24 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Asymmetric (RSA-OAEP-SHA256) ------------------------------------------------------------
+
+    unsigned int AsymmetricKeyBits(const AsymmetricAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case ASYMMETRIC_RSA_1024: return 1024;
+        case ASYMMETRIC_RSA_2048: return 2048;
+        case ASYMMETRIC_RSA_3072: return 3072;
+        case ASYMMETRIC_RSA_4096: return 4096;
+        default:                  return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    typedef CryptoPP::RSAES<CryptoPP::OAEP<CryptoPP::SHA256> >::Encryptor RsaOaepEncryptor;
+    typedef CryptoPP::RSAES<CryptoPP::OAEP<CryptoPP::SHA256> >::Decryptor RsaOaepDecryptor;
 }
 
 struct CCryptoPPProvider::Impl
@@ -359,6 +379,11 @@ struct CCryptoPPProvider::Impl
     unsigned int ivOrNonceSize = 0;
     unsigned int tagSize = 0;
     unsigned int blockSize = CRYPTOPP_PROVIDER_BLOCK_SIZE;
+
+    unsigned int rsaKeyBits = 0;
+    bool rsaKeyGenerated = false;
+    CryptoPP::RSA::PrivateKey rsaPrivateKey;
+    CryptoPP::RSA::PublicKey rsaPublicKey;
 };
 
 CCryptoPPProvider::~CCryptoPPProvider()
@@ -658,6 +683,158 @@ bool CCryptoPPProvider::GenerateRandomBytes(unsigned char* buffer, const unsigne
         }
 
         CryptoPP::OS_GenerateRandomBlock(true, reinterpret_cast<CryptoPP::byte*>(buffer), bufferSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
+{
+    try
+    {
+        const unsigned int keyBits = AsymmetricKeyBits(algorithm);
+        if (keyBits == 0)
+        {
+            return false;
+        }
+
+        impl_->rsaKeyBits = keyBits;
+        impl_->rsaKeyGenerated = false;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::GenerateKeyPair(void)
+{
+    try
+    {
+        if (impl_->rsaKeyBits == 0)
+        {
+            return false;
+        }
+
+        CryptoPP::AutoSeededRandomPool rng;
+        CryptoPP::RSA::PrivateKey privateKey;
+        privateKey.GenerateRandomWithKeySize(rng, impl_->rsaKeyBits);
+
+        impl_->rsaPrivateKey = privateKey;
+        impl_->rsaPublicKey = CryptoPP::RSA::PublicKey(privateKey);
+        impl_->rsaKeyGenerated = true;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CCryptoPPProvider::GetMaxPlaintextSize(void) const
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated)
+        {
+            return 0;
+        }
+
+        RsaOaepEncryptor encryptor(impl_->rsaPublicKey);
+        return static_cast<unsigned int>(encryptor.FixedMaxPlaintextLength());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CCryptoPPProvider::GetCiphertextSize(void) const
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated)
+        {
+            return 0;
+        }
+
+        RsaOaepEncryptor encryptor(impl_->rsaPublicKey);
+        return static_cast<unsigned int>(encryptor.FixedCiphertextLength());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::Encrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || outputBufferSize == nullptr ||
+            (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return false;
+        }
+
+        RsaOaepEncryptor encryptor(impl_->rsaPublicKey);
+        const size_t requiredSize = encryptor.FixedCiphertextLength();
+        if (outputBuffer == nullptr || outputBufferCapacity < requiredSize)
+        {
+            *outputBufferSize = static_cast<unsigned int>(requiredSize);
+            return false;
+        }
+
+        CryptoPP::AutoSeededRandomPool rng;
+        encryptor.Encrypt(rng, reinterpret_cast<const CryptoPP::byte*>(inputBuffer), inputBufferSize,
+                          reinterpret_cast<CryptoPP::byte*>(outputBuffer));
+        *outputBufferSize = static_cast<unsigned int>(requiredSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::Decrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize, unsigned char* outputBuffer, const unsigned int outputBufferCapacity, unsigned int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->rsaKeyGenerated || outputBufferSize == nullptr ||
+            (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return false;
+        }
+
+        RsaOaepDecryptor decryptor(impl_->rsaPrivateKey);
+        const size_t requiredSize = decryptor.FixedMaxPlaintextLength();
+        if (outputBuffer == nullptr || outputBufferCapacity < requiredSize)
+        {
+            *outputBufferSize = static_cast<unsigned int>(requiredSize);
+            return false;
+        }
+
+        CryptoPP::AutoSeededRandomPool rng;
+        const CryptoPP::DecodingResult result = decryptor.Decrypt(rng,
+            reinterpret_cast<const CryptoPP::byte*>(inputBuffer), inputBufferSize,
+            reinterpret_cast<CryptoPP::byte*>(outputBuffer));
+        if (!result.isValidCoding)
+        {
+            return false;
+        }
+
+        *outputBufferSize = static_cast<unsigned int>(result.messageLength);
         return true;
     }
     catch (...)

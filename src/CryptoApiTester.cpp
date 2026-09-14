@@ -1116,6 +1116,1594 @@ int CCryptoApiTester::RunEncryptDecryptBytesTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunMicrosoftProviderEncryptDecryptFileTest(void)
+{
+    try
+    {
+        const char* password = "T\xC3\xBCst P\xC3\xA4ssw0rd!";
+        const char* inputFilePath = "cryptoapi_encfile_test_in_microsoft.bin";
+        const char* encryptedFilePath = "cryptoapi_encfile_test_enc_microsoft.bin";
+        const char* decryptedFilePath = "cryptoapi_encfile_test_out_microsoft.bin";
+
+        std::vector<unsigned char> inputData(64 * 1024 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM);
+        const int encryptStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                        nullptr, nullptr);
+        if (encryptStatus != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED EncryptFile status=" << encryptStatus << std::endl;
+            std::remove(inputFilePath);
+            return encryptStatus;
+        }
+
+        const int decryptStatus = cryptoApi.DecryptFile(password, encryptedFilePath, decryptedFilePath,
+                                                        nullptr, nullptr);
+        if (decryptStatus != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED DecryptFile status=" << decryptStatus << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return decryptStatus;
+        }
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED to read output file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData.size() != inputData.size() ||
+            (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: PASSED (" << inputData.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptFile must
+        // stop at the next chunk boundary with OPERATION_CANCELLED and remove the partial output.
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED to write cancel-test input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int callCount = 0;
+        const int cancelStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                       &CancelAfterThirdChunk, &callCount);
+        std::remove(inputFilePath);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED cancel status=" << cancelStatus << std::endl;
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ifstream leftoverCheck(encryptedFilePath, std::ios::binary);
+        if (leftoverCheck.good())
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: FAILED cancelled output file was not removed" << std::endl;
+            leftoverCheck.close();
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptFileTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunMicrosoftProviderEncryptDecryptStringTest(void)
+{
+    try
+    {
+        const char* password = "Str\xC3\xADng T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<char> inputText(8 * 1024 + 321);
+        for (std::size_t index = 0; index < inputText.size(); ++index)
+        {
+            inputText[index] = static_cast<char>('A' + (index % 26));
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptString(password, passwordSize,
+                                             &inputText[0], static_cast<int>(inputText.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedData(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptString(password, passwordSize,
+                                         &inputText[0], static_cast<int>(inputText.size()),
+                                         requiredEncryptSize, &encryptedData[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: FAILED EncryptString status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<char> outputText(requiredDecryptSize);
+        int outputTextSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         requiredDecryptSize, outputText.empty() ? nullptr : &outputText[0], &outputTextSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: FAILED DecryptString status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputTextSize != static_cast<int>(inputText.size()) ||
+            std::memcmp(&outputText[0], &inputText[0], inputText.size()) != 0)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: PASSED (" << inputText.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptString must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptString(password, passwordSize,
+                                                         &inputText[0], static_cast<int>(inputText.size()),
+                                                         requiredEncryptSize, &encryptedData[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptStringTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunMicrosoftProviderEncryptDecryptBufferTest(void)
+{
+    try
+    {
+        const char* password = "B\xC3\xBC" "ffer T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                             &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                         requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail authentication, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptBuffer("WrongPassword!", 14,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize,
+                                         nullptr, nullptr);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBuffer must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBuffer(password, passwordSize,
+                                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                         requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptBufferTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunMicrosoftProviderEncryptDecryptBytesTest(void)
+{
+    try
+    {
+        const char* password = "Byt\xC3\xA9s T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBytes(password, passwordSize,
+                                            &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                            0, nullptr, &requiredEncryptSize,
+                                            nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBytes(password, passwordSize,
+                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                        requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: FAILED EncryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        0, nullptr, &requiredDecryptSize,
+                                        nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: FAILED DecryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBytes must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBytes(password, passwordSize,
+                                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                        requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                        &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderEncryptDecryptBytesTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderEncryptDecryptFileTest(void)
+{
+    try
+    {
+        const char* password = "T\xC3\xBCst P\xC3\xA4ssw0rd!";
+        const char* inputFilePath = "cryptoapi_encfile_test_in_cryptopp.bin";
+        const char* encryptedFilePath = "cryptoapi_encfile_test_enc_cryptopp.bin";
+        const char* decryptedFilePath = "cryptoapi_encfile_test_out_cryptopp.bin";
+
+        std::vector<unsigned char> inputData(64 * 1024 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM);
+        const int encryptStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                        nullptr, nullptr);
+        if (encryptStatus != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED EncryptFile status=" << encryptStatus << std::endl;
+            std::remove(inputFilePath);
+            return encryptStatus;
+        }
+
+        const int decryptStatus = cryptoApi.DecryptFile(password, encryptedFilePath, decryptedFilePath,
+                                                        nullptr, nullptr);
+        if (decryptStatus != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED DecryptFile status=" << decryptStatus << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return decryptStatus;
+        }
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED to read output file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData.size() != inputData.size() ||
+            (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: PASSED (" << inputData.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptFile must
+        // stop at the next chunk boundary with OPERATION_CANCELLED and remove the partial output.
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED to write cancel-test input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int callCount = 0;
+        const int cancelStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                       &CancelAfterThirdChunk, &callCount);
+        std::remove(inputFilePath);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED cancel status=" << cancelStatus << std::endl;
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ifstream leftoverCheck(encryptedFilePath, std::ios::binary);
+        if (leftoverCheck.good())
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: FAILED cancelled output file was not removed" << std::endl;
+            leftoverCheck.close();
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptFileTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderEncryptDecryptStringTest(void)
+{
+    try
+    {
+        const char* password = "Str\xC3\xADng T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<char> inputText(8 * 1024 + 321);
+        for (std::size_t index = 0; index < inputText.size(); ++index)
+        {
+            inputText[index] = static_cast<char>('A' + (index % 26));
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptString(password, passwordSize,
+                                             &inputText[0], static_cast<int>(inputText.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedData(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptString(password, passwordSize,
+                                         &inputText[0], static_cast<int>(inputText.size()),
+                                         requiredEncryptSize, &encryptedData[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: FAILED EncryptString status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<char> outputText(requiredDecryptSize);
+        int outputTextSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         requiredDecryptSize, outputText.empty() ? nullptr : &outputText[0], &outputTextSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: FAILED DecryptString status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputTextSize != static_cast<int>(inputText.size()) ||
+            std::memcmp(&outputText[0], &inputText[0], inputText.size()) != 0)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: PASSED (" << inputText.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptString must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptString(password, passwordSize,
+                                                         &inputText[0], static_cast<int>(inputText.size()),
+                                                         requiredEncryptSize, &encryptedData[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptStringTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderEncryptDecryptBufferTest(void)
+{
+    try
+    {
+        const char* password = "B\xC3\xBC" "ffer T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                             &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                         requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail authentication, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptBuffer("WrongPassword!", 14,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize,
+                                         nullptr, nullptr);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBuffer must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBuffer(password, passwordSize,
+                                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                         requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptBufferTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderEncryptDecryptBytesTest(void)
+{
+    try
+    {
+        const char* password = "Byt\xC3\xA9s T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBytes(password, passwordSize,
+                                            &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                            0, nullptr, &requiredEncryptSize,
+                                            nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBytes(password, passwordSize,
+                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                        requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: FAILED EncryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        0, nullptr, &requiredDecryptSize,
+                                        nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: FAILED DecryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBytes must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBytes(password, passwordSize,
+                                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                        requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                        &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderEncryptDecryptBytesTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderEncryptDecryptFileTest(void)
+{
+    try
+    {
+        const char* password = "T\xC3\xBCst P\xC3\xA4ssw0rd!";
+        const char* inputFilePath = "cryptoapi_encfile_test_in_botan.bin";
+        const char* encryptedFilePath = "cryptoapi_encfile_test_enc_botan.bin";
+        const char* decryptedFilePath = "cryptoapi_encfile_test_out_botan.bin";
+
+        std::vector<unsigned char> inputData(64 * 1024 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM);
+        const int encryptStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                        nullptr, nullptr);
+        if (encryptStatus != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED EncryptFile status=" << encryptStatus << std::endl;
+            std::remove(inputFilePath);
+            return encryptStatus;
+        }
+
+        const int decryptStatus = cryptoApi.DecryptFile(password, encryptedFilePath, decryptedFilePath,
+                                                        nullptr, nullptr);
+        if (decryptStatus != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED DecryptFile status=" << decryptStatus << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return decryptStatus;
+        }
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED to read output file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData.size() != inputData.size() ||
+            (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptFileTest: PASSED (" << inputData.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptFile must
+        // stop at the next chunk boundary with OPERATION_CANCELLED and remove the partial output.
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED to write cancel-test input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int callCount = 0;
+        const int cancelStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                       &CancelAfterThirdChunk, &callCount);
+        std::remove(inputFilePath);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED cancel status=" << cancelStatus << std::endl;
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ifstream leftoverCheck(encryptedFilePath, std::ios::binary);
+        if (leftoverCheck.good())
+        {
+            std::cout << "RunBotanProviderEncryptDecryptFileTest: FAILED cancelled output file was not removed" << std::endl;
+            leftoverCheck.close();
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptFileTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderEncryptDecryptStringTest(void)
+{
+    try
+    {
+        const char* password = "Str\xC3\xADng T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<char> inputText(8 * 1024 + 321);
+        for (std::size_t index = 0; index < inputText.size(); ++index)
+        {
+            inputText[index] = static_cast<char>('A' + (index % 26));
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptString(password, passwordSize,
+                                             &inputText[0], static_cast<int>(inputText.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptStringTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedData(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptString(password, passwordSize,
+                                         &inputText[0], static_cast<int>(inputText.size()),
+                                         requiredEncryptSize, &encryptedData[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptStringTest: FAILED EncryptString status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptStringTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<char> outputText(requiredDecryptSize);
+        int outputTextSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         requiredDecryptSize, outputText.empty() ? nullptr : &outputText[0], &outputTextSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptStringTest: FAILED DecryptString status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputTextSize != static_cast<int>(inputText.size()) ||
+            std::memcmp(&outputText[0], &inputText[0], inputText.size()) != 0)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptStringTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptStringTest: PASSED (" << inputText.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptString must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptString(password, passwordSize,
+                                                         &inputText[0], static_cast<int>(inputText.size()),
+                                                         requiredEncryptSize, &encryptedData[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptStringTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptStringTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderEncryptDecryptBufferTest(void)
+{
+    try
+    {
+        const char* password = "B\xC3\xBC" "ffer T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                             &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBufferTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                         requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBufferTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBufferTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBufferTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBufferTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptBufferTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail authentication, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptBuffer("WrongPassword!", 14,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize,
+                                         nullptr, nullptr);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBufferTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBuffer must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBuffer(password, passwordSize,
+                                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                         requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBufferTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptBufferTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderEncryptDecryptBytesTest(void)
+{
+    try
+    {
+        const char* password = "Byt\xC3\xA9s T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBytes(password, passwordSize,
+                                            &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                            0, nullptr, &requiredEncryptSize,
+                                            nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBytesTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBytes(password, passwordSize,
+                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                        requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBytesTest: FAILED EncryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        0, nullptr, &requiredDecryptSize,
+                                        nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBytesTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBytesTest: FAILED DecryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBytesTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptBytesTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBytes must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBytes(password, passwordSize,
+                                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                        requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                        &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunBotanProviderEncryptDecryptBytesTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderEncryptDecryptBytesTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderEncryptDecryptFileTest(void)
+{
+    try
+    {
+        const char* password = "T\xC3\xBCst P\xC3\xA4ssw0rd!";
+        const char* inputFilePath = "cryptoapi_encfile_test_in_openssl.bin";
+        const char* encryptedFilePath = "cryptoapi_encfile_test_enc_openssl.bin";
+        const char* decryptedFilePath = "cryptoapi_encfile_test_out_openssl.bin";
+
+        std::vector<unsigned char> inputData(64 * 1024 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM);
+        const int encryptStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                        nullptr, nullptr);
+        if (encryptStatus != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED EncryptFile status=" << encryptStatus << std::endl;
+            std::remove(inputFilePath);
+            return encryptStatus;
+        }
+
+        const int decryptStatus = cryptoApi.DecryptFile(password, encryptedFilePath, decryptedFilePath,
+                                                        nullptr, nullptr);
+        if (decryptStatus != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED DecryptFile status=" << decryptStatus << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return decryptStatus;
+        }
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED to read output file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData.size() != inputData.size() ||
+            (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptFileTest: PASSED (" << inputData.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptFile must
+        // stop at the next chunk boundary with OPERATION_CANCELLED and remove the partial output.
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED to write cancel-test input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int callCount = 0;
+        const int cancelStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                       &CancelAfterThirdChunk, &callCount);
+        std::remove(inputFilePath);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED cancel status=" << cancelStatus << std::endl;
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ifstream leftoverCheck(encryptedFilePath, std::ios::binary);
+        if (leftoverCheck.good())
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptFileTest: FAILED cancelled output file was not removed" << std::endl;
+            leftoverCheck.close();
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptFileTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderEncryptDecryptStringTest(void)
+{
+    try
+    {
+        const char* password = "Str\xC3\xADng T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<char> inputText(8 * 1024 + 321);
+        for (std::size_t index = 0; index < inputText.size(); ++index)
+        {
+            inputText[index] = static_cast<char>('A' + (index % 26));
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptString(password, passwordSize,
+                                             &inputText[0], static_cast<int>(inputText.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptStringTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedData(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptString(password, passwordSize,
+                                         &inputText[0], static_cast<int>(inputText.size()),
+                                         requiredEncryptSize, &encryptedData[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptStringTest: FAILED EncryptString status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptStringTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<char> outputText(requiredDecryptSize);
+        int outputTextSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         requiredDecryptSize, outputText.empty() ? nullptr : &outputText[0], &outputTextSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptStringTest: FAILED DecryptString status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputTextSize != static_cast<int>(inputText.size()) ||
+            std::memcmp(&outputText[0], &inputText[0], inputText.size()) != 0)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptStringTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptStringTest: PASSED (" << inputText.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptString must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptString(password, passwordSize,
+                                                         &inputText[0], static_cast<int>(inputText.size()),
+                                                         requiredEncryptSize, &encryptedData[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptStringTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptStringTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderEncryptDecryptBufferTest(void)
+{
+    try
+    {
+        const char* password = "B\xC3\xBC" "ffer T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                             &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                         requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail authentication, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptBuffer("WrongPassword!", 14,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize,
+                                         nullptr, nullptr);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBuffer must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBuffer(password, passwordSize,
+                                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                         requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptBufferTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderEncryptDecryptBytesTest(void)
+{
+    try
+    {
+        const char* password = "Byt\xC3\xA9s T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBytes(password, passwordSize,
+                                            &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                            0, nullptr, &requiredEncryptSize,
+                                            nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBytes(password, passwordSize,
+                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                        requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: FAILED EncryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        0, nullptr, &requiredDecryptSize,
+                                        nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: FAILED DecryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBytes must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBytes(password, passwordSize,
+                                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                        requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                        &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderEncryptDecryptBytesTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try

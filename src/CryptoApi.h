@@ -8,6 +8,7 @@
 #define CRYPTOAPI_BUILD_TIME __TIME__
 
 #include "Definitions/Definitions.h"
+#include "Providers/ProviderTypes.h"
 
 namespace CryptoApiNS
 {
@@ -17,6 +18,7 @@ class CCryptoApi
 public:
     virtual ~CCryptoApi();
              CCryptoApi();
+             CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm);
 
     const char* GetVersion(void) const;
 
@@ -135,6 +137,11 @@ private:
                        const int outputBufferCapacity,
                        unsigned char* outputBuffer,
                        int* outputBufferSize);
+
+    // Provider/algorithm this instance uses for every Encrypt*/Decrypt* call; fixed for the
+    // instance's lifetime (see CCryptoApi(const ProviderKind, const AeadAlgorithm)).
+    ProviderKind providerKind_;
+    AeadAlgorithm aeadAlgorithm_;
 
 };
 

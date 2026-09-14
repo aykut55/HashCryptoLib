@@ -213,11 +213,6 @@ const unsigned int PASSWORD_KDF_ITERATIONS = 600000;
 const unsigned int   FILE_CHUNK_SIZE = 1048576 * 0 + 1024 * 1; // 1 MiB plaintext chunk size for streaming file operations.
 const unsigned int BUFFER_CHUNK_SIZE = 1048576 * 0 + 1024 * 1; // 1 MiB plaintext chunk size for EncryptBuffer/EncryptString.
 
-// TODO (task #18 follow-up): expose provider/algorithm selection through the public API instead
-// of a fixed default; see Plan.md and the CCryptoApi/Factory unification note.
-const CryptoApiNS::ProviderKind DEFAULT_PROVIDER_KIND = CryptoApiNS::PROVIDER_MICROSOFT;
-const CryptoApiNS::AeadAlgorithm DEFAULT_AEAD_ALGORITHM = CryptoApiNS::AEAD_AES_256_GCM;
-
 } // namespace
 
 namespace CryptoApiNS
@@ -228,7 +223,12 @@ CCryptoApi::~CCryptoApi()
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi()
+CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
@@ -267,13 +267,13 @@ int CCryptoApi::encryptBuffer(const unsigned char* key, const int keySize, const
             return INVALID_ARGUMENT;
         }
 
-        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
         if (!providerFactory)
         {
             return UNEXPECTED_ERROR;
         }
 
-        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(aeadAlgorithm_);
         std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource();
         if (!cipher || !randomSource)
         {
@@ -356,13 +356,13 @@ int CCryptoApi::decryptBuffer(const unsigned char* key, const int keySize, const
             return INVALID_ARGUMENT;
         }
 
-        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
         if (!providerFactory)
         {
             return UNEXPECTED_ERROR;
         }
 
-        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(aeadAlgorithm_);
         if (!cipher)
         {
             return UNEXPECTED_ERROR;
@@ -438,13 +438,13 @@ int CCryptoApi::encryptBuffer(const char* password, const int passwordSize, cons
             return INVALID_ARGUMENT;
         }
 
-        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
         if (!providerFactory)
         {
             return UNEXPECTED_ERROR;
         }
 
-        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(aeadAlgorithm_);
         std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource();
         std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
         if (!cipher || !randomSource || !keyDerivation)
@@ -578,13 +578,13 @@ int CCryptoApi::decryptBuffer(const char* password, const int passwordSize, cons
             return INVALID_ARGUMENT;
         }
 
-        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
         if (!providerFactory)
         {
             return UNEXPECTED_ERROR;
         }
 
-        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(aeadAlgorithm_);
         std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
         if (!cipher || !keyDerivation)
         {
@@ -927,7 +927,7 @@ int CCryptoApi::EncryptFile(const char* password, const char* inputFilePath, con
         const unsigned long long totalBytes = static_cast<unsigned long long>(inputFileSize.QuadPart);
         unsigned long long processedBytes = 0;
 
-        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
         if (!providerFactory)
         {
             outputHandle.reset();
@@ -935,7 +935,7 @@ int CCryptoApi::EncryptFile(const char* password, const char* inputFilePath, con
             return UNEXPECTED_ERROR;
         }
 
-        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(aeadAlgorithm_);
         std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource();
         std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
         if (!cipher || !randomSource || !keyDerivation)
@@ -1083,7 +1083,7 @@ int CCryptoApi::DecryptFile(const char* password, const char* inputFilePath, con
         const unsigned long long totalBytes = static_cast<unsigned long long>(inputFileSize.QuadPart);
         unsigned long long processedBytes = 0;
 
-        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
         if (!providerFactory)
         {
             outputHandle.reset();
@@ -1091,7 +1091,7 @@ int CCryptoApi::DecryptFile(const char* password, const char* inputFilePath, con
             return UNEXPECTED_ERROR;
         }
 
-        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(aeadAlgorithm_);
         std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
         if (!cipher || !keyDerivation)
         {

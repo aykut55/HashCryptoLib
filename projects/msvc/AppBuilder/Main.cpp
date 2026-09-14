@@ -6,7 +6,7 @@ int main()
 
     cryptoApiTester.Run();
 
-#if 0
+#if 1
     cryptoApiTester.RunEncryptDecryptFileTest();
 
     cryptoApiTester.RunEncryptDecryptStringTest();
@@ -14,6 +14,40 @@ int main()
     cryptoApiTester.RunEncryptDecryptBufferTest();
 
     cryptoApiTester.RunEncryptDecryptBytesTest();
+#endif
+
+#if 0
+    cryptoApiTester.RunMicrosoftProviderEncryptDecryptFileTest();
+
+    cryptoApiTester.RunMicrosoftProviderEncryptDecryptStringTest();
+
+    cryptoApiTester.RunMicrosoftProviderEncryptDecryptBufferTest();
+
+    cryptoApiTester.RunMicrosoftProviderEncryptDecryptBytesTest();
+
+    cryptoApiTester.RunCryptoPPProviderEncryptDecryptFileTest();
+
+    cryptoApiTester.RunCryptoPPProviderEncryptDecryptStringTest();
+
+    cryptoApiTester.RunCryptoPPProviderEncryptDecryptBufferTest();
+
+    cryptoApiTester.RunCryptoPPProviderEncryptDecryptBytesTest();
+
+    cryptoApiTester.RunBotanProviderEncryptDecryptFileTest();
+
+    cryptoApiTester.RunBotanProviderEncryptDecryptStringTest();
+
+    cryptoApiTester.RunBotanProviderEncryptDecryptBufferTest();
+
+    cryptoApiTester.RunBotanProviderEncryptDecryptBytesTest();
+
+    cryptoApiTester.RunOpenSslProviderEncryptDecryptFileTest();
+
+    cryptoApiTester.RunOpenSslProviderEncryptDecryptStringTest();
+
+    cryptoApiTester.RunOpenSslProviderEncryptDecryptBufferTest();
+
+    cryptoApiTester.RunOpenSslProviderEncryptDecryptBytesTest();
 #endif
 
 #if 0
@@ -27,7 +61,8 @@ int main()
 
     cryptoApiTester.RunVectorWideStringDataTest();
 #endif
-/*
+
+#if 0
     cryptoApiTester.RunProviderFactoryTest();
 
     cryptoApiTester.RunProviderFactoryFileTest();
@@ -37,7 +72,8 @@ int main()
     cryptoApiTester.RunProviderFactoryBufferTest();
 
     cryptoApiTester.RunProviderFactoryBytesTest();
-*/
+#endif
+
 #if 0
     cryptoApiTester.RunEncryptDecryptFileTestNonBlocking();
 
@@ -48,6 +84,8 @@ int main()
     cryptoApiTester.RunEncryptDecryptBytesTestNonBlocking();
 #endif
 
+#if 0
+
     cryptoApiTester.RunMicrosoftProviderAllAlgorithmsTest();
 
     cryptoApiTester.RunCryptoPPProviderAllAlgorithmsTest();
@@ -55,6 +93,7 @@ int main()
     cryptoApiTester.RunBotanProviderAllAlgorithmsTest();
 
     cryptoApiTester.RunOpenSslProviderAllAlgorithmsTest();
+#endif
 
     return 0;
 }
