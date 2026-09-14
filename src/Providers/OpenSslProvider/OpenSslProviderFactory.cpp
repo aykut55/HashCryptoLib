@@ -93,6 +93,19 @@ std::unique_ptr<IRandomSource> COpenSslProviderFactory::CreateRandomSource()
 }
 // -----------------------------------------------------------------------------
 
+std::unique_ptr<IKeyDerivation> COpenSslProviderFactory::CreateKeyDerivation()
+{
+    try
+    {
+        return std::unique_ptr<IKeyDerivation>(new COpenSslProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool COpenSslProviderFactory::SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const
 {
     (void)algorithm;

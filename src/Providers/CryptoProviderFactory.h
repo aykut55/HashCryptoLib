@@ -3,6 +3,7 @@
 
 #include "Providers/AeadCipher.h"
 #include "Providers/AsymmetricCipher.h"
+#include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/ProviderTypes.h"
 #include "Providers/RandomSource.h"
@@ -31,6 +32,10 @@ public:
     // Random sources are algorithm-independent (no SelectAlgorithm needed), used e.g. to supply
     // fresh per-chunk nonces to IAeadCipher::EncryptChunked.
     virtual std::unique_ptr<IRandomSource> CreateRandomSource() = 0;
+
+    // Key derivation is algorithm-independent (no SelectAlgorithm needed), used to turn a
+    // caller-supplied password into a key suitable for IAeadCipher::SetKey.
+    virtual std::unique_ptr<IKeyDerivation> CreateKeyDerivation() = 0;
 
     // Not every provider implements asymmetric (public/private key-pair) crypto yet; providers
     // that don't must have SupportsAsymmetricAlgorithm() return false and CreateAsymmetricCipher()

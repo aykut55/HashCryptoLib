@@ -20,6 +20,8 @@ public:
 
     virtual std::unique_ptr<IRandomSource> CreateRandomSource();
 
+    virtual std::unique_ptr<IKeyDerivation> CreateKeyDerivation();
+
     virtual bool SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const;
     virtual std::unique_ptr<IAsymmetricCipher> CreateAsymmetricCipher(const AsymmetricAlgorithm algorithm);
 

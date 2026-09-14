@@ -1,7 +1,8 @@
 #include "CryptoApi.h"
 #include "Utils/Utils.h"
 #include "Definitions/Definitions.h"
-#include "Providers/MicrosoftProvider/MicrosoftProvider.h"
+#include "Providers/CryptoProviderFactory.h"
+#include "Providers/CryptoProviderRegistry.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -212,6 +213,11 @@ const unsigned int PASSWORD_KDF_ITERATIONS = 600000;
 const unsigned int   FILE_CHUNK_SIZE = 1048576 * 0 + 1024 * 1; // 1 MiB plaintext chunk size for streaming file operations.
 const unsigned int BUFFER_CHUNK_SIZE = 1048576 * 0 + 1024 * 1; // 1 MiB plaintext chunk size for EncryptBuffer/EncryptString.
 
+// TODO (task #18 follow-up): expose provider/algorithm selection through the public API instead
+// of a fixed default; see Plan.md and the CCryptoApi/Factory unification note.
+const CryptoApiNS::ProviderKind DEFAULT_PROVIDER_KIND = CryptoApiNS::PROVIDER_MICROSOFT;
+const CryptoApiNS::AeadAlgorithm DEFAULT_AEAD_ALGORITHM = CryptoApiNS::AEAD_AES_256_GCM;
+
 } // namespace
 
 namespace CryptoApiNS
@@ -261,17 +267,21 @@ int CCryptoApi::encryptBuffer(const unsigned char* key, const int keySize, const
             return INVALID_ARGUMENT;
         }
 
-        CMicrosoftProvider provider;
-        IAeadCipher& cipher = provider;
-        IRandomSource& randomSource = provider;
-
-        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        if (!providerFactory)
         {
             return UNEXPECTED_ERROR;
         }
 
-        const unsigned int nonceSize = cipher.GetNonceSize();
-        const unsigned int tagSize = cipher.GetTagSize();
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource();
+        if (!cipher || !randomSource)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int nonceSize = cipher->GetNonceSize();
+        const unsigned int tagSize = cipher->GetTagSize();
         const long long requiredSizeLL = static_cast<long long>(inputBufferSize) +
                                          static_cast<long long>(nonceSize) +
                                          static_cast<long long>(tagSize);
@@ -291,7 +301,7 @@ int CCryptoApi::encryptBuffer(const unsigned char* key, const int keySize, const
             return BUFFER_TOO_SMALL;
         }
 
-        if (!cipher.SetKey(key, static_cast<unsigned int>(keySize)))
+        if (!cipher->SetKey(key, static_cast<unsigned int>(keySize)))
         {
             return INVALID_ARGUMENT;
         }
@@ -300,12 +310,12 @@ int CCryptoApi::encryptBuffer(const unsigned char* key, const int keySize, const
         unsigned char* ciphertextPtr = outputBuffer + nonceSize;
         unsigned char* tagPtr = ciphertextPtr + inputBufferSize;
 
-        if (!randomSource.GenerateRandomBytes(noncePtr, nonceSize))
+        if (!randomSource->GenerateRandomBytes(noncePtr, nonceSize))
         {
             return UNEXPECTED_ERROR;
         }
 
-        if (!cipher.Encrypt(noncePtr, nonceSize,
+        if (!cipher->Encrypt(noncePtr, nonceSize,
                             inputBuffer, static_cast<unsigned int>(inputBufferSize),
                             ciphertextPtr,
                             tagPtr, tagSize))
@@ -346,16 +356,20 @@ int CCryptoApi::decryptBuffer(const unsigned char* key, const int keySize, const
             return INVALID_ARGUMENT;
         }
 
-        CMicrosoftProvider provider;
-        IAeadCipher& cipher = provider;
-
-        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        if (!providerFactory)
         {
             return UNEXPECTED_ERROR;
         }
 
-        const unsigned int nonceSize = cipher.GetNonceSize();
-        const unsigned int tagSize = cipher.GetTagSize();
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        if (!cipher)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int nonceSize = cipher->GetNonceSize();
+        const unsigned int tagSize = cipher->GetTagSize();
         const unsigned int overhead = nonceSize + tagSize;
         if (static_cast<unsigned int>(inputBufferSize) < overhead)
         {
@@ -373,7 +387,7 @@ int CCryptoApi::decryptBuffer(const unsigned char* key, const int keySize, const
             return BUFFER_TOO_SMALL;
         }
 
-        if (!cipher.SetKey(key, static_cast<unsigned int>(keySize)))
+        if (!cipher->SetKey(key, static_cast<unsigned int>(keySize)))
         {
             return INVALID_ARGUMENT;
         }
@@ -382,7 +396,7 @@ int CCryptoApi::decryptBuffer(const unsigned char* key, const int keySize, const
         const unsigned char* ciphertextPtr = inputBuffer + nonceSize;
         const unsigned char* tagPtr = ciphertextPtr + requiredSize;
 
-        if (!cipher.Decrypt(noncePtr, nonceSize,
+        if (!cipher->Decrypt(noncePtr, nonceSize,
                             ciphertextPtr, static_cast<unsigned int>(requiredSize),
                             tagPtr, tagSize,
                             outputBuffer))
@@ -424,19 +438,23 @@ int CCryptoApi::encryptBuffer(const char* password, const int passwordSize, cons
             return INVALID_ARGUMENT;
         }
 
-        CMicrosoftProvider provider;
-        IAeadCipher& cipher = provider;
-        IRandomSource& randomSource = provider;
-        IKeyDerivation& keyDerivation = provider;
-
-        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        if (!providerFactory)
         {
             return UNEXPECTED_ERROR;
         }
 
-        const unsigned int nonceSize = cipher.GetNonceSize();
-        const unsigned int tagSize = cipher.GetTagSize();
-        const unsigned int keySize = cipher.GetKeySize();
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource();
+        std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
+        if (!cipher || !randomSource || !keyDerivation)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int nonceSize = cipher->GetNonceSize();
+        const unsigned int tagSize = cipher->GetTagSize();
+        const unsigned int keySize = cipher->GetKeySize();
         const unsigned int recordOverhead = 4u + nonceSize + tagSize;
         const unsigned int chunkCount = inputBufferSize > 0
             ? static_cast<unsigned int>((static_cast<long long>(inputBufferSize) + BUFFER_CHUNK_SIZE - 1) / BUFFER_CHUNK_SIZE)
@@ -462,13 +480,13 @@ int CCryptoApi::encryptBuffer(const char* password, const int passwordSize, cons
         }
 
         unsigned char* saltPtr = outputBuffer;
-        if (!randomSource.GenerateRandomBytes(saltPtr, PASSWORD_SALT_SIZE))
+        if (!randomSource->GenerateRandomBytes(saltPtr, PASSWORD_SALT_SIZE))
         {
             return UNEXPECTED_ERROR;
         }
 
         std::vector<unsigned char> key(keySize);
-        if (!keyDerivation.DerivePasswordKey(password, static_cast<unsigned int>(passwordSize),
+        if (!keyDerivation->DerivePasswordKey(password, static_cast<unsigned int>(passwordSize),
                                              saltPtr, PASSWORD_SALT_SIZE,
                                              PASSWORD_KDF_ITERATIONS,
                                              &key[0], keySize))
@@ -560,10 +578,15 @@ int CCryptoApi::decryptBuffer(const char* password, const int passwordSize, cons
             return INVALID_ARGUMENT;
         }
 
-        CMicrosoftProvider provider;
-        IKeyDerivation& keyDerivation = provider;
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        if (!providerFactory)
+        {
+            return UNEXPECTED_ERROR;
+        }
 
-        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
+        if (!cipher || !keyDerivation)
         {
             return UNEXPECTED_ERROR;
         }
@@ -573,9 +596,9 @@ int CCryptoApi::decryptBuffer(const char* password, const int passwordSize, cons
             return INVALID_DATA;
         }
 
-        const unsigned int keySize = provider.GetKeySize();
-        const unsigned int nonceSize = provider.GetNonceSize();
-        const unsigned int tagSize = provider.GetTagSize();
+        const unsigned int keySize = cipher->GetKeySize();
+        const unsigned int nonceSize = cipher->GetNonceSize();
+        const unsigned int tagSize = cipher->GetTagSize();
         const unsigned long long totalInputSize = static_cast<unsigned long long>(inputBufferSize);
 
         // First pass: validate the length-prefixed record framing and compute the required
@@ -625,7 +648,7 @@ int CCryptoApi::decryptBuffer(const char* password, const int passwordSize, cons
 
         const unsigned char* saltPtr = inputBuffer;
         std::vector<unsigned char> key(keySize);
-        if (!keyDerivation.DerivePasswordKey(password, static_cast<unsigned int>(passwordSize),
+        if (!keyDerivation->DerivePasswordKey(password, static_cast<unsigned int>(passwordSize),
                                              saltPtr, PASSWORD_SALT_SIZE,
                                              PASSWORD_KDF_ITERATIONS,
                                              &key[0], keySize))
@@ -904,21 +927,27 @@ int CCryptoApi::EncryptFile(const char* password, const char* inputFilePath, con
         const unsigned long long totalBytes = static_cast<unsigned long long>(inputFileSize.QuadPart);
         unsigned long long processedBytes = 0;
 
-        CMicrosoftProvider provider;
-        IAeadCipher& cipher = provider;
-        IRandomSource& randomSource = provider;
-        IKeyDerivation& keyDerivation = provider;
-
-        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        if (!providerFactory)
         {
             outputHandle.reset();
             deleteFileBestEffort(wideOutputFilePath);
             return UNEXPECTED_ERROR;
         }
 
-        const unsigned int keySize = cipher.GetKeySize();
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource();
+        std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
+        if (!cipher || !randomSource || !keyDerivation)
+        {
+            outputHandle.reset();
+            deleteFileBestEffort(wideOutputFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int keySize = cipher->GetKeySize();
         std::vector<unsigned char> salt(PASSWORD_SALT_SIZE);
-        if (!randomSource.GenerateRandomBytes(&salt[0], PASSWORD_SALT_SIZE) ||
+        if (!randomSource->GenerateRandomBytes(&salt[0], PASSWORD_SALT_SIZE) ||
             !writeFileExact(rawOutputHandle, &salt[0], PASSWORD_SALT_SIZE))
         {
             outputHandle.reset();
@@ -927,7 +956,7 @@ int CCryptoApi::EncryptFile(const char* password, const char* inputFilePath, con
         }
 
         std::vector<unsigned char> key(keySize);
-        if (!keyDerivation.DerivePasswordKey(password, static_cast<unsigned int>(passwordSizeValue),
+        if (!keyDerivation->DerivePasswordKey(password, static_cast<unsigned int>(passwordSizeValue),
                                              &salt[0], PASSWORD_SALT_SIZE,
                                              PASSWORD_KDF_ITERATIONS,
                                              &key[0], keySize))
@@ -939,7 +968,7 @@ int CCryptoApi::EncryptFile(const char* password, const char* inputFilePath, con
         }
 
         std::vector<unsigned char> plaintextChunk(FILE_CHUNK_SIZE);
-        std::vector<unsigned char> encryptedChunk(FILE_CHUNK_SIZE + cipher.GetNonceSize() + cipher.GetTagSize());
+        std::vector<unsigned char> encryptedChunk(FILE_CHUNK_SIZE + cipher->GetNonceSize() + cipher->GetTagSize());
 
         for (;;)
         {
@@ -1054,20 +1083,26 @@ int CCryptoApi::DecryptFile(const char* password, const char* inputFilePath, con
         const unsigned long long totalBytes = static_cast<unsigned long long>(inputFileSize.QuadPart);
         unsigned long long processedBytes = 0;
 
-        CMicrosoftProvider provider;
-        IAeadCipher& cipher = provider;
-        IKeyDerivation& keyDerivation = provider;
-
-        if (!provider.Initialize() || !provider.SelectAlgorithm(AEAD_AES_256_GCM))
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(DEFAULT_PROVIDER_KIND);
+        if (!providerFactory)
         {
             outputHandle.reset();
             deleteFileBestEffort(wideOutputFilePath);
             return UNEXPECTED_ERROR;
         }
 
-        const unsigned int keySize = cipher.GetKeySize();
-        const unsigned int nonceSize = cipher.GetNonceSize();
-        const unsigned int tagSize = cipher.GetTagSize();
+        std::unique_ptr<IAeadCipher> cipher = providerFactory->CreateAeadCipher(DEFAULT_AEAD_ALGORITHM);
+        std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
+        if (!cipher || !keyDerivation)
+        {
+            outputHandle.reset();
+            deleteFileBestEffort(wideOutputFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int keySize = cipher->GetKeySize();
+        const unsigned int nonceSize = cipher->GetNonceSize();
+        const unsigned int tagSize = cipher->GetTagSize();
 
         std::vector<unsigned char> salt(PASSWORD_SALT_SIZE);
         if (!readFileExact(rawInputHandle, &salt[0], PASSWORD_SALT_SIZE))
@@ -1080,7 +1115,7 @@ int CCryptoApi::DecryptFile(const char* password, const char* inputFilePath, con
         processedBytes += PASSWORD_SALT_SIZE;
 
         std::vector<unsigned char> key(keySize);
-        if (!keyDerivation.DerivePasswordKey(password, static_cast<unsigned int>(passwordSizeValue),
+        if (!keyDerivation->DerivePasswordKey(password, static_cast<unsigned int>(passwordSizeValue),
                                              &salt[0], PASSWORD_SALT_SIZE,
                                              PASSWORD_KDF_ITERATIONS,
                                              &key[0], keySize))

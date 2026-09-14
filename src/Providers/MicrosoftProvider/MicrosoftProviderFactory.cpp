@@ -93,6 +93,19 @@ std::unique_ptr<IRandomSource> CMicrosoftProviderFactory::CreateRandomSource()
 }
 // -----------------------------------------------------------------------------
 
+std::unique_ptr<IKeyDerivation> CMicrosoftProviderFactory::CreateKeyDerivation()
+{
+    try
+    {
+        return std::unique_ptr<IKeyDerivation>(new CMicrosoftProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool CMicrosoftProviderFactory::SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const
 {
     try

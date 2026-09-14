@@ -93,6 +93,19 @@ std::unique_ptr<IRandomSource> CCryptoPPProviderFactory::CreateRandomSource()
 }
 // -----------------------------------------------------------------------------
 
+std::unique_ptr<IKeyDerivation> CCryptoPPProviderFactory::CreateKeyDerivation()
+{
+    try
+    {
+        return std::unique_ptr<IKeyDerivation>(new CCryptoPPProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool CCryptoPPProviderFactory::SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const
 {
     (void)algorithm;

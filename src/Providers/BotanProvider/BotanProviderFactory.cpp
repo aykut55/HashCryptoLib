@@ -93,6 +93,19 @@ std::unique_ptr<IRandomSource> CBotanProviderFactory::CreateRandomSource()
 }
 // -----------------------------------------------------------------------------
 
+std::unique_ptr<IKeyDerivation> CBotanProviderFactory::CreateKeyDerivation()
+{
+    try
+    {
+        return std::unique_ptr<IKeyDerivation>(new CBotanProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool CBotanProviderFactory::SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const
 {
     (void)algorithm;
