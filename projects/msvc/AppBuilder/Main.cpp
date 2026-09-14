@@ -6,7 +6,7 @@ int main()
 
     cryptoApiTester.Run();
 
-#if 1
+#if 0
     cryptoApiTester.RunEncryptDecryptFileTest();
 
     cryptoApiTester.RunEncryptDecryptStringTest();
@@ -58,6 +58,20 @@ int main()
     cryptoApiTester.RunBotanProviderAsymmetricTest();
 
     cryptoApiTester.RunOpenSslProviderAsymmetricTest();
+#endif
+
+#if 0
+    cryptoApiTester.RunMicrosoftProviderLegacyTest();
+
+    cryptoApiTester.RunCryptoPPProviderLegacyTest();
+
+    cryptoApiTester.RunBotanProviderLegacyTest();
+
+    cryptoApiTester.RunOpenSslProviderLegacyTest();
+#endif
+
+#if 0
+    cryptoApiTester.RunLegacyAlgorithmsTest();
 #endif
 
 #if 0

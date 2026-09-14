@@ -139,4 +139,17 @@ std::unique_ptr<IAsymmetricCipher> CCryptoPPProviderFactory::CreateAsymmetricCip
 }
 // -----------------------------------------------------------------------------
 
+std::unique_ptr<IMacService> CCryptoPPProviderFactory::CreateMacService()
+{
+    try
+    {
+        return std::unique_ptr<IMacService>(new CCryptoPPProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

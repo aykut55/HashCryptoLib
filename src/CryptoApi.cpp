@@ -212,6 +212,19 @@ const unsigned int PASSWORD_SALT_SIZE = 16;
 const unsigned int PASSWORD_KDF_ITERATIONS = 600000;
 const unsigned int   FILE_CHUNK_SIZE = 1048576 * 0 + 1024 * 1; // 1 MiB plaintext chunk size for streaming file operations.
 const unsigned int BUFFER_CHUNK_SIZE = 1048576 * 0 + 1024 * 1; // 1 MiB plaintext chunk size for EncryptBuffer/EncryptString.
+const unsigned int LEGACY_MAC_KEY_SIZE = 32; // HMAC-SHA256 key size used by EncryptLegacyBuffer/DecryptLegacyBuffer.
+
+bool constantTimeEquals(const unsigned char* left, const unsigned char* right, const unsigned int size)
+{
+    unsigned char difference = 0;
+    for (unsigned int index = 0; index < size; ++index)
+    {
+        difference |= static_cast<unsigned char>(left[index] ^ right[index]);
+    }
+
+    return difference == 0;
+}
+// -----------------------------------------------------------------------------
 
 } // namespace
 
@@ -223,17 +236,22 @@ CCryptoApi::~CCryptoApi()
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048)
+CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
@@ -1385,6 +1403,267 @@ int CCryptoApi::DecryptWithPrivateKey(const unsigned char* inputBuffer, const in
         if (outputBufferSize)
         {
             *outputBufferSize = static_cast<int>(actualSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::EncryptLegacyBuffer(const char* password, const int passwordSize, const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (password == nullptr || passwordSize <= 0 || inputBufferSize < 0 ||
+            (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+        if (!providerFactory)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::unique_ptr<ILegacyCipher> legacyCipher = providerFactory->CreateLegacyCipher(legacyAlgorithm_);
+        std::unique_ptr<IMacService> macService = providerFactory->CreateMacService();
+        std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource();
+        std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
+        if (!legacyCipher || !macService || !randomSource || !keyDerivation)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int keySize = legacyCipher->GetKeySize();
+        const unsigned int ivSize = legacyCipher->GetIvSize();
+        const unsigned int macSize = macService->GetMacSize();
+
+        // Some providers (e.g. Microsoft/CNG's BCryptEncrypt) require a key handle to be set even
+        // for a size-only query; content is irrelevant for CBC/ECB padding arithmetic, so a dummy
+        // key is enough here. The real key (derived from the real salt) is set below, once the
+        // capacity check has passed and salt generation is worth paying for.
+        const std::vector<unsigned char> dummyKey(keySize, 0);
+        legacyCipher->SetKey(dummyKey.empty() ? nullptr : &dummyKey[0], keySize);
+
+        std::vector<unsigned char> dummyIv(ivSize, 0);
+        unsigned int requiredCiphertextSize = 0;
+        legacyCipher->Encrypt(ivSize > 0 ? &dummyIv[0] : nullptr, ivSize,
+                              inputBuffer, static_cast<unsigned int>(inputBufferSize),
+                              nullptr, 0, &requiredCiphertextSize);
+
+        const long long requiredSizeLL = static_cast<long long>(PASSWORD_SALT_SIZE) +
+                                         static_cast<long long>(ivSize) +
+                                         static_cast<long long>(requiredCiphertextSize) +
+                                         static_cast<long long>(macSize);
+        if (requiredSizeLL > INT_MAX)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const int requiredSize = static_cast<int>(requiredSizeLL);
+        if (outputBuffer == nullptr || outputBufferCapacity < requiredSize)
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = requiredSize;
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        unsigned char* saltPtr = outputBuffer;
+        if (!randomSource->GenerateRandomBytes(saltPtr, PASSWORD_SALT_SIZE))
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> combinedKey(static_cast<std::size_t>(keySize) + LEGACY_MAC_KEY_SIZE);
+        if (!keyDerivation->DerivePasswordKey(password, static_cast<unsigned int>(passwordSize),
+                                              saltPtr, PASSWORD_SALT_SIZE,
+                                              PASSWORD_KDF_ITERATIONS,
+                                              &combinedKey[0], static_cast<unsigned int>(combinedKey.size())))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char* cipherKey = &combinedKey[0];
+        const unsigned char* macKey = &combinedKey[keySize];
+
+        if (!legacyCipher->SetKey(cipherKey, keySize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned char* ivPtr = outputBuffer + PASSWORD_SALT_SIZE;
+        if (ivSize > 0 && !randomSource->GenerateRandomBytes(ivPtr, ivSize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned char* ciphertextPtr = ivPtr + ivSize;
+        unsigned int actualCiphertextSize = 0;
+        if (!legacyCipher->Encrypt(ivSize > 0 ? ivPtr : nullptr, ivSize,
+                                   inputBuffer, static_cast<unsigned int>(inputBufferSize),
+                                   ciphertextPtr, requiredCiphertextSize, &actualCiphertextSize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int macInputSize = PASSWORD_SALT_SIZE + ivSize + actualCiphertextSize;
+        unsigned char* macPtr = outputBuffer + macInputSize;
+        if (!macService->ComputeMac(macKey, LEGACY_MAC_KEY_SIZE, outputBuffer, macInputSize, macPtr, macSize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        SecureZeroMemory(&combinedKey[0], combinedKey.size());
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(macInputSize + macSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::DecryptLegacyBuffer(const char* password, const int passwordSize, const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (password == nullptr || passwordSize <= 0 || inputBuffer == nullptr || inputBufferSize < 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+        if (!providerFactory)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::unique_ptr<ILegacyCipher> legacyCipher = providerFactory->CreateLegacyCipher(legacyAlgorithm_);
+        std::unique_ptr<IMacService> macService = providerFactory->CreateMacService();
+        std::unique_ptr<IKeyDerivation> keyDerivation = providerFactory->CreateKeyDerivation();
+        if (!legacyCipher || !macService || !keyDerivation)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int keySize = legacyCipher->GetKeySize();
+        const unsigned int ivSize = legacyCipher->GetIvSize();
+        const unsigned int macSize = macService->GetMacSize();
+        const unsigned int overhead = PASSWORD_SALT_SIZE + ivSize + macSize;
+
+        if (static_cast<unsigned int>(inputBufferSize) < overhead)
+        {
+            return INVALID_DATA;
+        }
+
+        const unsigned char* saltPtr = inputBuffer;
+        const unsigned char* ivPtr = inputBuffer + PASSWORD_SALT_SIZE;
+        const unsigned int ciphertextSize = static_cast<unsigned int>(inputBufferSize) - overhead;
+        const unsigned char* ciphertextPtr = ivPtr + ivSize;
+        const unsigned int macInputSize = static_cast<unsigned int>(inputBufferSize) - macSize;
+        const unsigned char* receivedMacPtr = inputBuffer + macInputSize;
+
+        std::vector<unsigned char> combinedKey(static_cast<std::size_t>(keySize) + LEGACY_MAC_KEY_SIZE);
+        if (!keyDerivation->DerivePasswordKey(password, static_cast<unsigned int>(passwordSize),
+                                              saltPtr, PASSWORD_SALT_SIZE,
+                                              PASSWORD_KDF_ITERATIONS,
+                                              &combinedKey[0], static_cast<unsigned int>(combinedKey.size())))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char* cipherKey = &combinedKey[0];
+        const unsigned char* macKey = &combinedKey[keySize];
+
+        std::vector<unsigned char> computedMac(macSize);
+        if (!macService->ComputeMac(macKey, LEGACY_MAC_KEY_SIZE, inputBuffer, macInputSize, &computedMac[0], macSize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        if (!constantTimeEquals(&computedMac[0], receivedMacPtr, macSize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return INVALID_DATA;
+        }
+
+        if (!legacyCipher->SetKey(cipherKey, keySize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned int requiredPlaintextSize = 0;
+        legacyCipher->Decrypt(ivSize > 0 ? ivPtr : nullptr, ivSize,
+                              ciphertextPtr, ciphertextSize,
+                              nullptr, 0, &requiredPlaintextSize);
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(requiredPlaintextSize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(requiredPlaintextSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        unsigned int actualPlaintextSize = 0;
+        if (!legacyCipher->Decrypt(ivSize > 0 ? ivPtr : nullptr, ivSize,
+                                   ciphertextPtr, ciphertextSize,
+                                   outputBuffer, static_cast<unsigned int>(outputBufferCapacity), &actualPlaintextSize))
+        {
+            SecureZeroMemory(&combinedKey[0], combinedKey.size());
+            return INVALID_DATA;
+        }
+
+        SecureZeroMemory(&combinedKey[0], combinedKey.size());
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(actualPlaintextSize);
         }
 
         return NO_ERROR;

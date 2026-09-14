@@ -5,6 +5,7 @@
 #include "Providers/AsymmetricCipher.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
+#include "Providers/MacService.h"
 #include "Providers/RandomSource.h"
 
 #include <memory>
@@ -12,7 +13,7 @@
 namespace CryptoApiNS
 {
 
-class CBotanProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher
+class CBotanProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService
 {
 public:
     virtual ~CBotanProvider();
@@ -81,6 +82,13 @@ public:
     virtual bool Decrypt(const unsigned char* inputBuffer, const unsigned int inputBufferSize,
                         unsigned char* outputBuffer, const unsigned int outputBufferCapacity,
                         unsigned int* outputBufferSize);
+
+    // IMacService
+    virtual unsigned int GetMacSize(void) const;
+
+    virtual bool ComputeMac( const unsigned char* key, const unsigned int keySize,
+                            const unsigned char* data, const unsigned int dataSize,
+                            unsigned char* mac, const unsigned int macSize);
 
 protected:
 

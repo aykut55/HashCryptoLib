@@ -25,7 +25,7 @@ Visual Studio Developer Command Prompt / PowerShell'de (yani `cl.exe` PATH'te),
 ```bat
 :: x64
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,system_rng,auto_rng,mode_pad,rsa,eme_oaep ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep ^
   --cpu=x86_64
 move /Y botan_all.h x64\botan_all.h
 move /Y botan_all.cpp x64\botan_all.cpp
@@ -33,12 +33,19 @@ del botan_all.obj
 
 :: Win32
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,system_rng,auto_rng,mode_pad,rsa,eme_oaep ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep ^
   --cpu=x86_32
 move /Y botan_all.h Win32\botan_all.h
 move /Y botan_all.cpp Win32\botan_all.cpp
 del botan_all.obj
 ```
+
+`sha2_32_x86`/`sha2_32_simd`/`sha2_32_avx2` hızlandırma modülleri olmadan SHA-256
+tamamen yazılım (donanım hızlandırmasız) çalışır — bu SDK'nın parola tabanlı tüm
+şifreleme yollarının kullandığı 600.000 iterasyonluk PBKDF2'yi ~1 dakikaya kadar
+yavaşlatabilir (birden fazla türetme yapan bir akışta bu dakikalarca sürebilir ve
+"kilitlenmiş" gibi görünür). Botan bu modüller arasından çalışma zamanında CPUID
+ile en uygununu seçer, o yüzden üçünü de sorgusuz eklemek güvenli.
 
 `configure.py` amalgamation çıktısını her zaman çalıştırıldığı dizinin köküne yazar
 (`--with-build-dir` bu davranışı değiştirmez); bu yüzden yukarıdaki `move` adımları gerekli.

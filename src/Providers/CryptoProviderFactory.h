@@ -5,6 +5,7 @@
 #include "Providers/AsymmetricCipher.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
+#include "Providers/MacService.h"
 #include "Providers/ProviderTypes.h"
 #include "Providers/RandomSource.h"
 
@@ -42,6 +43,10 @@ public:
     // return nullptr for every value, rather than omitting the methods.
     virtual bool SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const = 0;
     virtual std::unique_ptr<IAsymmetricCipher> CreateAsymmetricCipher(const AsymmetricAlgorithm algorithm) = 0;
+
+    // MAC (HMAC-SHA256) is algorithm-independent (no SelectAlgorithm needed), used to add
+    // Encrypt-then-MAC integrity on top of ILegacyCipher output.
+    virtual std::unique_ptr<IMacService> CreateMacService() = 0;
 
 protected:
 

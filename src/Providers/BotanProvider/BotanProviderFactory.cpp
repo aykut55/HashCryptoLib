@@ -139,4 +139,17 @@ std::unique_ptr<IAsymmetricCipher> CBotanProviderFactory::CreateAsymmetricCipher
 }
 // -----------------------------------------------------------------------------
 
+std::unique_ptr<IMacService> CBotanProviderFactory::CreateMacService()
+{
+    try
+    {
+        return std::unique_ptr<IMacService>(new CBotanProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

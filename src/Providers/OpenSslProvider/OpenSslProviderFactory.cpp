@@ -139,4 +139,17 @@ std::unique_ptr<IAsymmetricCipher> COpenSslProviderFactory::CreateAsymmetricCiph
 }
 // -----------------------------------------------------------------------------
 
+std::unique_ptr<IMacService> COpenSslProviderFactory::CreateMacService()
+{
+    try
+    {
+        return std::unique_ptr<IMacService>(new COpenSslProvider());
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

@@ -3060,6 +3060,601 @@ int CCryptoApiTester::RunOpenSslProviderAsymmetricTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunMicrosoftProviderLegacyTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC);
+
+        const char* password = "L\xC3\xA9gacy T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(5000 + 777);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                   &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                   0, nullptr, &requiredEncryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderLegacyTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                               &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                               requiredEncryptSize, &encryptedBuffer[0], &encryptedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderLegacyTest: FAILED EncryptLegacyBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               0, nullptr, &requiredDecryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunMicrosoftProviderLegacyTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize);
+        if (status != NO_ERROR || outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(outputBuffer.data(), inputBuffer.data(), inputBuffer.size()) != 0)
+        {
+            std::cout << "RunMicrosoftProviderLegacyTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderLegacyTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail the MAC check, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer("WrongPassword!", 14,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderLegacyTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered ciphertext must fail the MAC check (fail-closed: never reaches the cipher).
+        std::vector<unsigned char> tamperedCiphertext(encryptedBuffer);
+        tamperedCiphertext[tamperedCiphertext.size() / 2] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(outputBuffer.size());
+        int tamperedOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedCiphertext[0], static_cast<int>(tamperedCiphertext.size()),
+                                               static_cast<int>(tamperedOutput.size()), &tamperedOutput[0], &tamperedOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderLegacyTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered MAC tag (last byte) must also fail.
+        std::vector<unsigned char> tamperedMac(encryptedBuffer);
+        tamperedMac[tamperedMac.size() - 1] ^= 0xFF;
+        std::vector<unsigned char> tamperedMacOutput(outputBuffer.size());
+        int tamperedMacOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedMac[0], static_cast<int>(tamperedMac.size()),
+                                               static_cast<int>(tamperedMacOutput.size()), &tamperedMacOutput[0], &tamperedMacOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderLegacyTest: FAILED tampered MAC accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderLegacyTest: PASSED wrong password / tampered ciphertext / tampered MAC all rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderLegacyTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC);
+
+        const char* password = "L\xC3\xA9gacy T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(5000 + 777);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                   &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                   0, nullptr, &requiredEncryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderLegacyTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                               &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                               requiredEncryptSize, &encryptedBuffer[0], &encryptedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderLegacyTest: FAILED EncryptLegacyBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               0, nullptr, &requiredDecryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunCryptoPPProviderLegacyTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize);
+        if (status != NO_ERROR || outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(outputBuffer.data(), inputBuffer.data(), inputBuffer.size()) != 0)
+        {
+            std::cout << "RunCryptoPPProviderLegacyTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderLegacyTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail the MAC check, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer("WrongPassword!", 14,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderLegacyTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered ciphertext must fail the MAC check (fail-closed: never reaches the cipher).
+        std::vector<unsigned char> tamperedCiphertext(encryptedBuffer);
+        tamperedCiphertext[tamperedCiphertext.size() / 2] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(outputBuffer.size());
+        int tamperedOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedCiphertext[0], static_cast<int>(tamperedCiphertext.size()),
+                                               static_cast<int>(tamperedOutput.size()), &tamperedOutput[0], &tamperedOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderLegacyTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered MAC tag (last byte) must also fail.
+        std::vector<unsigned char> tamperedMac(encryptedBuffer);
+        tamperedMac[tamperedMac.size() - 1] ^= 0xFF;
+        std::vector<unsigned char> tamperedMacOutput(outputBuffer.size());
+        int tamperedMacOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedMac[0], static_cast<int>(tamperedMac.size()),
+                                               static_cast<int>(tamperedMacOutput.size()), &tamperedMacOutput[0], &tamperedMacOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderLegacyTest: FAILED tampered MAC accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderLegacyTest: PASSED wrong password / tampered ciphertext / tampered MAC all rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderLegacyTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC);
+
+        const char* password = "L\xC3\xA9gacy T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(5000 + 777);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                   &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                   0, nullptr, &requiredEncryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderLegacyTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                               &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                               requiredEncryptSize, &encryptedBuffer[0], &encryptedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderLegacyTest: FAILED EncryptLegacyBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               0, nullptr, &requiredDecryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunBotanProviderLegacyTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize);
+        if (status != NO_ERROR || outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(outputBuffer.data(), inputBuffer.data(), inputBuffer.size()) != 0)
+        {
+            std::cout << "RunBotanProviderLegacyTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderLegacyTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail the MAC check, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer("WrongPassword!", 14,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunBotanProviderLegacyTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered ciphertext must fail the MAC check (fail-closed: never reaches the cipher).
+        std::vector<unsigned char> tamperedCiphertext(encryptedBuffer);
+        tamperedCiphertext[tamperedCiphertext.size() / 2] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(outputBuffer.size());
+        int tamperedOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedCiphertext[0], static_cast<int>(tamperedCiphertext.size()),
+                                               static_cast<int>(tamperedOutput.size()), &tamperedOutput[0], &tamperedOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunBotanProviderLegacyTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered MAC tag (last byte) must also fail.
+        std::vector<unsigned char> tamperedMac(encryptedBuffer);
+        tamperedMac[tamperedMac.size() - 1] ^= 0xFF;
+        std::vector<unsigned char> tamperedMacOutput(outputBuffer.size());
+        int tamperedMacOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedMac[0], static_cast<int>(tamperedMac.size()),
+                                               static_cast<int>(tamperedMacOutput.size()), &tamperedMacOutput[0], &tamperedMacOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunBotanProviderLegacyTest: FAILED tampered MAC accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderLegacyTest: PASSED wrong password / tampered ciphertext / tampered MAC all rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderLegacyTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC);
+
+        const char* password = "L\xC3\xA9gacy T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(5000 + 777);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                   &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                   0, nullptr, &requiredEncryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderLegacyTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                               &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                               requiredEncryptSize, &encryptedBuffer[0], &encryptedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderLegacyTest: FAILED EncryptLegacyBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               0, nullptr, &requiredDecryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunOpenSslProviderLegacyTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize);
+        if (status != NO_ERROR || outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(outputBuffer.data(), inputBuffer.data(), inputBuffer.size()) != 0)
+        {
+            std::cout << "RunOpenSslProviderLegacyTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderLegacyTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail the MAC check, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer("WrongPassword!", 14,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderLegacyTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered ciphertext must fail the MAC check (fail-closed: never reaches the cipher).
+        std::vector<unsigned char> tamperedCiphertext(encryptedBuffer);
+        tamperedCiphertext[tamperedCiphertext.size() / 2] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(outputBuffer.size());
+        int tamperedOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedCiphertext[0], static_cast<int>(tamperedCiphertext.size()),
+                                               static_cast<int>(tamperedOutput.size()), &tamperedOutput[0], &tamperedOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderLegacyTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered MAC tag (last byte) must also fail.
+        std::vector<unsigned char> tamperedMac(encryptedBuffer);
+        tamperedMac[tamperedMac.size() - 1] ^= 0xFF;
+        std::vector<unsigned char> tamperedMacOutput(outputBuffer.size());
+        int tamperedMacOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedMac[0], static_cast<int>(tamperedMac.size()),
+                                               static_cast<int>(tamperedMacOutput.size()), &tamperedMacOutput[0], &tamperedMacOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderLegacyTest: FAILED tampered MAC accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderLegacyTest: PASSED wrong password / tampered ciphertext / tampered MAC all rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunLegacyAlgorithmsTest(void)
+{
+    try
+    {
+        struct ProviderCase
+        {
+            ProviderKind kind;
+            const char* name;
+        };
+
+        const ProviderCase providerCases[] =
+        {
+            { PROVIDER_MICROSOFT, "Microsoft" },
+            { PROVIDER_CRYPTOPP,  "CryptoPP" },
+            { PROVIDER_BOTAN,     "Botan" },
+            { PROVIDER_OPENSSL,   "OpenSSL" }
+        };
+
+        const LegacySymmetricAlgorithm legacyAlgorithms[] =
+        {
+            LEGACY_AES_128_CBC, LEGACY_AES_192_CBC, LEGACY_AES_256_CBC,
+            LEGACY_AES_128_CTR, LEGACY_AES_192_CTR, LEGACY_AES_256_CTR,
+            LEGACY_AES_128_CFB, LEGACY_AES_192_CFB, LEGACY_AES_256_CFB,
+            LEGACY_AES_128_OFB, LEGACY_AES_192_OFB, LEGACY_AES_256_OFB,
+            LEGACY_AES_128_ECB, LEGACY_AES_192_ECB, LEGACY_AES_256_ECB,
+            LEGACY_RC2_CBC, LEGACY_RC2_ECB,
+            LEGACY_DES_CBC, LEGACY_DES_ECB,
+            LEGACY_3DES_CBC, LEGACY_3DES_ECB,
+            LEGACY_RC4
+        };
+
+        const char* password = "L\xC3\xA9gacyAllAlgos!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        unsigned char plaintext[64];
+        for (std::size_t index = 0; index < sizeof(plaintext); ++index)
+        {
+            plaintext[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t providerIndex = 0; providerIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++providerIndex)
+        {
+            const ProviderKind kind = providerCases[providerIndex].kind;
+            const char* providerName = providerCases[providerIndex].name;
+
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+            if (!factory)
+            {
+                std::cout << "RunLegacyAlgorithmsTest: FAILED [" << providerName << "] CreateProviderFactory" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            for (std::size_t algoIndex = 0; algoIndex < sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]); ++algoIndex)
+            {
+                const LegacySymmetricAlgorithm algorithm = legacyAlgorithms[algoIndex];
+                const char* algorithmName = LegacyAlgorithmName(algorithm);
+                const bool supported = factory->SupportsLegacyAlgorithm(algorithm);
+
+                CCryptoApi cryptoApi(kind, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, algorithm);
+
+                int requiredEncryptSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                           plaintext, static_cast<int>(sizeof(plaintext)),
+                                                           0, nullptr, &requiredEncryptSize);
+
+                if (!supported)
+                {
+                    if (status == BUFFER_TOO_SMALL)
+                    {
+                        std::cout << "RunLegacyAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                                  << "] expected unsupported but got a size" << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::cout << "RunLegacyAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                                  << "] correctly unsupported" << std::endl;
+                    }
+                    continue;
+                }
+
+                ++supportedCount;
+
+                if (status != BUFFER_TOO_SMALL)
+                {
+                    std::cout << "RunLegacyAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] encrypt size query status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+                int encryptedSize = 0;
+                status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                       plaintext, static_cast<int>(sizeof(plaintext)),
+                                                       requiredEncryptSize, &encryptedBuffer[0], &encryptedSize);
+                if (status != NO_ERROR)
+                {
+                    std::cout << "RunLegacyAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] EncryptLegacyBuffer status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                int requiredDecryptSize = 0;
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                                       &encryptedBuffer[0], encryptedSize,
+                                                       0, nullptr, &requiredDecryptSize);
+                if (status != BUFFER_TOO_SMALL)
+                {
+                    std::cout << "RunLegacyAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] decrypt size query status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> decryptedBuffer(requiredDecryptSize);
+                int decryptedSize = 0;
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                                       &encryptedBuffer[0], encryptedSize,
+                                                       requiredDecryptSize, decryptedBuffer.empty() ? nullptr : &decryptedBuffer[0], &decryptedSize);
+                if (status != NO_ERROR || decryptedSize != static_cast<int>(sizeof(plaintext)) ||
+                    std::memcmp(decryptedBuffer.data(), plaintext, sizeof(plaintext)) != 0)
+                {
+                    std::cout << "RunLegacyAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] Decrypt/mismatch status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::cout << "RunLegacyAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                          << "] round-trip via CCryptoApi" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunLegacyAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and round-tripped)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunLegacyAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try

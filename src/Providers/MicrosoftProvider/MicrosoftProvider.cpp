@@ -1004,4 +1004,44 @@ bool CMicrosoftProvider::Decrypt(const unsigned char* inputBuffer, const unsigne
 }
 // -----------------------------------------------------------------------------
 
+unsigned int CMicrosoftProvider::GetMacSize(void) const
+{
+    return 32; // HMAC-SHA256
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::ComputeMac(const unsigned char* key, const unsigned int keySize, const unsigned char* data, const unsigned int dataSize, unsigned char* mac, const unsigned int macSize)
+{
+    try
+    {
+        if (key == nullptr || keySize == 0 || mac == nullptr || macSize != 32 ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE hmacAlgorithm = nullptr;
+        if (BCryptOpenAlgorithmProvider(&hmacAlgorithm,
+                                        BCRYPT_SHA256_ALGORITHM,
+                                        nullptr,
+                                        BCRYPT_ALG_HANDLE_HMAC_FLAG) < 0)
+        {
+            return false;
+        }
+
+        const NTSTATUS status = BCryptHash(hmacAlgorithm,
+                                           const_cast<PUCHAR>(key), keySize,
+                                           const_cast<PUCHAR>(data), dataSize,
+                                           mac, macSize);
+
+        BCryptCloseAlgorithmProvider(hmacAlgorithm, 0);
+        return status >= 0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

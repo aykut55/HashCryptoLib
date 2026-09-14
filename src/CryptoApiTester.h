@@ -70,6 +70,28 @@ public:
 
     int RunOpenSslProviderAsymmetricTest(void);
 
+    // Exercises CCryptoApi's Legacy+MAC surface (EncryptLegacyBuffer/DecryptLegacyBuffer, LEGACY_
+    // AES_256_CBC via the 4-argument constructor) -- round-trip, wrong password, tampered
+    // ciphertext and tampered MAC tag must all fail closed. One full independent method per
+    // provider (no shared helper).
+    int RunMicrosoftProviderLegacyTest(void);
+
+    int RunCryptoPPProviderLegacyTest(void);
+
+    int RunBotanProviderLegacyTest(void);
+
+    int RunOpenSslProviderLegacyTest(void);
+
+    // Breadth companion to RunMicrosoftProviderLegacyTest/CryptoPP/Botan/OpenSsl (which each cover
+    // one algorithm, LEGACY_AES_256_CBC, in depth including tamper rejection): this one loops over
+    // every ProviderKind x every LegacySymmetricAlgorithm value (the same providerCases[] pattern
+    // as RunProviderFactoryTest) via CCryptoApi's 4-argument constructor + EncryptLegacyBuffer/
+    // DecryptLegacyBuffer, cross-checked against ICryptoProviderFactory::SupportsLegacyAlgorithm()
+    // as ground truth -- supported combinations must round-trip, unsupported ones must be cleanly
+    // rejected. Nothing here is hardcoded to "CBC only"; whatever each provider actually supports
+    // gets exercised through the facade, not just the raw Factory.
+    int RunLegacyAlgorithmsTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

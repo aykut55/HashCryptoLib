@@ -648,4 +648,44 @@ bool CBotanProvider::Decrypt(const unsigned char* inputBuffer, const unsigned in
 }
 // -----------------------------------------------------------------------------
 
+unsigned int CBotanProvider::GetMacSize(void) const
+{
+    return 32; // HMAC-SHA256
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::ComputeMac(const unsigned char* key, const unsigned int keySize, const unsigned char* data, const unsigned int dataSize, unsigned char* mac, const unsigned int macSize)
+{
+    try
+    {
+        if (key == nullptr || keySize == 0 || mac == nullptr || macSize != 32 ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        std::unique_ptr<Botan::MessageAuthenticationCode> hmac = Botan::MessageAuthenticationCode::create("HMAC(SHA-256)");
+        if (!hmac)
+        {
+            return false;
+        }
+
+        hmac->set_key(key, keySize);
+        hmac->update(data, dataSize);
+        const Botan::secure_vector<uint8_t> result = hmac->final();
+        if (result.size() != macSize)
+        {
+            return false;
+        }
+
+        std::memcpy(mac, result.data(), macSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

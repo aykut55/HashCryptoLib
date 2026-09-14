@@ -7,6 +7,7 @@
 #include "cryptopp890/eax.h"
 #include "cryptopp890/filters.h"
 #include "cryptopp890/gcm.h"
+#include "cryptopp890/hmac.h"
 #include "cryptopp890/modes.h"
 #include "cryptopp890/oaep.h"
 #include "cryptopp890/osrng.h"
@@ -835,6 +836,34 @@ bool CCryptoPPProvider::Decrypt(const unsigned char* inputBuffer, const unsigned
         }
 
         *outputBufferSize = static_cast<unsigned int>(result.messageLength);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CCryptoPPProvider::GetMacSize(void) const
+{
+    return 32; // HMAC-SHA256
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::ComputeMac(const unsigned char* key, const unsigned int keySize, const unsigned char* data, const unsigned int dataSize, unsigned char* mac, const unsigned int macSize)
+{
+    try
+    {
+        if (key == nullptr || keySize == 0 || mac == nullptr || macSize != 32 ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        CryptoPP::HMAC<CryptoPP::SHA256> hmac(reinterpret_cast<const CryptoPP::byte*>(key), keySize);
+        hmac.CalculateDigest(reinterpret_cast<CryptoPP::byte*>(mac),
+                             reinterpret_cast<const CryptoPP::byte*>(data), dataSize);
         return true;
     }
     catch (...)

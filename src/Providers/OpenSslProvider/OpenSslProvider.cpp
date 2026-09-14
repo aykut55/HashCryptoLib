@@ -1,6 +1,7 @@
 #include "OpenSslProvider.h"
 
 #include "openssl/evp.h"
+#include "openssl/hmac.h"
 #include "openssl/rand.h"
 #include "openssl/rsa.h"
 
@@ -796,6 +797,37 @@ bool COpenSslProvider::Decrypt(const unsigned char* inputBuffer, const unsigned 
         EVP_PKEY_CTX_free(ctx);
         *outputBufferSize = static_cast<unsigned int>(actualSize);
         return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int COpenSslProvider::GetMacSize(void) const
+{
+    return 32; // HMAC-SHA256
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::ComputeMac(const unsigned char* key, const unsigned int keySize, const unsigned char* data, const unsigned int dataSize, unsigned char* mac, const unsigned int macSize)
+{
+    try
+    {
+        if (key == nullptr || keySize == 0 || mac == nullptr || macSize != 32 ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        unsigned int actualSize = 0;
+        if (HMAC(EVP_sha256(), key, static_cast<int>(keySize), data, dataSize, mac, &actualSize) == nullptr)
+        {
+            return false;
+        }
+
+        return actualSize == macSize;
     }
     catch (...)
     {

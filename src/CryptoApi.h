@@ -24,6 +24,7 @@ public:
              CCryptoApi();
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm);
+             CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm);
 
     const char* GetVersion(void) const;
 
@@ -124,6 +125,25 @@ public:
                               unsigned char* outputBuffer,
                               int* outputBufferSize);
 
+    // Legacy cipher (CBC/CFB/ECB/RC2/DES/3DES/RC4, see the 4-argument constructor) has no
+    // built-in integrity tag, so this adds Encrypt-then-MAC (HMAC-SHA256) on top: password derives
+    // both the cipher key and the MAC key (single PBKDF2 call, split). Output layout is
+    // [salt][iv][ciphertext][HMAC tag]; iv is omitted (0 bytes) for algorithms with no IV (ECB).
+    // No chunking -- inputBufferSize is bounded by available memory in one call, not a fixed limit.
+    int EncryptLegacyBuffer( const char* password, const int passwordSize,
+                            const unsigned char* inputBuffer, const int inputBufferSize,
+                            const int outputBufferCapacity,
+                            unsigned char* outputBuffer,
+                            int* outputBufferSize);
+
+    // Verifies the HMAC tag before decrypting anything (fail-closed): a tampered or truncated
+    // input returns INVALID_DATA and never reaches the legacy cipher.
+    int DecryptLegacyBuffer( const char* password, const int passwordSize,
+                            const unsigned char* inputBuffer, const int inputBufferSize,
+                            const int outputBufferCapacity,
+                            unsigned char* outputBuffer,
+                            int* outputBufferSize);
+
 protected:
 
 private:
@@ -179,6 +199,11 @@ private:
     // DecryptWithPrivateKey above).
     AsymmetricAlgorithm asymmetricAlgorithm_;
     std::unique_ptr<IAsymmetricCipher> asymmetricCipher_;
+
+    // Legacy cipher this instance uses for EncryptLegacyBuffer/DecryptLegacyBuffer; fixed for the
+    // instance's lifetime. Stateless per-call like the AEAD path (no cached cipher object) since,
+    // unlike RSA, a fresh ILegacyCipher is cheap and each call derives its own key from the salt.
+    LegacySymmetricAlgorithm legacyAlgorithm_;
 
 };
 

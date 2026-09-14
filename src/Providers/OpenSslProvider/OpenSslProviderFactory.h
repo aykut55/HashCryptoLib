@@ -25,6 +25,8 @@ public:
     virtual bool SupportsAsymmetricAlgorithm(const AsymmetricAlgorithm algorithm) const;
     virtual std::unique_ptr<IAsymmetricCipher> CreateAsymmetricCipher(const AsymmetricAlgorithm algorithm);
 
+    virtual std::unique_ptr<IMacService> CreateMacService();
+
 protected:
 
 private:
