@@ -92,6 +92,22 @@ public:
     // gets exercised through the facade, not just the raw Factory.
     int RunLegacyAlgorithmsTest(void);
 
+    // Demo (not an exhaustive breadth test -- see RunLegacyAlgorithmsTest for that) showing
+    // CCryptoApi's AES "richness" (key size x mode) entirely in memory over UTF-8 text, inspired
+    // by the online AES tool survey in AesOnlineToolsResearch.md. Single-provider (CryptoPP: fast
+    // PBKDF2 + widest native AES mode range) so it runs quickly. AEAD combos (GCM/CCM/EAX/SIV/
+    // GCM-SIV x 128/192/256) go through EncryptString/DecryptString; Legacy combos (CBC/CTR/CFB/
+    // OFB/ECB x 128/192/256) go through EncryptLegacyBuffer/DecryptLegacyBuffer with the UTF-8
+    // text treated as a raw byte buffer, since CCryptoApi has no EncryptLegacyString.
+    int RunAesConfigurationDemoTest(void);
+
+    // Exercises CUtils::HexEncode/HexDecode/Base64Encode/Base64Decode (src/Utils/Utils.h): known
+    // test vectors (including the classic "Man"/"Ma"/"M" Base64 padding cases and a byte with
+    // A-F hex digits to catch upper/lower-case mistakes), empty input, the BUFFER_TOO_SMALL
+    // capacity-query convention, and malformed-input rejection (odd-length hex, non-hex/non-
+    // base64 characters, wrong padding).
+    int RunEncodingUtilsTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

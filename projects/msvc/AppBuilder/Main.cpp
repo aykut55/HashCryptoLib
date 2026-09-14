@@ -119,5 +119,19 @@ int main()
     cryptoApiTester.RunOpenSslProviderAllAlgorithmsTest();
 #endif
 
+#if 1
+    cryptoApiTester.RunAesConfigurationDemoTest();
+
+    cryptoApiTester.RunEncodingUtilsTest();
+#endif
+
+
+
+/*
+  2. CCryptoApi'ye yeni knob'lar ekleyelim (padding/KDF/tag-length se�imi)
+     Daha b�y�k bir i�: API'yi geni�letip kullan�c�n�n padding tipi, KDF (PBKDF2/Scrypt/Argon2), GCM tag uzunlu�u gibi �eyleri se�ebilmesini sa�lar�z, sonra demo bunun �zerine yaz�l�r.
+*/
+
+
     return 0;
 }

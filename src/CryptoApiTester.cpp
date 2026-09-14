@@ -3,6 +3,7 @@
 #include "CryptoApi.h"
 #include "Definitions/Definitions.h"
 #include "Providers/CryptoProviderRegistry.h"
+#include "Utils/Utils.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -3646,6 +3647,411 @@ int CCryptoApiTester::RunLegacyAlgorithmsTest(void)
         }
 
         std::cout << "RunLegacyAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunAesConfigurationDemoTest(void)
+{
+    try
+    {
+        const char* password = "AesDemoPass!2026";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        const char* text = "Pijamal\xC4\xB1 hasta ya\xC4\x9F\xC4\xB1z \xC5\x9Fof\xC3\xB6re \xC3\xA7" "abucak g\xC3\xBCvendi.";
+        const int textSize = static_cast<int>(std::strlen(text));
+
+        const AeadAlgorithm aeadAlgorithms[] =
+        {
+            AEAD_AES_128_GCM, AEAD_AES_192_GCM, AEAD_AES_256_GCM,
+            AEAD_AES_128_CCM, AEAD_AES_192_CCM, AEAD_AES_256_CCM,
+            AEAD_AES_128_EAX, AEAD_AES_192_EAX, AEAD_AES_256_EAX,
+            AEAD_AES_128_SIV, AEAD_AES_256_SIV,
+            AEAD_AES_128_GCM_SIV, AEAD_AES_256_GCM_SIV
+        };
+
+        const LegacySymmetricAlgorithm legacyAlgorithms[] =
+        {
+            LEGACY_AES_128_CBC, LEGACY_AES_192_CBC, LEGACY_AES_256_CBC,
+            LEGACY_AES_128_CTR, LEGACY_AES_192_CTR, LEGACY_AES_256_CTR,
+            LEGACY_AES_128_CFB, LEGACY_AES_192_CFB, LEGACY_AES_256_CFB,
+            LEGACY_AES_128_OFB, LEGACY_AES_192_OFB, LEGACY_AES_256_OFB,
+            LEGACY_AES_128_ECB, LEGACY_AES_192_ECB, LEGACY_AES_256_ECB
+        };
+
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_CRYPTOPP);
+        if (!factory)
+        {
+            std::cout << "RunAesConfigurationDemoTest: FAILED CreateProviderFactory" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int failures = 0;
+        int demonstratedCount = 0;
+
+        for (std::size_t index = 0; index < sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]); ++index)
+        {
+            const AeadAlgorithm algorithm = aeadAlgorithms[index];
+            const char* algorithmName = AeadAlgorithmName(algorithm);
+
+            if (!factory->SupportsAeadAlgorithm(algorithm))
+            {
+                std::cout << "RunAesConfigurationDemoTest: SKIPPED [" << algorithmName << "] not supported by CryptoPP" << std::endl;
+                continue;
+            }
+
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, algorithm);
+
+            int requiredEncryptSize = 0;
+            int status = cryptoApi.EncryptString(password, passwordSize, text, textSize,
+                                                 0, nullptr, &requiredEncryptSize,
+                                                 nullptr, nullptr);
+            if (status != BUFFER_TOO_SMALL)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] encrypt size query status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::vector<unsigned char> encryptedData(requiredEncryptSize);
+            int encryptedSize = 0;
+            status = cryptoApi.EncryptString(password, passwordSize, text, textSize,
+                                             requiredEncryptSize, &encryptedData[0], &encryptedSize,
+                                             nullptr, nullptr);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] EncryptString status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            int requiredDecryptSize = 0;
+            status = cryptoApi.DecryptString(password, passwordSize,
+                                             &encryptedData[0], encryptedSize,
+                                             0, nullptr, &requiredDecryptSize,
+                                             nullptr, nullptr);
+            if (status != BUFFER_TOO_SMALL)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] decrypt size query status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::vector<char> decryptedText(requiredDecryptSize);
+            int decryptedSize = 0;
+            status = cryptoApi.DecryptString(password, passwordSize,
+                                             &encryptedData[0], encryptedSize,
+                                             requiredDecryptSize,
+                                             decryptedText.empty() ? nullptr : &decryptedText[0], &decryptedSize,
+                                             nullptr, nullptr);
+            if (status != NO_ERROR || decryptedSize != textSize ||
+                std::memcmp(&decryptedText[0], text, static_cast<std::size_t>(textSize)) != 0)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] Decrypt/mismatch status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            ++demonstratedCount;
+            std::cout << "RunAesConfigurationDemoTest: PASSED [" << algorithmName << "] round-trip (" << encryptedSize << " bytes)" << std::endl;
+        }
+
+        for (std::size_t index = 0; index < sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]); ++index)
+        {
+            const LegacySymmetricAlgorithm algorithm = legacyAlgorithms[index];
+            const char* algorithmName = LegacyAlgorithmName(algorithm);
+
+            if (!factory->SupportsLegacyAlgorithm(algorithm))
+            {
+                std::cout << "RunAesConfigurationDemoTest: SKIPPED [" << algorithmName << "] not supported by CryptoPP" << std::endl;
+                continue;
+            }
+
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, algorithm);
+
+            const unsigned char* textBytes = reinterpret_cast<const unsigned char*>(text);
+
+            int requiredEncryptSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                       textBytes, textSize,
+                                                       0, nullptr, &requiredEncryptSize);
+            if (status != BUFFER_TOO_SMALL)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] encrypt size query status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+            int encryptedSize = 0;
+            status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                   textBytes, textSize,
+                                                   requiredEncryptSize, &encryptedBuffer[0], &encryptedSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] EncryptLegacyBuffer status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            int requiredDecryptSize = 0;
+            status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                                   &encryptedBuffer[0], encryptedSize,
+                                                   0, nullptr, &requiredDecryptSize);
+            if (status != BUFFER_TOO_SMALL)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] decrypt size query status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::vector<unsigned char> decryptedBuffer(requiredDecryptSize);
+            int decryptedSize = 0;
+            status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                                   &encryptedBuffer[0], encryptedSize,
+                                                   requiredDecryptSize, decryptedBuffer.empty() ? nullptr : &decryptedBuffer[0], &decryptedSize);
+            if (status != NO_ERROR || decryptedSize != textSize ||
+                std::memcmp(decryptedBuffer.data(), textBytes, static_cast<std::size_t>(textSize)) != 0)
+            {
+                std::cout << "RunAesConfigurationDemoTest: FAILED [" << algorithmName << "] Decrypt/mismatch status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            ++demonstratedCount;
+            std::cout << "RunAesConfigurationDemoTest: PASSED [" << algorithmName << "] round-trip (" << encryptedSize << " bytes)" << std::endl;
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunAesConfigurationDemoTest: PASSED (" << demonstratedCount << " AES key-size/mode combinations demonstrated)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunAesConfigurationDemoTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunEncodingUtilsTest(void)
+{
+    try
+    {
+        int failures = 0;
+
+        // Hex: "af" byte should round-trip and prove upper/lower digit selection actually differs.
+        {
+            const unsigned char bytes[] = { 0x00, 0xAF, 0xFF, 0x10 };
+            const int byteCount = static_cast<int>(sizeof(bytes));
+
+            int requiredLowerSize = 0;
+            int status = CUtils::HexEncode(bytes, byteCount, false, 0, nullptr, &requiredLowerSize);
+            if (status != BUFFER_TOO_SMALL || requiredLowerSize != byteCount * 2)
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED HexEncode lower-case size query status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::vector<char> lowerHex(requiredLowerSize);
+                int lowerSize = 0;
+                status = CUtils::HexEncode(bytes, byteCount, false, requiredLowerSize, &lowerHex[0], &lowerSize);
+                const std::string lowerText(lowerHex.begin(), lowerHex.end());
+                if (status != NO_ERROR || lowerText != "00afff10")
+                {
+                    std::cout << "RunEncodingUtilsTest: FAILED HexEncode lower-case content status=" << status
+                              << " text=" << lowerText << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunEncodingUtilsTest: PASSED HexEncode lower-case (" << lowerText << ")" << std::endl;
+                }
+            }
+
+            int requiredUpperSize = 0;
+            status = CUtils::HexEncode(bytes, byteCount, true, 0, nullptr, &requiredUpperSize);
+            std::vector<char> upperHex(requiredUpperSize);
+            int upperSize = 0;
+            status = CUtils::HexEncode(bytes, byteCount, true, requiredUpperSize, &upperHex[0], &upperSize);
+            const std::string upperText(upperHex.begin(), upperHex.end());
+            if (status != NO_ERROR || upperText != "00AFFF10")
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED HexEncode upper-case content status=" << status
+                          << " text=" << upperText << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunEncodingUtilsTest: PASSED HexEncode upper-case (" << upperText << ")" << std::endl;
+            }
+
+            int requiredDecodeSize = 0;
+            status = CUtils::HexDecode(upperText.c_str(), static_cast<int>(upperText.size()), 0, nullptr, &requiredDecodeSize);
+            if (status != BUFFER_TOO_SMALL || requiredDecodeSize != byteCount)
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED HexDecode size query status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::vector<unsigned char> decoded(requiredDecodeSize);
+                status = CUtils::HexDecode(upperText.c_str(), static_cast<int>(upperText.size()), requiredDecodeSize, &decoded[0], &requiredDecodeSize);
+                if (status != NO_ERROR || std::memcmp(&decoded[0], bytes, byteCount) != 0)
+                {
+                    std::cout << "RunEncodingUtilsTest: FAILED HexDecode mismatch status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunEncodingUtilsTest: PASSED HexDecode round-trip" << std::endl;
+                }
+            }
+
+            // Malformed input: odd length and a non-hex character must both be rejected.
+            int dummySize = 0;
+            if (CUtils::HexDecode("abc", 3, 0, nullptr, &dummySize) != INVALID_ARGUMENT)
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED HexDecode odd-length not rejected" << std::endl;
+                ++failures;
+            }
+
+            unsigned char oneByte = 0;
+            if (CUtils::HexDecode("zz", 2, 1, &oneByte, &dummySize) != INVALID_DATA)
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED HexDecode non-hex character not rejected" << std::endl;
+                ++failures;
+            }
+
+            if (failures == 0)
+            {
+                std::cout << "RunEncodingUtilsTest: PASSED HexDecode malformed-input rejection" << std::endl;
+            }
+        }
+
+        // Base64: the classic "Man"/"Ma"/"M" cases exercise zero/one/two bytes of padding.
+        {
+            struct Base64Case
+            {
+                const char* text;
+                const char* expectedBase64;
+            };
+
+            const Base64Case base64Cases[] =
+            {
+                { "Man", "TWFu" },
+                { "Ma",  "TWE=" },
+                { "M",   "TQ==" },
+                { "",    "" }
+            };
+
+            for (std::size_t index = 0; index < sizeof(base64Cases) / sizeof(base64Cases[0]); ++index)
+            {
+                const char* text = base64Cases[index].text;
+                const char* expectedBase64 = base64Cases[index].expectedBase64;
+                const int textSize = static_cast<int>(std::strlen(text));
+                const unsigned char* textBytes = reinterpret_cast<const unsigned char*>(text);
+
+                int requiredEncodeSize = 0;
+                int status = CUtils::Base64Encode(textBytes, textSize, 0, nullptr, &requiredEncodeSize);
+                if (requiredEncodeSize == 0)
+                {
+                    if (std::strlen(expectedBase64) != 0)
+                    {
+                        std::cout << "RunEncodingUtilsTest: FAILED Base64Encode \"" << text << "\" expected non-empty size" << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::cout << "RunEncodingUtilsTest: PASSED Base64Encode \"\" -> \"\"" << std::endl;
+                    }
+                    continue;
+                }
+
+                if (status != BUFFER_TOO_SMALL)
+                {
+                    std::cout << "RunEncodingUtilsTest: FAILED Base64Encode \"" << text << "\" size query status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<char> encoded(requiredEncodeSize);
+                int encodedSize = 0;
+                status = CUtils::Base64Encode(textBytes, textSize, requiredEncodeSize, &encoded[0], &encodedSize);
+                const std::string encodedText(encoded.begin(), encoded.end());
+                if (status != NO_ERROR || encodedText != expectedBase64)
+                {
+                    std::cout << "RunEncodingUtilsTest: FAILED Base64Encode \"" << text << "\" -> \"" << encodedText
+                              << "\" expected \"" << expectedBase64 << "\"" << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::cout << "RunEncodingUtilsTest: PASSED Base64Encode \"" << text << "\" -> \"" << encodedText << "\"" << std::endl;
+
+                int requiredDecodeSize = 0;
+                status = CUtils::Base64Decode(encodedText.c_str(), static_cast<int>(encodedText.size()), 0, nullptr, &requiredDecodeSize);
+                if (status != BUFFER_TOO_SMALL || requiredDecodeSize != textSize)
+                {
+                    std::cout << "RunEncodingUtilsTest: FAILED Base64Decode \"" << encodedText << "\" size query status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> decoded(requiredDecodeSize);
+                int decodedSize = 0;
+                status = CUtils::Base64Decode(encodedText.c_str(), static_cast<int>(encodedText.size()),
+                                              requiredDecodeSize, decoded.empty() ? nullptr : &decoded[0], &decodedSize);
+                if (status != NO_ERROR || decodedSize != textSize ||
+                    (textSize > 0 && std::memcmp(&decoded[0], textBytes, static_cast<std::size_t>(textSize)) != 0))
+                {
+                    std::cout << "RunEncodingUtilsTest: FAILED Base64Decode \"" << encodedText << "\" mismatch status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::cout << "RunEncodingUtilsTest: PASSED Base64Decode \"" << encodedText << "\" -> \"" << text << "\"" << std::endl;
+            }
+
+            // Malformed input: length not a multiple of 4, and a character outside the alphabet.
+            int dummySize = 0;
+            if (CUtils::Base64Decode("abc", 3, 0, nullptr, &dummySize) != INVALID_ARGUMENT)
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED Base64Decode non-multiple-of-4 length not rejected" << std::endl;
+                ++failures;
+            }
+
+            unsigned char threeBytes[3] = { 0, 0, 0 };
+            if (CUtils::Base64Decode("T!WFu", 5, 0, nullptr, &dummySize) != INVALID_ARGUMENT)
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED Base64Decode non-multiple-of-4 (5 chars) not rejected" << std::endl;
+                ++failures;
+            }
+
+            if (CUtils::Base64Decode("T!Fu", 4, 3, threeBytes, &dummySize) != INVALID_DATA)
+            {
+                std::cout << "RunEncodingUtilsTest: FAILED Base64Decode invalid character not rejected" << std::endl;
+                ++failures;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunEncodingUtilsTest: PASSED (all Hex/Base64 encode/decode checks)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunEncodingUtilsTest: " << failures << " FAILURE(S)" << std::endl;
         return UNEXPECTED_ERROR;
     }
     catch (...)
