@@ -169,6 +169,30 @@ public:
     // must produce a digest matching GetHashSize(), unsupported ones must be cleanly rejected.
     int RunHashAlgorithmsTest(void);
 
+    // Exercises CCryptoApi's Signature surface (GenerateSignatureKeyPair/GetSignatureSize/
+    // SignBuffer/VerifyBuffer via the 6-argument or Signature-only 2-argument constructor) --
+    // sign+verify round-trip, tampered-message rejection, and tampered-signature rejection. Each
+    // method exercises a different SignatureAlgorithm for coverage diversity (breadth of all 5
+    // values x all 4 providers is RunSignatureAlgorithmsTest's job, not this one's): Microsoft/
+    // OpenSSL use ECDSA-P256 (supported everywhere), CryptoPP uses RSA-PSS-2048, Botan uses
+    // Ed25519. One full independent method per provider (no shared helper).
+    int RunMicrosoftProviderSignatureTest(void);
+
+    int RunCryptoPPProviderSignatureTest(void);
+
+    int RunBotanProviderSignatureTest(void);
+
+    int RunOpenSslProviderSignatureTest(void);
+
+    // Breadth companion to the 4 Run<Vendor>ProviderSignatureTest methods: loops every
+    // ProviderKind x every SignatureAlgorithm value via CCryptoApi's Signature-only 2-argument
+    // constructor + GenerateSignatureKeyPair/SignBuffer/VerifyBuffer, cross-checked against
+    // ICryptoProviderFactory::SupportsSignatureAlgorithm() as ground truth -- supported
+    // combinations must round-trip, unsupported ones (e.g. SIGNATURE_ED25519 on Microsoft, see
+    // the "honest unsupported" note on CMicrosoftProvider's SignatureAlgorithmName) must be
+    // cleanly rejected.
+    int RunSignatureAlgorithmsTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

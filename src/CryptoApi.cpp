@@ -236,42 +236,52 @@ CCryptoApi::~CCryptoApi()
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
+CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(hashAlgorithm)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const SignatureAlgorithm signatureAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(signatureAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(signatureAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
@@ -1992,6 +2002,147 @@ int CCryptoApi::ComputeHashFile(const char* inputFilePath, const int outputBuffe
             *outputBufferSize = 0;
         }
 
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
+// Signature (sign/verify) -- see SignatureAlgorithm in ProviderTypes.h and the 6-argument
+// constructor. Kept in its own section at the end of the file, deliberately separate from the
+// Encrypt*/Decrypt* and Hash methods above: signing has no password and no ciphertext, and unlike
+// Hash it caches a key pair across calls (like the RSA/Asymmetric section further up), so it
+// doesn't share their shape either.
+// ================================================================================================
+
+int CCryptoApi::GenerateSignatureKeyPair(void)
+{
+    try
+    {
+        if (!signatureEngine_)
+        {
+            std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+            if (!providerFactory)
+            {
+                return UNEXPECTED_ERROR;
+            }
+
+            signatureEngine_ = providerFactory->CreateSignatureEngine(signatureAlgorithm_);
+            if (!signatureEngine_)
+            {
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        return signatureEngine_->GenerateKeyPair() ? NO_ERROR : UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::GetSignatureSize(void) const
+{
+    try
+    {
+        return signatureEngine_ ? static_cast<int>(signatureEngine_->GetSignatureSize()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::SignBuffer(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (!signatureEngine_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int requiredSize = signatureEngine_->GetSignatureSize();
+        if (requiredSize == 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(requiredSize))
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(requiredSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        if (!signatureEngine_->Sign(inputBuffer, static_cast<unsigned int>(inputBufferSize),
+                                    outputBuffer, static_cast<unsigned int>(outputBufferCapacity)))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(requiredSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::VerifyBuffer(const unsigned char* inputBuffer, const int inputBufferSize, const unsigned char* signatureBuffer, const int signatureBufferSize, bool* isValid)
+{
+    try
+    {
+        if (isValid)
+        {
+            *isValid = false;
+        }
+
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr) ||
+            signatureBufferSize < 0 || (signatureBufferSize > 0 && signatureBuffer == nullptr) ||
+            isValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (!signatureEngine_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        *isValid = signatureEngine_->Verify(inputBuffer, static_cast<unsigned int>(inputBufferSize),
+                                            signatureBuffer, static_cast<unsigned int>(signatureBufferSize));
+        return NO_ERROR;
+    }
+    catch (...)
+    {
         return UNEXPECTED_ERROR;
     }
 }

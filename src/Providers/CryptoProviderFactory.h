@@ -9,6 +9,7 @@
 #include "Providers/MacService.h"
 #include "Providers/ProviderTypes.h"
 #include "Providers/RandomSource.h"
+#include "Providers/SignatureEngine.h"
 
 #include <memory>
 
@@ -54,6 +55,12 @@ public:
     // nullptr for unsupported values, rather than omitting them.
     virtual bool SupportsHashAlgorithm(const HashAlgorithm algorithm) const = 0;
     virtual std::unique_ptr<IHashService> CreateHashService(const HashAlgorithm algorithm) = 0;
+
+    // Not every provider implements every signature algorithm (see SignatureAlgorithm in
+    // ProviderTypes.h); providers must have SupportsSignatureAlgorithm() return false and
+    // CreateSignatureEngine() return nullptr for unsupported values, rather than omitting them.
+    virtual bool SupportsSignatureAlgorithm(const SignatureAlgorithm algorithm) const = 0;
+    virtual std::unique_ptr<ISignatureEngine> CreateSignatureEngine(const SignatureAlgorithm algorithm) = 0;
 
 protected:
 

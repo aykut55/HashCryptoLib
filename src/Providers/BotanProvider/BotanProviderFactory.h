@@ -30,6 +30,9 @@ public:
     virtual bool SupportsHashAlgorithm(const HashAlgorithm algorithm) const;
     virtual std::unique_ptr<IHashService> CreateHashService(const HashAlgorithm algorithm);
 
+    virtual bool SupportsSignatureAlgorithm(const SignatureAlgorithm algorithm) const;
+    virtual std::unique_ptr<ISignatureEngine> CreateSignatureEngine(const SignatureAlgorithm algorithm);
+
 protected:
 
 private:

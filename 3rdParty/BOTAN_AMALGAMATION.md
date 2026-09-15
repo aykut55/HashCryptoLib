@@ -25,7 +25,7 @@ Visual Studio Developer Command Prompt / PowerShell'de (yani `cl.exe` PATH'te),
 ```bat
 :: x64
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160 ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem ^
   --cpu=x86_64
 move /Y botan_all.h x64\botan_all.h
 move /Y botan_all.cpp x64\botan_all.cpp
@@ -33,7 +33,7 @@ del botan_all.obj
 
 :: Win32
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160 ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem ^
   --cpu=x86_32
 move /Y botan_all.h Win32\botan_all.h
 move /Y botan_all.cpp Win32\botan_all.cpp
@@ -59,6 +59,24 @@ derlemeyi engellemiyor -- sadece MD5'in kriptografik olarak kırık olduğuna da
 uyarı, kod tarafında ekstra bir işlem gerektirmiyor. `x86_32` (Win32) hedefinde `sha2_64_avx2`/
 `sha2_64_x86` gibi CPU-özel hızlandırma modülleri otomatik atlanıyor (32-bit'te uygulanamaz),
 tıpkı `sha2_32_avx2`'nin Win32'de atlanması gibi -- bu beklenen davranış, hata değil.
+
+## Signature (imza) modülleri (2026-09-15)
+
+`CBotanProvider`'ın `ISignatureEngine` desteği (RSA-PSS-SHA256, ECDSA-P256-SHA256, Ed25519) için
+`ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem` modülleri eklendi. Yine aynı
+gotcha ile karşılaşıldı:
+
+- `rsa` modülü `sig_padding`'i (soyut dispatcher) otomatik çekiyor ama concrete PSS implementasyonu
+  (`emsa_pssr`, dizin adı da bu) ayrı eklenmesi gerekiyor -- tıpkı `eme_oaep`'in `enc_padding`'den
+  ayrı olması gibi.
+- `ecdsa` modülü `ec_group`/`ecc_key`'i **otomatik çekmiyor**, `<requires>` listesinde varlar ama
+  `--enable-modules`'e elle eklenmesi gerekiyor.
+- `ec_group` kendisi de `pcurves`'e bağımlı (Botan 3.13'te EC_Group artık pcurves backend'ini
+  kullanıyor) ama `pcurves`'in kendisi `--enable-modules`'e **doğrudan eklenemiyor**
+  ("Module 'pcurves' is meant for internal use only" hatası) -- sadece somut eğri modülünü
+  (`pcurves_secp256r1`, P-256 için) eklemek yeterli, `pcurves` ve `pcurves_impl` otomatik geliyor.
+- `ed25519` modülü tek başına yeterli (sadece `sha2_64`'e bağımlı, o zaten hash çalışmasından beri
+  ekli).
 
 ## Modül listesini genişletirken
 

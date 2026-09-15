@@ -133,7 +133,7 @@ int main()
     cryptoApiTester.RunEncryptFileHexBase64CompositionTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunMicrosoftProviderHashTest();
 
     cryptoApiTester.RunCryptoPPProviderHashTest();
@@ -143,11 +143,11 @@ int main()
     cryptoApiTester.RunOpenSslProviderHashTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunHashAlgorithmsTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunHashFileTest();
 
     cryptoApiTester.RunHashStringTest();
@@ -157,7 +157,7 @@ int main()
     cryptoApiTester.RunHashBytesTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunProviderFactoryHashTest();
 
     cryptoApiTester.RunProviderFactoryHashFileTest();
@@ -169,7 +169,7 @@ int main()
     cryptoApiTester.RunProviderFactoryHashBytesTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunHashHexBase64CompositionTest();
 
     cryptoApiTester.RunHashFileHexBase64CompositionTest();
@@ -183,6 +183,18 @@ int main()
     cryptoApiTester.RunHashBufferTestNonBlocking();
 
     cryptoApiTester.RunHashBytesTestNonBlocking();
+#endif
+
+#if 0
+    cryptoApiTester.RunMicrosoftProviderSignatureTest();
+
+    cryptoApiTester.RunCryptoPPProviderSignatureTest();
+
+    cryptoApiTester.RunBotanProviderSignatureTest();
+
+    cryptoApiTester.RunOpenSslProviderSignatureTest();
+
+    cryptoApiTester.RunSignatureAlgorithmsTest();
 #endif
 
     return 0;

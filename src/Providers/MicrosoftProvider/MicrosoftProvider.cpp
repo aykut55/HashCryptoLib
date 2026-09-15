@@ -272,6 +272,41 @@ namespace
             default:            return nullptr;
         }
     }
+    // -------------------------------------------------------------------------
+
+    // SIGNATURE_ED25519 correctly returns nullptr = unsupported: CNG's generic BCRYPT_ECDSA_
+    // ALGORITHM can be parameterized to curve25519 (BCRYPT_ECC_CURVE_25519 exists in this SDK's
+    // bcrypt.h), but that produces classic ECDSA-over-Curve25519, not RFC 8032 EdDSA -- a
+    // different, non-interoperable signature scheme. Since this SDK promises the same wire format
+    // for a given SignatureAlgorithm across all 4 providers, using CNG's curve-parameterized ECDSA
+    // here would silently produce signatures CryptoPP/Botan/OpenSSL could never verify. Honest
+    // unsupported is correct until CNG ships real Ed25519.
+    const wchar_t* SignatureAlgorithmName(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_RSA_PSS_SHA256_2048:
+            case SIGNATURE_RSA_PSS_SHA256_3072:
+            case SIGNATURE_RSA_PSS_SHA256_4096:
+                return BCRYPT_RSA_ALGORITHM;
+            case SIGNATURE_ECDSA_P256_SHA256:
+                return BCRYPT_ECDSA_P256_ALGORITHM;
+            default:
+                return nullptr;
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    unsigned int SignatureRsaKeyBits(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_RSA_PSS_SHA256_2048: return 2048;
+            case SIGNATURE_RSA_PSS_SHA256_3072: return 3072;
+            case SIGNATURE_RSA_PSS_SHA256_4096: return 4096;
+            default:                            return 0;
+        }
+    }
 }
 // -----------------------------------------------------------------------------
 
@@ -318,6 +353,16 @@ CMicrosoftProvider::~CMicrosoftProvider()
         {
             SecureZeroMemory(&hashObjectBuffer_[0], hashObjectBuffer_.size());
         }
+
+        if (signatureKeyHandle_ != nullptr)
+        {
+            BCryptDestroyKey(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_));
+        }
+
+        if (signatureAlgorithmHandle_ != nullptr)
+        {
+            BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(signatureAlgorithmHandle_), 0);
+        }
     }
     catch (...)
     {
@@ -340,7 +385,12 @@ CMicrosoftProvider::CMicrosoftProvider()
       rsaKeyBits_(0),
       hashAlgorithmHandle_(nullptr),
       hashObjectHandle_(nullptr),
-      hashOutputSize_(0)
+      hashOutputSize_(0),
+      asymmetricModeIsSignature_(false),
+      signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256),
+      signatureAlgorithmHandle_(nullptr),
+      signatureKeyHandle_(nullptr),
+      signatureSize_(0)
 {
 }
 // -----------------------------------------------------------------------------
@@ -882,6 +932,7 @@ bool CMicrosoftProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
 
         rsaAlgorithmHandle_ = algorithmHandle;
         rsaKeyBits_ = keyBits;
+        asymmetricModeIsSignature_ = false;
         return true;
     }
     catch (...)
@@ -895,6 +946,39 @@ bool CMicrosoftProvider::GenerateKeyPair(void)
 {
     try
     {
+        if (asymmetricModeIsSignature_)
+        {
+            if (signatureAlgorithmHandle_ == nullptr)
+            {
+                return false;
+            }
+
+            const unsigned int rsaBits = SignatureRsaKeyBits(signatureAlgorithm_);
+            const unsigned int keyBits = rsaBits != 0 ? rsaBits : 256; // ECDSA-P256: field size, not RSA modulus
+
+            BCRYPT_KEY_HANDLE keyHandle = nullptr;
+            if (BCryptGenerateKeyPair(static_cast<BCRYPT_ALG_HANDLE>(signatureAlgorithmHandle_),
+                                      &keyHandle, keyBits, 0) < 0)
+            {
+                return false;
+            }
+
+            if (BCryptFinalizeKeyPair(keyHandle, 0) < 0)
+            {
+                BCryptDestroyKey(keyHandle);
+                return false;
+            }
+
+            if (signatureKeyHandle_ != nullptr)
+            {
+                BCryptDestroyKey(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_));
+            }
+
+            signatureKeyHandle_ = keyHandle;
+            signatureSize_ = rsaBits != 0 ? (rsaBits / 8) : 64; // RSA: modulus bytes; ECDSA-P256: raw r||s (32+32)
+            return true;
+        }
+
         if (rsaAlgorithmHandle_ == nullptr || rsaKeyBits_ == 0)
         {
             return false;
@@ -1224,6 +1308,156 @@ bool CMicrosoftProvider::Final(unsigned char* hash, const unsigned int hashSize)
         hashObjectHandle_ = nullptr;
 
         return status >= 0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
+{
+    try
+    {
+        const wchar_t* algorithmName = SignatureAlgorithmName(algorithm);
+        if (algorithmName == nullptr)
+        {
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE algorithmHandle = nullptr;
+        if (BCryptOpenAlgorithmProvider(&algorithmHandle, algorithmName, nullptr, 0) < 0)
+        {
+            return false;
+        }
+
+        if (signatureKeyHandle_ != nullptr)
+        {
+            BCryptDestroyKey(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_));
+            signatureKeyHandle_ = nullptr;
+        }
+
+        if (signatureAlgorithmHandle_ != nullptr)
+        {
+            BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(signatureAlgorithmHandle_), 0);
+        }
+
+        signatureAlgorithmHandle_ = algorithmHandle;
+        signatureAlgorithm_ = algorithm;
+        signatureSize_ = 0;
+        asymmetricModeIsSignature_ = true;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CMicrosoftProvider::GetSignatureSize(void) const
+{
+    return signatureSize_;
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::Sign(const unsigned char* data, const unsigned int dataSize, unsigned char* signature, const unsigned int signatureSize)
+{
+    try
+    {
+        if (signatureKeyHandle_ == nullptr || signature == nullptr || signatureSize < signatureSize_ ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        unsigned char digest[32];
+        BCRYPT_ALG_HANDLE hashAlgorithm = nullptr;
+        if (BCryptOpenAlgorithmProvider(&hashAlgorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        {
+            return false;
+        }
+
+        const NTSTATUS hashStatus = BCryptHash(hashAlgorithm, nullptr, 0,
+                                               const_cast<PUCHAR>(data), dataSize, digest, sizeof(digest));
+        BCryptCloseAlgorithmProvider(hashAlgorithm, 0);
+        if (hashStatus < 0)
+        {
+            return false;
+        }
+
+        ULONG actualSize = 0;
+
+        if (SignatureRsaKeyBits(signatureAlgorithm_) != 0)
+        {
+            BCRYPT_PSS_PADDING_INFO paddingInfo;
+            paddingInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM;
+            paddingInfo.cbSalt = sizeof(digest);
+
+            if (BCryptSignHash(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), &paddingInfo,
+                               digest, sizeof(digest), signature, signatureSize, &actualSize, BCRYPT_PAD_PSS) < 0)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            if (BCryptSignHash(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), nullptr,
+                               digest, sizeof(digest), signature, signatureSize, &actualSize, 0) < 0)
+            {
+                return false;
+            }
+        }
+
+        return actualSize == signatureSize_;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::Verify(const unsigned char* data, const unsigned int dataSize, const unsigned char* signature, const unsigned int signatureSize)
+{
+    try
+    {
+        if (signatureKeyHandle_ == nullptr || signature == nullptr || signatureSize != signatureSize_ ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        unsigned char digest[32];
+        BCRYPT_ALG_HANDLE hashAlgorithm = nullptr;
+        if (BCryptOpenAlgorithmProvider(&hashAlgorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        {
+            return false;
+        }
+
+        const NTSTATUS hashStatus = BCryptHash(hashAlgorithm, nullptr, 0,
+                                               const_cast<PUCHAR>(data), dataSize, digest, sizeof(digest));
+        BCryptCloseAlgorithmProvider(hashAlgorithm, 0);
+        if (hashStatus < 0)
+        {
+            return false;
+        }
+
+        if (SignatureRsaKeyBits(signatureAlgorithm_) != 0)
+        {
+            BCRYPT_PSS_PADDING_INFO paddingInfo;
+            paddingInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM;
+            paddingInfo.cbSalt = sizeof(digest);
+
+            return BCryptVerifySignature(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), &paddingInfo,
+                                         digest, sizeof(digest),
+                                         const_cast<PUCHAR>(signature), signatureSize, BCRYPT_PAD_PSS) >= 0;
+        }
+
+        return BCryptVerifySignature(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), nullptr,
+                                     digest, sizeof(digest),
+                                     const_cast<PUCHAR>(signature), signatureSize, 0) >= 0;
     }
     catch (...)
     {

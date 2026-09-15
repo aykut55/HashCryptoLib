@@ -16,6 +16,7 @@ namespace CryptoApiNS
 {
 
 class IAsymmetricCipher;
+class ISignatureEngine;
 
 class CCryptoApi
 {
@@ -49,9 +50,14 @@ public:
     // reasoning again -- Legacy+MAC never touches AEAD either.
              CCryptoApi(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm);
 
+    // Signature-only: for callers who only need GenerateSignatureKeyPair/SignBuffer/VerifyBuffer/
+    // GetSignatureSize. Same reasoning again -- signing never touches AEAD either.
+             CCryptoApi(const ProviderKind providerKind, const SignatureAlgorithm signatureAlgorithm);
+
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm);
+             CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm);
 
     const char* GetVersion(void) const;
 
@@ -220,6 +226,40 @@ public:
                         ProgressCallback onProgress,
                         void* progressUserData);
 
+    // ============================================================================================
+    // Signature (sign/verify) -- see SignatureAlgorithm in ProviderTypes.h and the 6-argument
+    // constructor. No password: GenerateSignatureKeyPair() creates a fresh key pair, the private
+    // key never leaves this instance. This SDK does not yet support importing a third party's
+    // public key to verify their signatures -- only self-contained sign-then-verify round trips
+    // with a key pair this instance generated itself (see future_signing_key_agreement memory).
+    // ============================================================================================
+
+    // Generates a fresh key pair for this instance's signatureAlgorithm_. Must be called once
+    // before SignBuffer/VerifyBuffer/GetSignatureSize; calling it again rotates to a fresh key
+    // pair (old signatures become unverifiable against this instance).
+    int GenerateSignatureKeyPair(void);
+
+    // Exact signature size SignBuffer produces; 0 before a key pair exists.
+    int GetSignatureSize(void) const;
+
+    // Signs inputBuffer with the private key. No chunking, no password -- the provider hashes the
+    // whole buffer internally as part of the signature scheme (SHA-256 for RSA-PSS/ECDSA, Ed25519's
+    // own hashing for SIGNATURE_ED25519).
+    int SignBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
+                    const int outputBufferCapacity,
+                    unsigned char* outputBuffer,
+                    int* outputBufferSize);
+
+    // Verifies signatureBuffer against inputBuffer with this instance's public key. Returns
+    // NO_ERROR when verification executed (isValid then reports whether the signature is
+    // cryptographically valid) or an error code when verification could not run at all (no key
+    // pair, invalid arguments); *isValid is only meaningful when the return value is NO_ERROR.
+    // Kept separate from the return code so "couldn't verify" is never confused with "verified
+    // and found invalid" -- a tampered signature must never look like a technical error.
+    int VerifyBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
+                     const unsigned char* signatureBuffer, const int signatureBufferSize,
+                     bool* isValid);
+
 protected:
 
 private:
@@ -296,6 +336,14 @@ private:
     // ComputeHashFile; fixed for the instance's lifetime. Stateless per-call like the AEAD/Legacy
     // paths (no cached hash object) since a fresh IHashService is cheap to create.
     HashAlgorithm hashAlgorithm_;
+
+    // Signature algorithm this instance uses for GenerateSignatureKeyPair; fixed for the
+    // instance's lifetime. signatureEngine_ is null until GenerateSignatureKeyPair() succeeds,
+    // and then holds the key pair for the instance's lifetime (see SignBuffer/VerifyBuffer
+    // above) -- cached like asymmetricCipher_ above, not stateless per-call, since key generation
+    // is the expensive part and both Sign and Verify need the same key pair to be meaningful.
+    SignatureAlgorithm signatureAlgorithm_;
+    std::unique_ptr<ISignatureEngine> signatureEngine_;
 
 };
 

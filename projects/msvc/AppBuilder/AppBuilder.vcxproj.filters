@@ -72,6 +72,9 @@
     <ClCompile Include="..\..\..\src\Providers\HashService.cpp">
       <Filter>src\Providers</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\SignatureEngine.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Providers\CryptoProviderFactory.cpp">
       <Filter>src\Providers</Filter>
     </ClCompile>
@@ -141,6 +144,9 @@
       <Filter>src\Providers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\HashService.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\SignatureEngine.h">
       <Filter>src\Providers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h">

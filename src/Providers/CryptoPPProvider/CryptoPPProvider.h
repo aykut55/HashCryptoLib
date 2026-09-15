@@ -8,13 +8,14 @@
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
 #include "Providers/RandomSource.h"
+#include "Providers/SignatureEngine.h"
 
 #include <memory>
 
 namespace CryptoApiNS
 {
 
-class CCryptoPPProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService
+class CCryptoPPProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService, public ISignatureEngine
 {
 public:
     virtual ~CCryptoPPProvider();
@@ -70,7 +71,9 @@ public:
     // IRandomSource
     virtual bool GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize);
 
-    // IAsymmetricCipher
+    // IAsymmetricCipher. GenerateKeyPair() is also ISignatureEngine's method (identical signature
+    // in both interfaces); it dispatches on an internal flag set by whichever SelectAlgorithm
+    // overload (AsymmetricAlgorithm vs SignatureAlgorithm) was called most recently.
     virtual bool SelectAlgorithm(const AsymmetricAlgorithm algorithm);
     virtual bool GenerateKeyPair(void);
     virtual unsigned int GetMaxPlaintextSize(void) const;
@@ -101,6 +104,16 @@ public:
     virtual bool Init(void);
     virtual bool Update(const unsigned char* data, const unsigned int dataSize);
     virtual bool Final(unsigned char* hash, const unsigned int hashSize);
+
+    // ISignatureEngine (GenerateKeyPair declared above, shared with IAsymmetricCipher)
+    virtual bool SelectAlgorithm(const SignatureAlgorithm algorithm);
+    virtual unsigned int GetSignatureSize(void) const;
+
+    virtual bool Sign( const unsigned char* data, const unsigned int dataSize,
+                      unsigned char* signature, const unsigned int signatureSize);
+
+    virtual bool Verify( const unsigned char* data, const unsigned int dataSize,
+                        const unsigned char* signature, const unsigned int signatureSize);
 
 protected:
 

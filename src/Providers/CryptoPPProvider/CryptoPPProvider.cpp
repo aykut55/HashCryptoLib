@@ -6,13 +6,16 @@
 #include "cryptopp890/ccm.h"
 #include "cryptopp890/chachapoly.h"
 #include "cryptopp890/eax.h"
+#include "cryptopp890/eccrypto.h"
 #include "cryptopp890/filters.h"
 #include "cryptopp890/gcm.h"
 #include "cryptopp890/hmac.h"
 #include "cryptopp890/md5.h"
 #include "cryptopp890/modes.h"
 #include "cryptopp890/oaep.h"
+#include "cryptopp890/oids.h"
 #include "cryptopp890/osrng.h"
+#include "cryptopp890/pssr.h"
 #include "cryptopp890/pwdbased.h"
 #include "cryptopp890/ripemd.h"
 #include "cryptopp890/rsa.h"
@@ -21,6 +24,7 @@
 #include "cryptopp890/sha.h"
 #include "cryptopp890/sha3.h"
 #include "cryptopp890/twofish.h"
+#include "cryptopp890/xed25519.h"
 
 #include <memory>
 
@@ -32,6 +36,20 @@ namespace
     const unsigned int CRYPTOPP_PROVIDER_NONCE_SIZE = 12;
     const unsigned int CRYPTOPP_PROVIDER_TAG_SIZE = 16;
     const unsigned int CRYPTOPP_PROVIDER_BLOCK_SIZE = 16;
+
+    // --- Signature (ISignatureEngine) -----------------------------------------------------------
+
+    // 0 for non-RSA algorithms (ECDSA-P256, Ed25519), which have a fixed key size instead.
+    unsigned int SignatureRsaKeyBits(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_RSA_PSS_SHA256_2048: return 2048;
+            case SIGNATURE_RSA_PSS_SHA256_3072: return 3072;
+            case SIGNATURE_RSA_PSS_SHA256_4096: return 4096;
+            default:                            return 0;
+        }
+    }
 
     // --- AEAD engines --------------------------------------------------------------------------
 
@@ -395,6 +413,21 @@ struct CCryptoPPProvider::Impl
     // BLAKE2s derive from MessageAuthenticationCode, which is itself a HashTransformation, so the
     // same pointer type covers all 14 algorithms uniformly).
     std::unique_ptr<CryptoPP::HashTransformation> hashFunction;
+
+    // ISignatureEngine state -- separate key material from rsaPrivateKey/rsaPublicKey above (that
+    // pair is RSA-OAEP encryption; this is RSA-PSS/ECDSA/Ed25519 signing, a distinct key even when
+    // both happen to be RSA). asymmetricModeIsSignature dispatches GenerateKeyPair() (shared with
+    // IAsymmetricCipher, see the comment on its declaration in the header).
+    bool asymmetricModeIsSignature = false;
+    SignatureAlgorithm signatureAlgorithm = SIGNATURE_ECDSA_P256_SHA256;
+    bool signatureKeyGenerated = false;
+    unsigned int signatureSize = 0;
+    CryptoPP::RSA::PrivateKey sigRsaPrivateKey;
+    CryptoPP::RSA::PublicKey sigRsaPublicKey;
+    CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PrivateKey ecdsaPrivateKey;
+    CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PublicKey ecdsaPublicKey;
+    std::unique_ptr<CryptoPP::ed25519Signer> ed25519SignerPtr;
+    std::unique_ptr<CryptoPP::ed25519Verifier> ed25519VerifierPtr;
 };
 
 CCryptoPPProvider::~CCryptoPPProvider()
@@ -715,6 +748,7 @@ bool CCryptoPPProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
 
         impl_->rsaKeyBits = keyBits;
         impl_->rsaKeyGenerated = false;
+        impl_->asymmetricModeIsSignature = false;
         return true;
     }
     catch (...)
@@ -728,6 +762,53 @@ bool CCryptoPPProvider::GenerateKeyPair(void)
 {
     try
     {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        if (impl_->asymmetricModeIsSignature)
+        {
+            CryptoPP::AutoSeededRandomPool rng;
+
+            switch (impl_->signatureAlgorithm)
+            {
+                case SIGNATURE_RSA_PSS_SHA256_2048:
+                case SIGNATURE_RSA_PSS_SHA256_3072:
+                case SIGNATURE_RSA_PSS_SHA256_4096:
+                {
+                    const unsigned int keyBits = SignatureRsaKeyBits(impl_->signatureAlgorithm);
+                    CryptoPP::RSA::PrivateKey privateKey;
+                    privateKey.GenerateRandomWithKeySize(rng, keyBits);
+                    impl_->sigRsaPrivateKey = privateKey;
+                    impl_->sigRsaPublicKey = CryptoPP::RSA::PublicKey(privateKey);
+                    impl_->signatureSize = keyBits / 8;
+                    break;
+                }
+                case SIGNATURE_ECDSA_P256_SHA256:
+                {
+                    CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PrivateKey privateKey;
+                    privateKey.Initialize(rng, CryptoPP::ASN1::secp256r1());
+                    impl_->ecdsaPrivateKey = privateKey;
+                    privateKey.MakePublicKey(impl_->ecdsaPublicKey);
+                    impl_->signatureSize = 64;
+                    break;
+                }
+                case SIGNATURE_ED25519:
+                {
+                    impl_->ed25519SignerPtr.reset(new CryptoPP::ed25519Signer(rng));
+                    impl_->ed25519VerifierPtr.reset(new CryptoPP::ed25519Verifier(*impl_->ed25519SignerPtr));
+                    impl_->signatureSize = 64;
+                    break;
+                }
+                default:
+                    return false;
+            }
+
+            impl_->signatureKeyGenerated = true;
+            return true;
+        }
+
         if (impl_->rsaKeyBits == 0)
         {
             return false;
@@ -1007,6 +1088,140 @@ bool CCryptoPPProvider::Final(unsigned char* hash, const unsigned int hashSize)
 
         impl_->hashFunction->Final(reinterpret_cast<CryptoPP::byte*>(hash));
         return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        switch (algorithm)
+        {
+            case SIGNATURE_RSA_PSS_SHA256_2048:
+            case SIGNATURE_RSA_PSS_SHA256_3072:
+            case SIGNATURE_RSA_PSS_SHA256_4096:
+            case SIGNATURE_ECDSA_P256_SHA256:
+            case SIGNATURE_ED25519:
+                break;
+            default:
+                return false;
+        }
+
+        impl_->signatureAlgorithm = algorithm;
+        impl_->signatureKeyGenerated = false;
+        impl_->signatureSize = 0;
+        impl_->asymmetricModeIsSignature = true;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CCryptoPPProvider::GetSignatureSize(void) const
+{
+    return (impl_ && impl_->signatureKeyGenerated) ? impl_->signatureSize : 0;
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::Sign(const unsigned char* data, const unsigned int dataSize, unsigned char* signature, const unsigned int signatureSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->signatureKeyGenerated || signature == nullptr || signatureSize < impl_->signatureSize ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        CryptoPP::AutoSeededRandomPool rng;
+        size_t actualLength = 0;
+
+        switch (impl_->signatureAlgorithm)
+        {
+            case SIGNATURE_RSA_PSS_SHA256_2048:
+            case SIGNATURE_RSA_PSS_SHA256_3072:
+            case SIGNATURE_RSA_PSS_SHA256_4096:
+            {
+                CryptoPP::RSASS<CryptoPP::PSS, CryptoPP::SHA256>::Signer signer(impl_->sigRsaPrivateKey);
+                actualLength = signer.SignMessage(rng, data, dataSize, signature);
+                break;
+            }
+            case SIGNATURE_ECDSA_P256_SHA256:
+            {
+                CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::Signer signer(impl_->ecdsaPrivateKey);
+                actualLength = signer.SignMessage(rng, data, dataSize, signature);
+                break;
+            }
+            case SIGNATURE_ED25519:
+            {
+                if (!impl_->ed25519SignerPtr)
+                {
+                    return false;
+                }
+                actualLength = impl_->ed25519SignerPtr->SignMessage(rng, data, dataSize, signature);
+                break;
+            }
+            default:
+                return false;
+        }
+
+        return actualLength == impl_->signatureSize;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::Verify(const unsigned char* data, const unsigned int dataSize, const unsigned char* signature, const unsigned int signatureSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->signatureKeyGenerated || signature == nullptr || signatureSize != impl_->signatureSize ||
+            (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        switch (impl_->signatureAlgorithm)
+        {
+            case SIGNATURE_RSA_PSS_SHA256_2048:
+            case SIGNATURE_RSA_PSS_SHA256_3072:
+            case SIGNATURE_RSA_PSS_SHA256_4096:
+            {
+                CryptoPP::RSASS<CryptoPP::PSS, CryptoPP::SHA256>::Verifier verifier(impl_->sigRsaPublicKey);
+                return verifier.VerifyMessage(data, dataSize, signature, signatureSize);
+            }
+            case SIGNATURE_ECDSA_P256_SHA256:
+            {
+                CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::Verifier verifier(impl_->ecdsaPublicKey);
+                return verifier.VerifyMessage(data, dataSize, signature, signatureSize);
+            }
+            case SIGNATURE_ED25519:
+            {
+                if (!impl_->ed25519VerifierPtr)
+                {
+                    return false;
+                }
+                return impl_->ed25519VerifierPtr->VerifyMessage(data, dataSize, signature, signatureSize);
+            }
+            default:
+                return false;
+        }
     }
     catch (...)
     {

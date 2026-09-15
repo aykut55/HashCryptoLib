@@ -8,13 +8,14 @@
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
 #include "Providers/RandomSource.h"
+#include "Providers/SignatureEngine.h"
 
 #include <vector>
 
 namespace CryptoApiNS
 {
 
-class CMicrosoftProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService
+class CMicrosoftProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService, public ISignatureEngine
 {
 public:
     virtual ~CMicrosoftProvider();
@@ -70,7 +71,10 @@ public:
     // IRandomSource
     virtual bool GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize);
 
-    // IAsymmetricCipher
+    // IAsymmetricCipher. GenerateKeyPair() is also ISignatureEngine's method (identical signature
+    // in both interfaces, like GetKeySize/SetKey are shared between IAeadCipher/ILegacyCipher
+    // above) -- it dispatches on asymmetricModeIsSignature_, set by whichever SelectAlgorithm
+    // overload (AsymmetricAlgorithm vs SignatureAlgorithm) was called most recently.
     virtual bool SelectAlgorithm(const AsymmetricAlgorithm algorithm);
     virtual bool GenerateKeyPair(void);
     virtual unsigned int GetMaxPlaintextSize(void) const;
@@ -102,6 +106,16 @@ public:
     virtual bool Update(const unsigned char* data, const unsigned int dataSize);
     virtual bool Final(unsigned char* hash, const unsigned int hashSize);
 
+    // ISignatureEngine (GenerateKeyPair declared above, shared with IAsymmetricCipher)
+    virtual bool SelectAlgorithm(const SignatureAlgorithm algorithm);
+    virtual unsigned int GetSignatureSize(void) const;
+
+    virtual bool Sign( const unsigned char* data, const unsigned int dataSize,
+                      unsigned char* signature, const unsigned int signatureSize);
+
+    virtual bool Verify( const unsigned char* data, const unsigned int dataSize,
+                        const unsigned char* signature, const unsigned int signatureSize);
+
 protected:
 
 private:
@@ -125,6 +139,17 @@ private:
     void* rsaAlgorithmHandle_;
     void* rsaKeyHandle_;
     unsigned int rsaKeyBits_;
+
+    // ISignatureEngine state -- separate key material from rsaAlgorithmHandle_/rsaKeyHandle_
+    // above (that pair is RSA-OAEP encryption; this is RSA-PSS/ECDSA/Ed25519 signing, a distinct
+    // key even when both happen to be RSA). asymmetricModeIsSignature_ is the dispatch flag
+    // GenerateKeyPair() reads to decide which key pair to generate (see the comment on its
+    // declaration above).
+    bool asymmetricModeIsSignature_;
+    SignatureAlgorithm signatureAlgorithm_;
+    void* signatureAlgorithmHandle_;
+    void* signatureKeyHandle_;
+    unsigned int signatureSize_;
 
     // IHashService state -- separate from algorithmHandle_/keyHandle_ above (unrelated, never both
     // in use for the same instance). hashObjectBuffer_ backs the CNG hash object for the

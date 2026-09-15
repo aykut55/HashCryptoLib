@@ -115,6 +115,23 @@ enum HashAlgorithm
     HASH_RIPEMD160  = 13
 };
 
+// Digital signature algorithms. Like AsymmetricAlgorithm, GenerateKeyPair() creates a fresh key
+// pair per selected value -- no caller-supplied key. Signature output is a fixed size for every
+// value here (deterministic per algorithm/key size, see ISignatureEngine::GetSignatureSize):
+// SIGNATURE_ECDSA_P256_SHA256 always produces the raw 64-byte r||s concatenation (32-byte r +
+// 32-byte s, both big-endian, zero-padded), never variable-length ASN.1 DER -- providers whose
+// native API produces DER (or vice versa) convert internally so every provider agrees on this one
+// wire format. Not every ProviderKind supports every value here; query
+// ICryptoProviderFactory::SupportsSignatureAlgorithm() before CreateSignatureEngine().
+enum SignatureAlgorithm
+{
+    SIGNATURE_RSA_PSS_SHA256_2048 = 0,
+    SIGNATURE_RSA_PSS_SHA256_3072 = 1,
+    SIGNATURE_RSA_PSS_SHA256_4096 = 2,
+    SIGNATURE_ECDSA_P256_SHA256   = 3,
+    SIGNATURE_ED25519             = 4
+};
+
 } // namespace CryptoApiNS
 
 #endif

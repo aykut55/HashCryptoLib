@@ -5888,6 +5888,476 @@ int CCryptoApiTester::RunHashAlgorithmsTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunMicrosoftProviderSignatureTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, SIGNATURE_ECDSA_P256_SHA256);
+
+        int status = cryptoApi.GenerateSignatureKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderSignatureTest: FAILED GenerateSignatureKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int signatureSize = cryptoApi.GetSignatureSize();
+        if (signatureSize != 64)
+        {
+            std::cout << "RunMicrosoftProviderSignatureTest: FAILED GetSignatureSize expected 64 got " << signatureSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* message = "RunMicrosoftProviderSignatureTest message to sign";
+        const int messageSize = static_cast<int>(std::strlen(message));
+        const unsigned char* messageBytes = reinterpret_cast<const unsigned char*>(message);
+
+        int requiredSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, 0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize != signatureSize)
+        {
+            std::cout << "RunMicrosoftProviderSignatureTest: FAILED sign size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> signature(requiredSize);
+        int actualSignatureSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, requiredSize, &signature[0], &actualSignatureSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderSignatureTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunMicrosoftProviderSignatureTest: FAILED round-trip verify status=" << status << " valid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderSignatureTest: PASSED sign+verify round-trip (" << actualSignatureSize << " bytes)" << std::endl;
+
+        std::string tamperedMessage(message);
+        tamperedMessage[0] = static_cast<char>(tamperedMessage[0] ^ 0xFF);
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(reinterpret_cast<const unsigned char*>(tamperedMessage.data()), messageSize,
+                                        &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunMicrosoftProviderSignatureTest: FAILED tampered-message not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedSignature(signature);
+        tamperedSignature[tamperedSignature.size() - 1] ^= 0xFF;
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &tamperedSignature[0],
+                                        static_cast<int>(tamperedSignature.size()), &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunMicrosoftProviderSignatureTest: FAILED tampered-signature not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderSignatureTest: PASSED tampered message / tampered signature both rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderSignatureTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, SIGNATURE_RSA_PSS_SHA256_2048);
+
+        int status = cryptoApi.GenerateSignatureKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderSignatureTest: FAILED GenerateSignatureKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int signatureSize = cryptoApi.GetSignatureSize();
+        if (signatureSize != 256)
+        {
+            std::cout << "RunCryptoPPProviderSignatureTest: FAILED GetSignatureSize expected 256 got " << signatureSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* message = "RunCryptoPPProviderSignatureTest message to sign";
+        const int messageSize = static_cast<int>(std::strlen(message));
+        const unsigned char* messageBytes = reinterpret_cast<const unsigned char*>(message);
+
+        int requiredSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, 0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize != signatureSize)
+        {
+            std::cout << "RunCryptoPPProviderSignatureTest: FAILED sign size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> signature(requiredSize);
+        int actualSignatureSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, requiredSize, &signature[0], &actualSignatureSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderSignatureTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunCryptoPPProviderSignatureTest: FAILED round-trip verify status=" << status << " valid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderSignatureTest: PASSED sign+verify round-trip (" << actualSignatureSize << " bytes)" << std::endl;
+
+        std::string tamperedMessage(message);
+        tamperedMessage[0] = static_cast<char>(tamperedMessage[0] ^ 0xFF);
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(reinterpret_cast<const unsigned char*>(tamperedMessage.data()), messageSize,
+                                        &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunCryptoPPProviderSignatureTest: FAILED tampered-message not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedSignature(signature);
+        tamperedSignature[tamperedSignature.size() - 1] ^= 0xFF;
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &tamperedSignature[0],
+                                        static_cast<int>(tamperedSignature.size()), &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunCryptoPPProviderSignatureTest: FAILED tampered-signature not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderSignatureTest: PASSED tampered message / tampered signature both rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderSignatureTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, SIGNATURE_ED25519);
+
+        int status = cryptoApi.GenerateSignatureKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderSignatureTest: FAILED GenerateSignatureKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int signatureSize = cryptoApi.GetSignatureSize();
+        if (signatureSize != 64)
+        {
+            std::cout << "RunBotanProviderSignatureTest: FAILED GetSignatureSize expected 64 got " << signatureSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* message = "RunBotanProviderSignatureTest message to sign";
+        const int messageSize = static_cast<int>(std::strlen(message));
+        const unsigned char* messageBytes = reinterpret_cast<const unsigned char*>(message);
+
+        int requiredSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, 0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize != signatureSize)
+        {
+            std::cout << "RunBotanProviderSignatureTest: FAILED sign size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> signature(requiredSize);
+        int actualSignatureSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, requiredSize, &signature[0], &actualSignatureSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderSignatureTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunBotanProviderSignatureTest: FAILED round-trip verify status=" << status << " valid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderSignatureTest: PASSED sign+verify round-trip (" << actualSignatureSize << " bytes)" << std::endl;
+
+        std::string tamperedMessage(message);
+        tamperedMessage[0] = static_cast<char>(tamperedMessage[0] ^ 0xFF);
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(reinterpret_cast<const unsigned char*>(tamperedMessage.data()), messageSize,
+                                        &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunBotanProviderSignatureTest: FAILED tampered-message not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedSignature(signature);
+        tamperedSignature[tamperedSignature.size() - 1] ^= 0xFF;
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &tamperedSignature[0],
+                                        static_cast<int>(tamperedSignature.size()), &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunBotanProviderSignatureTest: FAILED tampered-signature not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderSignatureTest: PASSED tampered message / tampered signature both rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderSignatureTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, SIGNATURE_ECDSA_P256_SHA256);
+
+        int status = cryptoApi.GenerateSignatureKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderSignatureTest: FAILED GenerateSignatureKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int signatureSize = cryptoApi.GetSignatureSize();
+        if (signatureSize != 64)
+        {
+            std::cout << "RunOpenSslProviderSignatureTest: FAILED GetSignatureSize expected 64 got " << signatureSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* message = "RunOpenSslProviderSignatureTest message to sign";
+        const int messageSize = static_cast<int>(std::strlen(message));
+        const unsigned char* messageBytes = reinterpret_cast<const unsigned char*>(message);
+
+        int requiredSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, 0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize != signatureSize)
+        {
+            std::cout << "RunOpenSslProviderSignatureTest: FAILED sign size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> signature(requiredSize);
+        int actualSignatureSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, requiredSize, &signature[0], &actualSignatureSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderSignatureTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunOpenSslProviderSignatureTest: FAILED round-trip verify status=" << status << " valid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderSignatureTest: PASSED sign+verify round-trip (" << actualSignatureSize << " bytes)" << std::endl;
+
+        std::string tamperedMessage(message);
+        tamperedMessage[0] = static_cast<char>(tamperedMessage[0] ^ 0xFF);
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(reinterpret_cast<const unsigned char*>(tamperedMessage.data()), messageSize,
+                                        &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunOpenSslProviderSignatureTest: FAILED tampered-message not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedSignature(signature);
+        tamperedSignature[tamperedSignature.size() - 1] ^= 0xFF;
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &tamperedSignature[0],
+                                        static_cast<int>(tamperedSignature.size()), &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunOpenSslProviderSignatureTest: FAILED tampered-signature not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderSignatureTest: PASSED tampered message / tampered signature both rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunSignatureAlgorithmsTest(void)
+{
+    try
+    {
+        struct ProviderCase
+        {
+            ProviderKind kind;
+            const char* name;
+        };
+
+        const ProviderCase providerCases[] =
+        {
+            { PROVIDER_MICROSOFT, "Microsoft" },
+            { PROVIDER_CRYPTOPP,  "CryptoPP" },
+            { PROVIDER_BOTAN,     "Botan" },
+            { PROVIDER_OPENSSL,   "OpenSSL" }
+        };
+
+        struct SignatureCase
+        {
+            SignatureAlgorithm algorithm;
+            const char* name;
+        };
+
+        const SignatureCase signatureCases[] =
+        {
+            { SIGNATURE_RSA_PSS_SHA256_2048, "RSA_PSS_SHA256_2048" },
+            { SIGNATURE_RSA_PSS_SHA256_3072, "RSA_PSS_SHA256_3072" },
+            { SIGNATURE_RSA_PSS_SHA256_4096, "RSA_PSS_SHA256_4096" },
+            { SIGNATURE_ECDSA_P256_SHA256,   "ECDSA_P256_SHA256" },
+            { SIGNATURE_ED25519,             "Ed25519" }
+        };
+
+        const unsigned char testData[] = { 'C', 'r', 'y', 'p', 't', 'o', 'A', 'P', 'I', ' ', 's', 'i', 'g', 'n' };
+        const int testDataSize = static_cast<int>(sizeof(testData));
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t providerIndex = 0; providerIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++providerIndex)
+        {
+            const ProviderKind kind = providerCases[providerIndex].kind;
+            const char* providerName = providerCases[providerIndex].name;
+
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+            if (!factory)
+            {
+                std::cout << "RunSignatureAlgorithmsTest: FAILED [" << providerName << "] CreateProviderFactory" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            for (std::size_t sigIndex = 0; sigIndex < sizeof(signatureCases) / sizeof(signatureCases[0]); ++sigIndex)
+            {
+                const SignatureAlgorithm algorithm = signatureCases[sigIndex].algorithm;
+                const char* algorithmName = signatureCases[sigIndex].name;
+                const bool supported = factory->SupportsSignatureAlgorithm(algorithm);
+
+                CCryptoApi cryptoApi(kind, algorithm);
+                const int keyPairStatus = cryptoApi.GenerateSignatureKeyPair();
+
+                if (!supported)
+                {
+                    if (keyPairStatus == NO_ERROR)
+                    {
+                        std::cout << "RunSignatureAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                                  << "] expected unsupported but GenerateSignatureKeyPair succeeded" << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::cout << "RunSignatureAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                                  << "] correctly unsupported" << std::endl;
+                    }
+                    continue;
+                }
+
+                ++supportedCount;
+
+                if (keyPairStatus != NO_ERROR)
+                {
+                    std::cout << "RunSignatureAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] GenerateSignatureKeyPair status=" << keyPairStatus << " for a supported algorithm" << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                const int signatureSize = cryptoApi.GetSignatureSize();
+                if (signatureSize <= 0)
+                {
+                    std::cout << "RunSignatureAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] GetSignatureSize=" << signatureSize << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> signature(static_cast<std::size_t>(signatureSize));
+                int actualSignatureSize = 0;
+                int status = cryptoApi.SignBuffer(testData, testDataSize, signatureSize, &signature[0], &actualSignatureSize);
+                if (status != NO_ERROR || actualSignatureSize != signatureSize)
+                {
+                    std::cout << "RunSignatureAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] SignBuffer status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                bool isValid = false;
+                status = cryptoApi.VerifyBuffer(testData, testDataSize, &signature[0], actualSignatureSize, &isValid);
+                if (status != NO_ERROR || !isValid)
+                {
+                    std::cout << "RunSignatureAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] VerifyBuffer status=" << status << " valid=" << isValid << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::cout << "RunSignatureAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                          << "] signature (" << actualSignatureSize << " bytes)" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunSignatureAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and computed)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunSignatureAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try

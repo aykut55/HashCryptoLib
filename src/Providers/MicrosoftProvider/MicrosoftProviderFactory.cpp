@@ -185,4 +185,37 @@ std::unique_ptr<IHashService> CMicrosoftProviderFactory::CreateHashService(const
 }
 // -----------------------------------------------------------------------------
 
+bool CMicrosoftProviderFactory::SupportsSignatureAlgorithm(const SignatureAlgorithm algorithm) const
+{
+    try
+    {
+        CMicrosoftProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<ISignatureEngine> CMicrosoftProviderFactory::CreateSignatureEngine(const SignatureAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CMicrosoftProvider> provider(new CMicrosoftProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

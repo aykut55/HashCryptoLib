@@ -103,6 +103,43 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Signature (ISignatureEngine) -----------------------------------------------------------
+
+    // 0 for non-RSA algorithms (ECDSA-P256, Ed25519), which have a fixed key size instead.
+    unsigned int SignatureRsaKeyBits(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case SIGNATURE_RSA_PSS_SHA256_2048: return 2048;
+        case SIGNATURE_RSA_PSS_SHA256_3072: return 3072;
+        case SIGNATURE_RSA_PSS_SHA256_4096: return 4096;
+        default:                            return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // PK_Signer/PK_Verifier padding string, per Botan's doc examples (src/examples/ecdsa.cpp shows
+    // plain "SHA-256" -- not "EMSA1(SHA-256)" -- works for ECDSA; "PSS(SHA-256)" for RSA-PSS per
+    // doc/api_ref/pubkey.rst's PSS section; "Pure" for standard/interoperable Ed25519 (RFC 8032),
+    // not the pre-hashed "Ed25519ph" variant, matching CryptoPP/OpenSSL's default Ed25519 mode).
+    const char* SignaturePaddingString(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case SIGNATURE_RSA_PSS_SHA256_2048:
+        case SIGNATURE_RSA_PSS_SHA256_3072:
+        case SIGNATURE_RSA_PSS_SHA256_4096:
+            return "PSS(SHA-256)";
+        case SIGNATURE_ECDSA_P256_SHA256:
+            return "SHA-256";
+        case SIGNATURE_ED25519:
+            return "Pure";
+        default:
+            return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct CBotanProvider::Impl
@@ -119,6 +156,19 @@ struct CBotanProvider::Impl
 
     // IHashService state.
     std::unique_ptr<Botan::HashFunction> hashFunction;
+
+    // ISignatureEngine state -- separate key material from rsaPrivateKey above (that's RSA-OAEP
+    // encryption; this is RSA-PSS/ECDSA/Ed25519 signing). Botan::Private_Key is the common base
+    // for RSA_PrivateKey/ECDSA_PrivateKey/Ed25519_PrivateKey, so one pointer covers all 3
+    // signature algorithm families -- PK_Signer/PK_Verifier both accept it directly (private keys
+    // derive from their public-key counterpart in Botan's key hierarchy too).
+    // asymmetricModeIsSignature dispatches GenerateKeyPair() (shared with IAsymmetricCipher, see
+    // the header comment).
+    bool asymmetricModeIsSignature = false;
+    SignatureAlgorithm signatureAlgorithm = SIGNATURE_ECDSA_P256_SHA256;
+    bool signatureKeyGenerated = false;
+    unsigned int signatureSize = 0;
+    std::unique_ptr<Botan::Private_Key> signatureKey;
 };
 
 CBotanProvider::~CBotanProvider()
@@ -537,6 +587,7 @@ bool CBotanProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
         impl_->rsaKeyBits = keyBits;
         impl_->rsaKeyGenerated = false;
         impl_->rsaPrivateKey.reset();
+        impl_->asymmetricModeIsSignature = false;
         return true;
     }
     catch (...)
@@ -550,6 +601,47 @@ bool CBotanProvider::GenerateKeyPair(void)
 {
     try
     {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        if (impl_->asymmetricModeIsSignature)
+        {
+            Botan::AutoSeeded_RNG rng;
+
+            switch (impl_->signatureAlgorithm)
+            {
+                case SIGNATURE_RSA_PSS_SHA256_2048:
+                case SIGNATURE_RSA_PSS_SHA256_3072:
+                case SIGNATURE_RSA_PSS_SHA256_4096:
+                {
+                    const unsigned int keyBits = SignatureRsaKeyBits(impl_->signatureAlgorithm);
+                    impl_->signatureKey.reset(new Botan::RSA_PrivateKey(rng, keyBits));
+                    impl_->signatureSize = keyBits / 8;
+                    break;
+                }
+                case SIGNATURE_ECDSA_P256_SHA256:
+                {
+                    const Botan::EC_Group group = Botan::EC_Group::from_name("secp256r1");
+                    impl_->signatureKey.reset(new Botan::ECDSA_PrivateKey(rng, group));
+                    impl_->signatureSize = 64;
+                    break;
+                }
+                case SIGNATURE_ED25519:
+                {
+                    impl_->signatureKey.reset(new Botan::Ed25519_PrivateKey(rng));
+                    impl_->signatureSize = 64;
+                    break;
+                }
+                default:
+                    return false;
+            }
+
+            impl_->signatureKeyGenerated = true;
+            return true;
+        }
+
         if (impl_->rsaKeyBits == 0)
         {
             return false;
@@ -824,6 +916,98 @@ bool CBotanProvider::Final(unsigned char* hash, const unsigned int hashSize)
         const Botan::secure_vector<uint8_t> result = impl_->hashFunction->final();
         std::memcpy(hash, result.data(), result.size());
         return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_ || SignaturePaddingString(algorithm) == nullptr)
+        {
+            return false;
+        }
+
+        impl_->signatureAlgorithm = algorithm;
+        impl_->signatureKeyGenerated = false;
+        impl_->signatureKey.reset();
+        impl_->signatureSize = 0;
+        impl_->asymmetricModeIsSignature = true;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetSignatureSize(void) const
+{
+    return (impl_ && impl_->signatureKeyGenerated) ? impl_->signatureSize : 0;
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Sign(const unsigned char* data, const unsigned int dataSize, unsigned char* signature, const unsigned int signatureSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->signatureKeyGenerated || !impl_->signatureKey || signature == nullptr ||
+            signatureSize < impl_->signatureSize || (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        const char* padding = SignaturePaddingString(impl_->signatureAlgorithm);
+        if (padding == nullptr)
+        {
+            return false;
+        }
+
+        Botan::AutoSeeded_RNG rng;
+        Botan::PK_Signer signer(*impl_->signatureKey, rng, padding);
+        signer.update(data, dataSize);
+        const std::vector<uint8_t> result = signer.signature(rng);
+
+        if (result.size() != impl_->signatureSize)
+        {
+            return false;
+        }
+
+        std::memcpy(signature, result.data(), result.size());
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Verify(const unsigned char* data, const unsigned int dataSize, const unsigned char* signature, const unsigned int signatureSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->signatureKeyGenerated || !impl_->signatureKey || signature == nullptr ||
+            signatureSize != impl_->signatureSize || (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        const char* padding = SignaturePaddingString(impl_->signatureAlgorithm);
+        if (padding == nullptr)
+        {
+            return false;
+        }
+
+        Botan::PK_Verifier verifier(*impl_->signatureKey, padding);
+        verifier.update(data, dataSize);
+        return verifier.check_signature(signature, signatureSize);
     }
     catch (...)
     {
