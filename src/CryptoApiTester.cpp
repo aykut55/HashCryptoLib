@@ -24,6 +24,7 @@
 #include <future>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <vector>
@@ -4273,6 +4274,351 @@ int CCryptoApiTester::RunPaddingUtilsTest(void)
         }
 
         std::cout << "RunPaddingUtilsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunEncryptHexBase64CompositionTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi;
+
+        const char* password = "MyPassword123!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        const char* text = "Merhaba d\xC3\xBCnya";
+        const int textSize = static_cast<int>(std::strlen(text));
+
+        int failures = 0;
+
+        // 1) Encrypt -> raw ciphertext bytes.
+        int requiredCipherSize = 0;
+        int status = cryptoApi.EncryptString(password, passwordSize, text, textSize,
+                                             0, nullptr, &requiredCipherSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunEncryptHexBase64CompositionTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> cipherBytes(requiredCipherSize);
+        int cipherSize = 0;
+        status = cryptoApi.EncryptString(password, passwordSize, text, textSize,
+                                         requiredCipherSize, &cipherBytes[0], &cipherSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunEncryptHexBase64CompositionTest: FAILED EncryptString status=" << status << std::endl;
+            return status;
+        }
+
+        // 2a) Hex path: raw ciphertext -> Hex text -> raw ciphertext -> Decrypt.
+        {
+            int requiredHexSize = 0;
+            status = CUtils::HexEncode(&cipherBytes[0], cipherSize, true, 0, nullptr, &requiredHexSize);
+            if (status != BUFFER_TOO_SMALL)
+            {
+                std::cout << "RunEncryptHexBase64CompositionTest: FAILED HexEncode size query status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::vector<char> hexText(requiredHexSize);
+                int hexSize = 0;
+                status = CUtils::HexEncode(&cipherBytes[0], cipherSize, true, requiredHexSize, &hexText[0], &hexSize);
+                const std::string hexString(hexText.begin(), hexText.end());
+
+                int requiredDecodedCipherSize = 0;
+                status = CUtils::HexDecode(hexString.c_str(), static_cast<int>(hexString.size()), 0, nullptr, &requiredDecodedCipherSize);
+                if (status != BUFFER_TOO_SMALL || requiredDecodedCipherSize != cipherSize)
+                {
+                    std::cout << "RunEncryptHexBase64CompositionTest: FAILED HexDecode size query status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::vector<unsigned char> decodedCipherBytes(requiredDecodedCipherSize);
+                    int decodedCipherSize = 0;
+                    status = CUtils::HexDecode(hexString.c_str(), static_cast<int>(hexString.size()),
+                                               requiredDecodedCipherSize, &decodedCipherBytes[0], &decodedCipherSize);
+
+                    int requiredTextSize = 0;
+                    status = cryptoApi.DecryptString(password, passwordSize, &decodedCipherBytes[0], decodedCipherSize,
+                                                     0, nullptr, &requiredTextSize,
+                                                     nullptr, nullptr);
+                    if (status != BUFFER_TOO_SMALL)
+                    {
+                        std::cout << "RunEncryptHexBase64CompositionTest: FAILED Hex-path decrypt size query status=" << status << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::vector<char> decryptedText(requiredTextSize);
+                        int decryptedSize = 0;
+                        status = cryptoApi.DecryptString(password, passwordSize, &decodedCipherBytes[0], decodedCipherSize,
+                                                         requiredTextSize, &decryptedText[0], &decryptedSize,
+                                                         nullptr, nullptr);
+                        if (status != NO_ERROR || decryptedSize != textSize ||
+                            std::memcmp(&decryptedText[0], text, static_cast<std::size_t>(textSize)) != 0)
+                        {
+                            std::cout << "RunEncryptHexBase64CompositionTest: FAILED Hex-path decrypt/mismatch status=" << status << std::endl;
+                            ++failures;
+                        }
+                        else
+                        {
+                            std::cout << "RunEncryptHexBase64CompositionTest: PASSED Hex path (" << hexString << ")" << std::endl;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2b) Base64 path: raw ciphertext -> Base64 text -> raw ciphertext -> Decrypt.
+        {
+            int requiredBase64Size = 0;
+            status = CUtils::Base64Encode(&cipherBytes[0], cipherSize, 0, nullptr, &requiredBase64Size);
+            if (status != BUFFER_TOO_SMALL)
+            {
+                std::cout << "RunEncryptHexBase64CompositionTest: FAILED Base64Encode size query status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::vector<char> base64Text(requiredBase64Size);
+                int base64Size = 0;
+                status = CUtils::Base64Encode(&cipherBytes[0], cipherSize, requiredBase64Size, &base64Text[0], &base64Size);
+                const std::string base64String(base64Text.begin(), base64Text.end());
+
+                int requiredDecodedCipherSize = 0;
+                status = CUtils::Base64Decode(base64String.c_str(), static_cast<int>(base64String.size()), 0, nullptr, &requiredDecodedCipherSize);
+                if (status != BUFFER_TOO_SMALL || requiredDecodedCipherSize != cipherSize)
+                {
+                    std::cout << "RunEncryptHexBase64CompositionTest: FAILED Base64Decode size query status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::vector<unsigned char> decodedCipherBytes(requiredDecodedCipherSize);
+                    int decodedCipherSize = 0;
+                    status = CUtils::Base64Decode(base64String.c_str(), static_cast<int>(base64String.size()),
+                                                  requiredDecodedCipherSize, &decodedCipherBytes[0], &decodedCipherSize);
+
+                    int requiredTextSize = 0;
+                    status = cryptoApi.DecryptString(password, passwordSize, &decodedCipherBytes[0], decodedCipherSize,
+                                                     0, nullptr, &requiredTextSize,
+                                                     nullptr, nullptr);
+                    if (status != BUFFER_TOO_SMALL)
+                    {
+                        std::cout << "RunEncryptHexBase64CompositionTest: FAILED Base64-path decrypt size query status=" << status << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::vector<char> decryptedText(requiredTextSize);
+                        int decryptedSize = 0;
+                        status = cryptoApi.DecryptString(password, passwordSize, &decodedCipherBytes[0], decodedCipherSize,
+                                                         requiredTextSize, &decryptedText[0], &decryptedSize,
+                                                         nullptr, nullptr);
+                        if (status != NO_ERROR || decryptedSize != textSize ||
+                            std::memcmp(&decryptedText[0], text, static_cast<std::size_t>(textSize)) != 0)
+                        {
+                            std::cout << "RunEncryptHexBase64CompositionTest: FAILED Base64-path decrypt/mismatch status=" << status << std::endl;
+                            ++failures;
+                        }
+                        else
+                        {
+                            std::cout << "RunEncryptHexBase64CompositionTest: PASSED Base64 path (" << base64String << ")" << std::endl;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunEncryptHexBase64CompositionTest: PASSED (Hex and Base64 composition round-trips)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunEncryptHexBase64CompositionTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunEncryptFileHexBase64CompositionTest(void)
+{
+    try
+    {
+        const char* password = "MyFilePassword123!";
+
+        const char* inputFilePath          = "cryptoapi_filehexb64_in.bin";
+        const char* encryptedFilePath      = "cryptoapi_filehexb64_enc.bin";
+        const char* hexTextFilePath        = "cryptoapi_filehexb64_enc.hex";
+        const char* hexDecodedFilePath     = "cryptoapi_filehexb64_fromhex.bin";
+        const char* hexDecryptedFilePath   = "cryptoapi_filehexb64_fromhex_out.bin";
+        const char* base64TextFilePath     = "cryptoapi_filehexb64_enc.b64";
+        const char* base64DecodedFilePath  = "cryptoapi_filehexb64_fromb64.bin";
+        const char* base64DecryptedFilePath = "cryptoapi_filehexb64_fromb64_out.bin";
+
+        const char* allPaths[] =
+        {
+            inputFilePath, encryptedFilePath, hexTextFilePath, hexDecodedFilePath, hexDecryptedFilePath,
+            base64TextFilePath, base64DecodedFilePath, base64DecryptedFilePath
+        };
+
+        struct Cleanup
+        {
+            const char** paths;
+            std::size_t count;
+            ~Cleanup() { for (std::size_t index = 0; index < count; ++index) { std::remove(paths[index]); } }
+        } cleanup = { allPaths, sizeof(allPaths) / sizeof(allPaths[0]) };
+
+        std::vector<unsigned char> inputData(4096);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunEncryptFileHexBase64CompositionTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi;
+
+        // 1) EncryptFile -> raw ciphertext bytes on disk.
+        int status = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunEncryptFileHexBase64CompositionTest: FAILED EncryptFile status=" << status << std::endl;
+            return status;
+        }
+
+        std::vector<unsigned char> encryptedBytes;
+        if (!ReadTesterFile(encryptedFilePath, encryptedBytes))
+        {
+            std::cout << "RunEncryptFileHexBase64CompositionTest: FAILED to read encrypted file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int failures = 0;
+
+        // 2a) Hex path: encrypted file bytes -> Hex text file -> back to bytes -> DecryptFile.
+        {
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&encryptedBytes[0], static_cast<int>(encryptedBytes.size()), true, 0, nullptr, &requiredHexSize);
+
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&encryptedBytes[0], static_cast<int>(encryptedBytes.size()), true, requiredHexSize, &hexText[0], &hexSize);
+
+            std::ofstream hexFileStream(hexTextFilePath, std::ios::binary);
+            hexFileStream.write(&hexText[0], static_cast<std::streamsize>(hexText.size()));
+            hexFileStream.close();
+
+            std::ifstream hexReadStream(hexTextFilePath, std::ios::binary);
+            const std::string hexFromFile((std::istreambuf_iterator<char>(hexReadStream)), std::istreambuf_iterator<char>());
+
+            int requiredCipherSize = 0;
+            CUtils::HexDecode(hexFromFile.c_str(), static_cast<int>(hexFromFile.size()), 0, nullptr, &requiredCipherSize);
+
+            std::vector<unsigned char> decodedCipherBytes(requiredCipherSize);
+            int decodedCipherSize = 0;
+            CUtils::HexDecode(hexFromFile.c_str(), static_cast<int>(hexFromFile.size()),
+                              requiredCipherSize, &decodedCipherBytes[0], &decodedCipherSize);
+
+            if (!WriteTesterFile(hexDecodedFilePath, decodedCipherBytes))
+            {
+                std::cout << "RunEncryptFileHexBase64CompositionTest: FAILED to write hex-decoded binary file" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                status = cryptoApi.DecryptFile(password, hexDecodedFilePath, hexDecryptedFilePath, nullptr, nullptr);
+
+                std::vector<unsigned char> outputData;
+                if (status != NO_ERROR || !ReadTesterFile(hexDecryptedFilePath, outputData) ||
+                    outputData.size() != inputData.size() ||
+                    (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+                {
+                    std::cout << "RunEncryptFileHexBase64CompositionTest: FAILED Hex-path DecryptFile/mismatch status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunEncryptFileHexBase64CompositionTest: PASSED Hex path (" << hexDecodedFilePath << ")" << std::endl;
+                }
+            }
+        }
+
+        // 2b) Base64 path: encrypted file bytes -> Base64 text file -> back to bytes -> DecryptFile.
+        {
+            int requiredBase64Size = 0;
+            CUtils::Base64Encode(&encryptedBytes[0], static_cast<int>(encryptedBytes.size()), 0, nullptr, &requiredBase64Size);
+
+            std::vector<char> base64Text(requiredBase64Size);
+            int base64Size = 0;
+            CUtils::Base64Encode(&encryptedBytes[0], static_cast<int>(encryptedBytes.size()), requiredBase64Size, &base64Text[0], &base64Size);
+
+            std::ofstream base64FileStream(base64TextFilePath, std::ios::binary);
+            base64FileStream.write(&base64Text[0], static_cast<std::streamsize>(base64Text.size()));
+            base64FileStream.close();
+
+            std::ifstream base64ReadStream(base64TextFilePath, std::ios::binary);
+            const std::string base64FromFile((std::istreambuf_iterator<char>(base64ReadStream)), std::istreambuf_iterator<char>());
+
+            int requiredCipherSize = 0;
+            CUtils::Base64Decode(base64FromFile.c_str(), static_cast<int>(base64FromFile.size()), 0, nullptr, &requiredCipherSize);
+
+            std::vector<unsigned char> decodedCipherBytes(requiredCipherSize);
+            int decodedCipherSize = 0;
+            CUtils::Base64Decode(base64FromFile.c_str(), static_cast<int>(base64FromFile.size()),
+                                 requiredCipherSize, &decodedCipherBytes[0], &decodedCipherSize);
+
+            if (!WriteTesterFile(base64DecodedFilePath, decodedCipherBytes))
+            {
+                std::cout << "RunEncryptFileHexBase64CompositionTest: FAILED to write base64-decoded binary file" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                status = cryptoApi.DecryptFile(password, base64DecodedFilePath, base64DecryptedFilePath, nullptr, nullptr);
+
+                std::vector<unsigned char> outputData;
+                if (status != NO_ERROR || !ReadTesterFile(base64DecryptedFilePath, outputData) ||
+                    outputData.size() != inputData.size() ||
+                    (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+                {
+                    std::cout << "RunEncryptFileHexBase64CompositionTest: FAILED Base64-path DecryptFile/mismatch status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunEncryptFileHexBase64CompositionTest: PASSED Base64 path (" << base64DecodedFilePath << ")" << std::endl;
+                }
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunEncryptFileHexBase64CompositionTest: PASSED (Hex and Base64 file composition round-trips)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunEncryptFileHexBase64CompositionTest: " << failures << " FAILURE(S)" << std::endl;
         return UNEXPECTED_ERROR;
     }
     catch (...)

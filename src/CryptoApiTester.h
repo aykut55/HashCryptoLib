@@ -114,6 +114,20 @@ public:
     // (bad pad-length byte, inconsistent pad bytes, wrong ISO97971 marker).
     int RunPaddingUtilsTest(void);
 
+    // Demonstrates the two-step composition pattern for text output encoding: CCryptoApi's
+    // Encrypt*/Decrypt* always move raw bytes, so a caller wanting Hex or Base64 text chains a
+    // CUtils encode/decode step on top (Encrypt -> HexEncode/Base64Encode; Base64Decode/HexDecode
+    // -> Decrypt). No new API surface on CCryptoApi itself -- see the aes_richness_design_track
+    // memory entry recording this as the resolved design.
+    int RunEncryptHexBase64CompositionTest(void);
+
+    // File-based analogue of RunEncryptHexBase64CompositionTest: EncryptFile always writes raw
+    // ciphertext bytes to disk, so getting a Hex/Base64 *text* file means reading that binary file
+    // back into memory, running it through CUtils::HexEncode/Base64Encode, and writing the result
+    // as its own text file -- then reversing the same steps (read text file -> HexDecode/
+    // Base64Decode -> write binary file -> DecryptFile) to recover the original.
+    int RunEncryptFileHexBase64CompositionTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

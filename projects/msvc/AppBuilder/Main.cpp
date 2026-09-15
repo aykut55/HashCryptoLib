@@ -127,6 +127,12 @@ int main()
     cryptoApiTester.RunPaddingUtilsTest();
 #endif
 
+#if 0
+    cryptoApiTester.RunEncryptHexBase64CompositionTest();
+
+    cryptoApiTester.RunEncryptFileHexBase64CompositionTest();
+#endif
+
 
 
 /*
