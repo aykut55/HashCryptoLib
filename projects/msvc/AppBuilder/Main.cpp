@@ -120,9 +120,9 @@ int main()
 #endif
 
 #if 1
-    cryptoApiTester.RunAesConfigurationDemoTest();
-
     cryptoApiTester.RunEncodingUtilsTest();
+
+    cryptoApiTester.RunAesConfigurationDemoTest();
 #endif
 
 

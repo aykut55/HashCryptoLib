@@ -586,4 +586,64 @@
 //
 // ================================================================================================
 
+// encode-decode.com
+//
+// ================================================================================================
+// ENCODE-DECODE.COM "supported encryptions" -- external cross-check only, not a provider in this
+// SDK. Live-scanned via browser automation from https://encode-decode.com/aes-256-cbc-encrypt-online/
+// on 2026-09-14 (page title says "aes-256-cbc" but it actually lists OpenSSL's full `openssl enc
+// -list` cipher catalog, not AES-specific options -- most of this overlaps the openssl402 section
+// above). Listed here purely to cross-check this SDK's coverage against a full generic-cipher
+// OpenSSL build; see also AesOnlineToolsResearch.md at the repo root.
+// ================================================================================================
+//
+//   Site's full raw list, as scraped:
+//     rc5, aes-128-cbc, aes-128-cbc-hmac-sha1, aes-128-cbc-hmac-sha256, aes-128-ccm, aes-128-cfb,
+//     aes-128-cfb1, aes-128-cfb8, aes-128-ctr, aes-128-ecb, aes-128-gcm, aes-128-ocb, aes-128-ofb,
+//     aes-128-xts, aes-192-cbc, aes-192-ccm, aes-192-cfb, aes-192-cfb1, aes-192-cfb8, aes-192-ctr,
+//     aes-192-ecb, aes-192-gcm, aes-192-ocb, aes-192-ofb, aes-256-cbc, aes-256-cbc-hmac-sha1,
+//     aes-256-cbc-hmac-sha256, aes-256-ccm, aes-256-cfb, aes-256-cfb1, aes-256-cfb8, aes-256-ctr,
+//     aes-256-ecb, aes-256-gcm, aes-256-ocb, aes-256-ofb, aes-256-xts, aes128, aes128-wrap, aes192,
+//     aes192-wrap, aes256, aes256-wrap, aria-128-cbc, aria-128-ccm, aria-128-cfb, aria-128-cfb1,
+//     aria-128-cfb8, aria-128-ctr, aria-128-ecb, aria-128-gcm, aria-128-ofb, aria-192-cbc,
+//     aria-192-ccm, aria-192-cfb, aria-192-cfb1, aria-192-cfb8, aria-192-ctr, aria-192-ecb,
+//     aria-192-gcm, aria-192-ofb, aria-256-cbc, aria-256-ccm, aria-256-cfb, aria-256-cfb1,
+//     aria-256-cfb8, aria-256-ctr, aria-256-ecb, aria-256-gcm, aria-256-ofb, aria128, aria192,
+//     aria256, bf, bf-cbc, bf-cfb, bf-ecb, bf-ofb, blowfish, camellia-128-cbc, camellia-128-cfb,
+//     camellia-128-cfb1, camellia-128-cfb8, camellia-128-ctr, camellia-128-ecb, camellia-128-ofb,
+//     camellia-192-cbc, camellia-192-cfb, camellia-192-cfb1, camellia-192-cfb8, camellia-192-ctr,
+//     camellia-192-ecb, camellia-192-ofb, camellia-256-cbc, camellia-256-cfb, camellia-256-cfb1,
+//     camellia-256-cfb8, camellia-256-ctr, camellia-256-ecb, camellia-256-ofb, camellia128,
+//     camellia192, camellia256, cast, cast-cbc, cast5-cbc, cast5-cfb, cast5-ecb, cast5-ofb,
+//     chacha20, chacha20-poly1305, des, des-cbc, des-cfb, des-cfb1, des-cfb8, des-ecb, des-ede,
+//     des-ede-cbc, des-ede-cfb, des-ede-ecb, des-ede-ofb, des-ede3, des-ede3-cbc, des-ede3-cfb,
+//     des-ede3-cfb1, des-ede3-cfb8, des-ede3-ecb, des-ede3-ofb, des-ofb, des3, des3-wrap, desx,
+//     desx-cbc, id-aes128-ccm, id-aes128-gcm, id-aes128-wrap, id-aes128-wrap-pad, id-aes192-ccm,
+//     id-aes192-gcm, id-aes192-wrap, id-aes192-wrap-pad, id-aes256-ccm, id-aes256-gcm,
+//     id-aes256-wrap, id-aes256-wrap-pad, id-smime-alg-cms3deswrap, idea, idea-cbc, idea-cfb,
+//     idea-ecb, idea-ofb, rc2, rc2-128, rc2-40, rc2-40-cbc, rc2-64, rc2-64-cbc, rc2-cbc, rc2-cfb,
+//     rc2-ecb, rc2-ofb, rc4, rc4-40, rc4-hmac-md5, rc5-cbc, rc5-cfb, rc5-ecb, rc5-ofb, seed,
+//     seed-cbc, seed-cfb, seed-ecb, seed-ofb
+//
+//   Cross-check against this SDK's actual wired algorithms (AeadAlgorithm/LegacySymmetricAlgorithm
+//   in ProviderTypes.h):
+//
+//     Fully covered: AES CBC/CTR/CFB/ECB/OFB/GCM/CCM (128/192/256) -- W in the AEAD/Legacy tables
+//       above.
+//     Covered in a different shape: chacha20-poly1305 (W, but only the AEAD-combined form -- plain
+//       "chacha20" alone is not wired); camellia (only as Camellia-GCM AEAD combo, W -- the site's
+//       plain camellia-*-cbc/cfb/ctr/ecb/ofb modes are not); rc2-cbc/rc2-ecb (W) but not
+//       rc2-cfb/rc2-ofb or the 40/64-bit key variants; des-ede3-cbc/ecb i.e. this SDK's "3DES" (W)
+//       but not des-ede3-cfb/ofb or the 2-key des-ede variants; rc4 (W) but not rc4-40/rc4-hmac-md5.
+//     Not in this SDK's enums at all: aes-*-ocb, aes-*-xts, aes*-wrap (key wrap), aes-*-cbc-hmac-*
+//       (combined enc+MAC ciphers), the entire ARIA family, Blowfish, CAST/CAST5, IDEA, SEED, RC5,
+//       DESX, des-ede (2-key 3DES). The id-aes*/id-smime-* rows are OID aliases for algorithms
+//       already listed above, not distinct gaps.
+//     Verdict: no AES gap -- every AES mode/size this SDK targets is already W. The "missing" rows
+//       are all non-AES cipher families, outside AesOnlineToolsResearch.md's scope, so not relevant
+//       to a future RunAESTests(); listed here only as a generic-cipher-coverage reference in case
+//       that scope ever expands. See also the aes_richness_design_track memory file.
+//
+// ================================================================================================
+
 #endif
