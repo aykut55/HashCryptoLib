@@ -133,13 +133,57 @@ int main()
     cryptoApiTester.RunEncryptFileHexBase64CompositionTest();
 #endif
 
+#if 1
+    cryptoApiTester.RunMicrosoftProviderHashTest();
 
+    cryptoApiTester.RunCryptoPPProviderHashTest();
 
-/*
-  2. CCryptoApi'ye yeni knob'lar ekleyelim (padding/KDF/tag-length se�imi)
-     Daha b�y�k bir i�: API'yi geni�letip kullan�c�n�n padding tipi, KDF (PBKDF2/Scrypt/Argon2), GCM tag uzunlu�u gibi �eyleri se�ebilmesini sa�lar�z, sonra demo bunun �zerine yaz�l�r.
-*/
+    cryptoApiTester.RunBotanProviderHashTest();
 
+    cryptoApiTester.RunOpenSslProviderHashTest();
+#endif
+
+#if 1
+    cryptoApiTester.RunHashAlgorithmsTest();
+#endif
+
+#if 1
+    cryptoApiTester.RunHashFileTest();
+
+    cryptoApiTester.RunHashStringTest();
+
+    cryptoApiTester.RunHashBufferTest();
+
+    cryptoApiTester.RunHashBytesTest();
+#endif
+
+#if 1
+    cryptoApiTester.RunProviderFactoryHashTest();
+
+    cryptoApiTester.RunProviderFactoryHashFileTest();
+
+    cryptoApiTester.RunProviderFactoryHashStringTest();
+
+    cryptoApiTester.RunProviderFactoryHashBufferTest();
+
+    cryptoApiTester.RunProviderFactoryHashBytesTest();
+#endif
+
+#if 1
+    cryptoApiTester.RunHashHexBase64CompositionTest();
+
+    cryptoApiTester.RunHashFileHexBase64CompositionTest();
+#endif
+
+#if 1
+    cryptoApiTester.RunHashFileTestNonBlocking();
+
+    cryptoApiTester.RunHashStringTestNonBlocking();
+
+    cryptoApiTester.RunHashBufferTestNonBlocking();
+
+    cryptoApiTester.RunHashBytesTestNonBlocking();
+#endif
 
     return 0;
 }

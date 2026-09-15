@@ -75,6 +75,34 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Hash (IHashService) -----------------------------------------------------------------
+
+    // BLAKE2b(512)/BLAKE2s(256) are Botan's algorithm-name strings for the conventional full-size
+    // default (see HashAlgorithm's doc comment in ProviderTypes.h). No Botan class exists for
+    // truncated SHA-3-224; SHA-512-256 does exist (sha2_64 module) as "SHA-512-256".
+    const char* HashAlgorithmName(const HashAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case HASH_MD5:        return "MD5";
+        case HASH_SHA1:       return "SHA-1";
+        case HASH_SHA224:     return "SHA-224";
+        case HASH_SHA256:     return "SHA-256";
+        case HASH_SHA384:     return "SHA-384";
+        case HASH_SHA512:     return "SHA-512";
+        case HASH_SHA512_256: return "SHA-512-256";
+        case HASH_SHA3_224:   return "SHA-3(224)";
+        case HASH_SHA3_256:   return "SHA-3(256)";
+        case HASH_SHA3_384:   return "SHA-3(384)";
+        case HASH_SHA3_512:   return "SHA-3(512)";
+        case HASH_BLAKE2B:    return "BLAKE2b(512)";
+        case HASH_BLAKE2S:    return "BLAKE2s(256)";
+        case HASH_RIPEMD160:  return "RIPEMD-160";
+        default:              return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct CBotanProvider::Impl
@@ -88,6 +116,9 @@ struct CBotanProvider::Impl
     unsigned int rsaKeyBits = 0;
     bool rsaKeyGenerated = false;
     std::unique_ptr<Botan::RSA_PrivateKey> rsaPrivateKey;
+
+    // IHashService state.
+    std::unique_ptr<Botan::HashFunction> hashFunction;
 };
 
 CBotanProvider::~CBotanProvider()
@@ -679,6 +710,119 @@ bool CBotanProvider::ComputeMac(const unsigned char* key, const unsigned int key
         }
 
         std::memcpy(mac, result.data(), macSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::SelectAlgorithm(const HashAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        const char* name = HashAlgorithmName(algorithm);
+        if (name == nullptr)
+        {
+            return false;
+        }
+
+        std::unique_ptr<Botan::HashFunction> hashFunction = Botan::HashFunction::create(name);
+        if (!hashFunction)
+        {
+            return false;
+        }
+
+        impl_->hashFunction = std::move(hashFunction);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetHashSize(void) const
+{
+    try
+    {
+        return (impl_ && impl_->hashFunction) ? static_cast<unsigned int>(impl_->hashFunction->output_length()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::ComputeHash(const unsigned char* data, const unsigned int dataSize, unsigned char* hash, const unsigned int hashSize)
+{
+    return Init() && Update(data, dataSize) && Final(hash, hashSize);
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Init(void)
+{
+    try
+    {
+        if (!impl_ || !impl_->hashFunction)
+        {
+            return false;
+        }
+
+        impl_->hashFunction->clear();
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Update(const unsigned char* data, const unsigned int dataSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->hashFunction || (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        if (dataSize > 0)
+        {
+            impl_->hashFunction->update(data, dataSize);
+        }
+
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::Final(unsigned char* hash, const unsigned int hashSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->hashFunction || hash == nullptr ||
+            hashSize < impl_->hashFunction->output_length())
+        {
+            return false;
+        }
+
+        const Botan::secure_vector<uint8_t> result = impl_->hashFunction->final();
+        std::memcpy(hash, result.data(), result.size());
         return true;
     }
     catch (...)

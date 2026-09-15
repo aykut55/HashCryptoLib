@@ -236,22 +236,32 @@ CCryptoApi::~CCryptoApi()
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC)
+CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(hashAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
@@ -1664,6 +1674,303 @@ int CCryptoApi::DecryptLegacyBuffer(const char* password, const int passwordSize
         if (outputBufferSize)
         {
             *outputBufferSize = static_cast<int>(actualPlaintextSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
+// Hash (message digest) -- see HashAlgorithm in ProviderTypes.h and the 5-argument constructor.
+// Kept in its own section at the end of the file, deliberately separate from the Encrypt*/
+// Decrypt* methods above: hashing has no key/password and no ciphertext, so it doesn't share
+// their shape, only the same BUFFER_TOO_SMALL capacity-query convention and chunked-progress
+// style.
+// ================================================================================================
+
+int CCryptoApi::GetHashSize(void) const
+{
+    try
+    {
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+        if (!providerFactory)
+        {
+            return 0;
+        }
+
+        std::unique_ptr<IHashService> hashService = providerFactory->CreateHashService(hashAlgorithm_);
+        return hashService ? static_cast<int>(hashService->GetHashSize()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::computeHash(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+        if (!providerFactory)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::unique_ptr<IHashService> hashService = providerFactory->CreateHashService(hashAlgorithm_);
+        if (!hashService)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int hashSize = hashService->GetHashSize();
+        if (hashSize == 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(hashSize))
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(hashSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        if (!hashService->Init())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned long long totalBytes = static_cast<unsigned long long>(inputBufferSize);
+        unsigned long long processedBytes = 0;
+
+        const unsigned int chunkCount = inputBufferSize > 0
+            ? static_cast<unsigned int>((static_cast<long long>(inputBufferSize) + BUFFER_CHUNK_SIZE - 1) / BUFFER_CHUNK_SIZE)
+            : 0;
+
+        for (unsigned int chunkIndex = 0; chunkIndex < chunkCount; ++chunkIndex)
+        {
+            const unsigned int offset = chunkIndex * BUFFER_CHUNK_SIZE;
+            const unsigned int remainingInput = static_cast<unsigned int>(inputBufferSize) - offset;
+            const unsigned int chunkSize = remainingInput < BUFFER_CHUNK_SIZE ? remainingInput : BUFFER_CHUNK_SIZE;
+
+            if (!hashService->Update(inputBuffer + offset, chunkSize))
+            {
+                return UNEXPECTED_ERROR;
+            }
+
+            processedBytes += chunkSize;
+
+            if (onProgress)
+            {
+                const double percentage = totalBytes > 0
+                    ? (static_cast<double>(processedBytes) / static_cast<double>(totalBytes)) * 100.0
+                    : 0.0;
+                if (!onProgress(processedBytes, totalBytes, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+
+        if (!hashService->Final(outputBuffer, hashSize))
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(hashSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::ComputeHashBuffer(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize, ProgressCallback onProgress, void* progressUserData)
+{
+    return computeHash(inputBuffer, inputBufferSize, outputBufferCapacity, outputBuffer, outputBufferSize, onProgress, progressUserData);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::ComputeHashBytes(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize, ProgressCallback onProgress, void* progressUserData)
+{
+    return computeHash(inputBuffer, inputBufferSize, outputBufferCapacity, outputBuffer, outputBufferSize, onProgress, progressUserData);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::ComputeHashString(const char* inputString, const int inputStringSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (inputStringSize < 0 || (inputStringSize > 0 && inputString == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        return computeHash(reinterpret_cast<const unsigned char*>(inputString), inputStringSize,
+                           outputBufferCapacity, outputBuffer, outputBufferSize, onProgress, progressUserData);
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::ComputeHashFile(const char* inputFilePath, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (inputFilePath == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::wstring wideInputFilePath;
+        if (!convertUtf8PathToWide(inputFilePath, wideInputFilePath))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        HANDLE rawInputHandle = CreateFileW(wideInputFilePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawInputHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
+
+        LARGE_INTEGER inputFileSize;
+        inputFileSize.QuadPart = 0;
+        GetFileSizeEx(rawInputHandle, &inputFileSize);
+        const unsigned long long totalBytes = static_cast<unsigned long long>(inputFileSize.QuadPart);
+        unsigned long long processedBytes = 0;
+
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+        if (!providerFactory)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::unique_ptr<IHashService> hashService = providerFactory->CreateHashService(hashAlgorithm_);
+        if (!hashService)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int hashSize = hashService->GetHashSize();
+        if (hashSize == 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(hashSize))
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(hashSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        if (!hashService->Init())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> fileChunk(FILE_CHUNK_SIZE);
+
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(rawInputHandle, &fileChunk[0], static_cast<DWORD>(fileChunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            if (!hashService->Update(&fileChunk[0], bytesRead))
+            {
+                return UNEXPECTED_ERROR;
+            }
+
+            processedBytes += bytesRead;
+
+            if (onProgress)
+            {
+                const double percentage = totalBytes > 0
+                    ? (static_cast<double>(processedBytes) / static_cast<double>(totalBytes)) * 100.0
+                    : 0.0;
+                if (!onProgress(processedBytes, totalBytes, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+
+        if (!hashService->Final(outputBuffer, hashSize))
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(hashSize);
         }
 
         return NO_ERROR;

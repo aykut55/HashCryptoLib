@@ -175,6 +175,7 @@
     <ClInclude Include="..\..\..\src\Providers\AsymmetricCipher.h" />
     <ClInclude Include="..\..\..\src\Providers\LegacyCipher.h" />
     <ClInclude Include="..\..\..\src\Providers\MacService.h" />
+    <ClInclude Include="..\..\..\src\Providers\HashService.h" />
     <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h" />
     <ClInclude Include="..\..\..\src\Providers\AlgorithmCapabilityMatrix.h" />
     <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h" />
@@ -198,6 +199,7 @@
     <ClCompile Include="..\..\..\src\Providers\AsymmetricCipher.cpp" />
     <ClCompile Include="..\..\..\src\Providers\LegacyCipher.cpp" />
     <ClCompile Include="..\..\..\src\Providers\MacService.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\HashService.cpp" />
     <ClCompile Include="..\..\..\src\Providers\CryptoProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Providers\CryptoProviderRegistry.cpp" />
     <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp" />

@@ -152,4 +152,37 @@ std::unique_ptr<IMacService> CBotanProviderFactory::CreateMacService()
 }
 // -----------------------------------------------------------------------------
 
+bool CBotanProviderFactory::SupportsHashAlgorithm(const HashAlgorithm algorithm) const
+{
+    try
+    {
+        CBotanProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IHashService> CBotanProviderFactory::CreateHashService(const HashAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CBotanProvider> provider(new CBotanProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

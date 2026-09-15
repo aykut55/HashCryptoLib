@@ -96,6 +96,34 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Hash (IHashService) -----------------------------------------------------------------
+
+    // All EVP_XXX() lookups below return process-lifetime static singletons (not owned, never
+    // freed) -- this covers every value in HashAlgorithm; OpenSSL 4.0.2's EVP layer has no gaps
+    // here (confirmed against the vendored evp.h declarations), unlike Microsoft/CNG and CryptoPP.
+    const EVP_MD* HashAlgorithmDigest(const HashAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case HASH_MD5:        return EVP_md5();
+        case HASH_SHA1:       return EVP_sha1();
+        case HASH_SHA224:     return EVP_sha224();
+        case HASH_SHA256:     return EVP_sha256();
+        case HASH_SHA384:     return EVP_sha384();
+        case HASH_SHA512:     return EVP_sha512();
+        case HASH_SHA512_256: return EVP_sha512_256();
+        case HASH_SHA3_224:   return EVP_sha3_224();
+        case HASH_SHA3_256:   return EVP_sha3_256();
+        case HASH_SHA3_384:   return EVP_sha3_384();
+        case HASH_SHA3_512:   return EVP_sha3_512();
+        case HASH_BLAKE2B:    return EVP_blake2b512();
+        case HASH_BLAKE2S:    return EVP_blake2s256();
+        case HASH_RIPEMD160:  return EVP_ripemd160();
+        default:              return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct COpenSslProvider::Impl
@@ -116,10 +144,17 @@ struct COpenSslProvider::Impl
     bool rsaKeyGenerated;
     EVP_PKEY* rsaKey;
 
+    // IHashService state. hashAlgorithm is a static EVP_MD* (not owned, EVP_shaXXX()/EVP_md5()
+    // etc. return process-lifetime singletons -- no EVP_MD_free needed). hashCtx is the mutable
+    // digest state, reset via EVP_DigestInit_ex for each Init().
+    const EVP_MD* hashAlgorithm;
+    EVP_MD_CTX* hashCtx;
+
     Impl()
         : cipher(nullptr), encryptCtx(EVP_CIPHER_CTX_new()), decryptCtx(EVP_CIPHER_CTX_new()),
           legacySelected(false), isCcm(false), isPadded(false), keySize(0), ivOrNonceSize(0),
-          tagSize(0), blockSize(0), rsaKeyBits(0), rsaKeyGenerated(false), rsaKey(nullptr)
+          tagSize(0), blockSize(0), rsaKeyBits(0), rsaKeyGenerated(false), rsaKey(nullptr),
+          hashAlgorithm(nullptr), hashCtx(nullptr)
     {
     }
     // -----------------------------------------------------------------------------
@@ -135,6 +170,10 @@ struct COpenSslProvider::Impl
         if (rsaKey != nullptr)
         {
             EVP_PKEY_free(rsaKey);
+        }
+        if (hashCtx != nullptr)
+        {
+            EVP_MD_CTX_free(hashCtx);
         }
     }
     // -----------------------------------------------------------------------------
@@ -828,6 +867,123 @@ bool COpenSslProvider::ComputeMac(const unsigned char* key, const unsigned int k
         }
 
         return actualSize == macSize;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::SelectAlgorithm(const HashAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        const EVP_MD* digest = HashAlgorithmDigest(algorithm);
+        if (digest == nullptr)
+        {
+            return false;
+        }
+
+        EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+        if (ctx == nullptr)
+        {
+            return false;
+        }
+
+        if (impl_->hashCtx != nullptr)
+        {
+            EVP_MD_CTX_free(impl_->hashCtx);
+        }
+
+        impl_->hashCtx = ctx;
+        impl_->hashAlgorithm = digest;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int COpenSslProvider::GetHashSize(void) const
+{
+    try
+    {
+        return (impl_ && impl_->hashAlgorithm) ? static_cast<unsigned int>(EVP_MD_get_size(impl_->hashAlgorithm)) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::ComputeHash(const unsigned char* data, const unsigned int dataSize, unsigned char* hash, const unsigned int hashSize)
+{
+    return Init() && Update(data, dataSize) && Final(hash, hashSize);
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::Init(void)
+{
+    try
+    {
+        if (!impl_ || impl_->hashCtx == nullptr || impl_->hashAlgorithm == nullptr)
+        {
+            return false;
+        }
+
+        return EVP_DigestInit_ex(impl_->hashCtx, impl_->hashAlgorithm, nullptr) == 1;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::Update(const unsigned char* data, const unsigned int dataSize)
+{
+    try
+    {
+        if (!impl_ || impl_->hashCtx == nullptr || (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        if (dataSize == 0)
+        {
+            return true;
+        }
+
+        return EVP_DigestUpdate(impl_->hashCtx, data, dataSize) == 1;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::Final(unsigned char* hash, const unsigned int hashSize)
+{
+    try
+    {
+        if (!impl_ || impl_->hashCtx == nullptr || impl_->hashAlgorithm == nullptr || hash == nullptr ||
+            hashSize < static_cast<unsigned int>(EVP_MD_get_size(impl_->hashAlgorithm)))
+        {
+            return false;
+        }
+
+        unsigned int actualSize = 0;
+        return EVP_DigestFinal_ex(impl_->hashCtx, hash, &actualSize) == 1 && actualSize <= hashSize;
     }
     catch (...)
     {

@@ -90,6 +90,31 @@ enum AsymmetricAlgorithm
     ASYMMETRIC_RSA_4096 = 3
 };
 
+// Cryptographic hash algorithms. Unlike AeadAlgorithm/LegacySymmetricAlgorithm there is no key at
+// all -- IHashService::ComputeHash()/Update()+Final() just digest input bytes. BLAKE2b and BLAKE2s
+// are both variable-output-size algorithms in general; the values below mean their conventional
+// full-size default (BLAKE2b-512, BLAKE2s-256), not a truncated variant. Not every ProviderKind
+// supports every value here (in particular, Windows CNG's SHA-3 requires Windows 11 24H2/Server
+// 2025 or newer, and CNG has no BLAKE2/RIPEMD-160 support at all); query
+// ICryptoProviderFactory::SupportsHashAlgorithm() before CreateHashService().
+enum HashAlgorithm
+{
+    HASH_MD5        = 0,
+    HASH_SHA1       = 1,
+    HASH_SHA224     = 2,
+    HASH_SHA256     = 3,
+    HASH_SHA384     = 4,
+    HASH_SHA512     = 5,
+    HASH_SHA512_256 = 6,
+    HASH_SHA3_224   = 7,
+    HASH_SHA3_256   = 8,
+    HASH_SHA3_384   = 9,
+    HASH_SHA3_512   = 10,
+    HASH_BLAKE2B    = 11,
+    HASH_BLAKE2S    = 12,
+    HASH_RIPEMD160  = 13
+};
+
 } // namespace CryptoApiNS
 
 #endif

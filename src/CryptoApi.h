@@ -23,8 +23,19 @@ public:
     virtual ~CCryptoApi();
              CCryptoApi();
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm);
+
+    // Hash-only: for callers who only need ComputeHashBuffer/ComputeHashBytes/ComputeHashString/
+    // ComputeHashFile and never touch Encrypt*/Decrypt*/RSA/Legacy at all. aeadAlgorithm_/
+    // asymmetricAlgorithm_/legacyAlgorithm_ still get sane defaults (see CryptoApi.cpp) so every
+    // other method stays well-defined if called anyway, but this constructor's whole point is that
+    // a hash-only caller never needs to think about them. Distinguishable from the 2-argument AEAD
+    // constructor above by the 2nd parameter's type (HashAlgorithm vs AeadAlgorithm are distinct
+    // enum types, so there is no overload ambiguity).
+             CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm);
+
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm);
+             CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm);
 
     const char* GetVersion(void) const;
 
@@ -144,6 +155,55 @@ public:
                             unsigned char* outputBuffer,
                             int* outputBufferSize);
 
+    // ============================================================================================
+    // Hash (message digest) -- see HashAlgorithm in ProviderTypes.h and the 5-argument constructor.
+    // No key or password: these only digest the input. Output size is fixed per algorithm (see
+    // GetHashSize) regardless of input size, so the BUFFER_TOO_SMALL capacity-query convention
+    // below always reports the same constant for a given instance.
+    // ============================================================================================
+
+    // Exact digest size ComputeHashBuffer/ComputeHashBytes/ComputeHashString/ComputeHashFile
+    // produce for this instance's hashAlgorithm_; 0 if the algorithm is unsupported by
+    // providerKind_.
+    int GetHashSize(void) const;
+
+    // Buffers contain raw bytes. Input is processed in chunks so large buffers report progress;
+    // onProgress may be nullptr.
+    int ComputeHashBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
+                          const int outputBufferCapacity,
+                          unsigned char* outputBuffer,
+                          int* outputBufferSize,
+                          ProgressCallback onProgress,
+                          void* progressUserData);
+
+    // Alias of ComputeHashBuffer with an identical chunked implementation.
+    int ComputeHashBytes( const unsigned char* inputBuffer, const int inputBufferSize,
+                         const int outputBufferCapacity,
+                         unsigned char* outputBuffer,
+                         int* outputBufferSize,
+                         ProgressCallback onProgress,
+                         void* progressUserData);
+
+    // String input uses UTF-8 bytes. Input is processed in chunks so large strings report
+    // progress; onProgress may be nullptr.
+    int ComputeHashString( const char* inputString, const int inputStringSize,
+                          const int outputBufferCapacity,
+                          unsigned char* outputBuffer,
+                          int* outputBufferSize,
+                          ProgressCallback onProgress,
+                          void* progressUserData);
+
+    // File path is a UTF-8 string. Processed in chunks the same way EncryptFile/DecryptFile are
+    // (see FILE_CHUNK_SIZE), so the whole file is never held in memory at once. onProgress may be
+    // nullptr; when provided it is invoked after each processed chunk with cumulative bytes and
+    // percentage complete.
+    int ComputeHashFile( const char* inputFilePath,
+                        const int outputBufferCapacity,
+                        unsigned char* outputBuffer,
+                        int* outputBufferSize,
+                        ProgressCallback onProgress,
+                        void* progressUserData);
+
 protected:
 
 private:
@@ -188,6 +248,17 @@ private:
                        unsigned char* outputBuffer,
                        int* outputBufferSize);
 
+    // Core layer for the Hash section: chunks inputBuffer (see BUFFER_CHUNK_SIZE) through
+    // IHashService's incremental Init/Update/Final so progress can be reported, then writes the
+    // single fixed-size digest to outputBuffer. Used by: ComputeHashBuffer, ComputeHashBytes,
+    // ComputeHashString.
+    int computeHash( const unsigned char* inputBuffer, const int inputBufferSize,
+                     const int outputBufferCapacity,
+                     unsigned char* outputBuffer,
+                     int* outputBufferSize,
+                     ProgressCallback onProgress,
+                     void* progressUserData);
+
     // Provider/algorithm this instance uses for every Encrypt*/Decrypt* call; fixed for the
     // instance's lifetime (see CCryptoApi(const ProviderKind, const AeadAlgorithm)).
     ProviderKind providerKind_;
@@ -204,6 +275,11 @@ private:
     // instance's lifetime. Stateless per-call like the AEAD path (no cached cipher object) since,
     // unlike RSA, a fresh ILegacyCipher is cheap and each call derives its own key from the salt.
     LegacySymmetricAlgorithm legacyAlgorithm_;
+
+    // Hash algorithm this instance uses for ComputeHashBuffer/ComputeHashBytes/ComputeHashString/
+    // ComputeHashFile; fixed for the instance's lifetime. Stateless per-call like the AEAD/Legacy
+    // paths (no cached hash object) since a fresh IHashService is cheap to create.
+    HashAlgorithm hashAlgorithm_;
 
 };
 

@@ -152,4 +152,37 @@ std::unique_ptr<IMacService> COpenSslProviderFactory::CreateMacService()
 }
 // -----------------------------------------------------------------------------
 
+bool COpenSslProviderFactory::SupportsHashAlgorithm(const HashAlgorithm algorithm) const
+{
+    try
+    {
+        COpenSslProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IHashService> COpenSslProviderFactory::CreateHashService(const HashAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<COpenSslProvider> provider(new COpenSslProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

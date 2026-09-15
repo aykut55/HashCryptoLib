@@ -152,4 +152,37 @@ std::unique_ptr<IMacService> CCryptoPPProviderFactory::CreateMacService()
 }
 // -----------------------------------------------------------------------------
 
+bool CCryptoPPProviderFactory::SupportsHashAlgorithm(const HashAlgorithm algorithm) const
+{
+    try
+    {
+        CCryptoPPProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IHashService> CCryptoPPProviderFactory::CreateHashService(const HashAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CCryptoPPProvider> provider(new CCryptoPPProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

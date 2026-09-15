@@ -20,6 +20,19 @@ public:
 
     int RunEncryptDecryptBytesTest(void);
 
+    // Hash-only analogues of RunEncryptDecryptFileTest/StringTest/BufferTest/BytesTest: no
+    // password, no ciphertext, no Decrypt* counterpart (hashing is one-way) -- construct
+    // CCryptoApi via the no-arg constructor (defaults to HASH_SHA256) and round-trip a known
+    // payload through ComputeHashFile/String/Buffer/Bytes, verifying every shape agrees on the
+    // same digest for the same content.
+    int RunHashFileTest(void);
+
+    int RunHashStringTest(void);
+
+    int RunHashBufferTest(void);
+
+    int RunHashBytesTest(void);
+
     // Variants of RunEncryptDecryptFileTest/StringTest/BufferTest/BytesTest that construct
     // CCryptoApi via CCryptoApi(const ProviderKind, const AeadAlgorithm) instead of the no-arg
     // constructor (which defaults to PROVIDER_MICROSOFT/AEAD_AES_256_GCM), so each one proves the
@@ -128,6 +141,34 @@ public:
     // Base64Decode -> write binary file -> DecryptFile) to recover the original.
     int RunEncryptFileHexBase64CompositionTest(void);
 
+    // Hash analogue of RunEncryptHexBase64CompositionTest/RunEncryptFileHexBase64CompositionTest:
+    // a digest is just raw bytes like ciphertext is, so the same CUtils::HexEncode/Base64Encode
+    // (and decode-back) composition applies -- ComputeHash* -> HexEncode/Base64Encode -> HexDecode/
+    // Base64Decode -> compare against the original digest bytes. In-memory and file-based variants.
+    int RunHashHexBase64CompositionTest(void);
+
+    int RunHashFileHexBase64CompositionTest(void);
+
+    // Exercises CCryptoApi's Hash surface (GetHashSize/ComputeHashBuffer/ComputeHashString/
+    // ComputeHashFile via the 5-argument constructor, HASH_SHA256) -- known FIPS 180-4 test
+    // vectors (empty string and "abc"), cross-checks that Buffer/String/File all produce the same
+    // digest for equivalent content, and confirms GetHashSize() matches the actual output size.
+    // One full independent method per provider (no shared helper).
+    int RunMicrosoftProviderHashTest(void);
+
+    int RunCryptoPPProviderHashTest(void);
+
+    int RunBotanProviderHashTest(void);
+
+    int RunOpenSslProviderHashTest(void);
+
+    // Breadth companion to the 4 Run<Vendor>ProviderHashTest methods (which each cover HASH_SHA256
+    // in depth): loops every ProviderKind x every HashAlgorithm value via CCryptoApi's 5-argument
+    // constructor + ComputeHashBuffer, cross-checked against
+    // ICryptoProviderFactory::SupportsHashAlgorithm() as ground truth -- supported combinations
+    // must produce a digest matching GetHashSize(), unsupported ones must be cleanly rejected.
+    int RunHashAlgorithmsTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);
@@ -173,6 +214,24 @@ public:
 
     int RunProviderFactoryBytesTest(void);
 
+    // Hash analogues of RunProviderFactoryTest/FileTest/StringTest/BufferTest/BytesTest, driven
+    // entirely by the Factory pattern (ICryptoProviderFactory::CreateHashService) instead of
+    // CCryptoApi: RunProviderFactoryHashTest exercises SupportsHashAlgorithm/CreateHashService for
+    // one supported and one unsupported algorithm per provider, and additionally proves the
+    // incremental Init/Update/Final path agrees with the one-shot ComputeHash path. The File/
+    // String/Buffer/Bytes variants cross-check the raw Factory-computed digest against
+    // CCryptoApi::ComputeHashBuffer (via the Hash-only 2-argument constructor) for the same
+    // content, proving the facade doesn't diverge from the lower-level Factory it wraps.
+    int RunProviderFactoryHashTest(void);
+
+    int RunProviderFactoryHashFileTest(void);
+
+    int RunProviderFactoryHashStringTest(void);
+
+    int RunProviderFactoryHashBufferTest(void);
+
+    int RunProviderFactoryHashBytesTest(void);
+
     // Selects PROVIDER_MICROSOFT via the Factory and exercises every AeadAlgorithm/
     // LegacySymmetricAlgorithm/AsymmetricAlgorithm value the enums define: algorithms Microsoft/
     // CNG actually supports get a full round-trip (SetKey/Encrypt/Decrypt for symmetric,
@@ -200,6 +259,17 @@ public:
     int RunEncryptDecryptBufferTestNonBlocking(void);
 
     int RunEncryptDecryptBytesTestNonBlocking(void);
+
+    // Hash analogues of RunEncryptDecryptFileTestNonBlocking/StringTestNonBlocking/
+    // BufferTestNonBlocking/BytesTestNonBlocking, driving RunHashFileTest/StringTest/BufferTest/
+    // BytesTest from a background thread via the same runNonBlocking helper.
+    int RunHashFileTestNonBlocking(void);
+
+    int RunHashStringTestNonBlocking(void);
+
+    int RunHashBufferTestNonBlocking(void);
+
+    int RunHashBytesTestNonBlocking(void);
 
 protected:
 

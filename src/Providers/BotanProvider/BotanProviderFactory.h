@@ -27,6 +27,9 @@ public:
 
     virtual std::unique_ptr<IMacService> CreateMacService();
 
+    virtual bool SupportsHashAlgorithm(const HashAlgorithm algorithm) const;
+    virtual std::unique_ptr<IHashService> CreateHashService(const HashAlgorithm algorithm);
+
 protected:
 
 private:

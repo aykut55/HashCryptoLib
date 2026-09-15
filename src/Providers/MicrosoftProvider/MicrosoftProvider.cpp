@@ -250,6 +250,28 @@ namespace
             default:                  return 0;
         }
     }
+    // -------------------------------------------------------------------------
+
+    // Windows CNG has no BCRYPT_SHA224/SHA3_224/SHA512_256/BLAKE2B/BLAKE2S/RIPEMD160_ALGORITHM
+    // identifiers at all (confirmed against the vendored Windows SDK's bcrypt.h), so those five
+    // correctly return nullptr = unsupported here. SHA3-256/384/512 exist as identifiers but only
+    // actually open successfully on Windows 11 24H2+/Server 2025+; SelectAlgorithm() below handles
+    // that at runtime via BCryptOpenAlgorithmProvider's return value, not here.
+    const wchar_t* HashAlgorithmName(HashAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case HASH_MD5:      return BCRYPT_MD5_ALGORITHM;
+            case HASH_SHA1:     return BCRYPT_SHA1_ALGORITHM;
+            case HASH_SHA256:   return BCRYPT_SHA256_ALGORITHM;
+            case HASH_SHA384:   return BCRYPT_SHA384_ALGORITHM;
+            case HASH_SHA512:   return BCRYPT_SHA512_ALGORITHM;
+            case HASH_SHA3_256: return BCRYPT_SHA3_256_ALGORITHM;
+            case HASH_SHA3_384: return BCRYPT_SHA3_384_ALGORITHM;
+            case HASH_SHA3_512: return BCRYPT_SHA3_512_ALGORITHM;
+            default:            return nullptr;
+        }
+    }
 }
 // -----------------------------------------------------------------------------
 
@@ -281,6 +303,21 @@ CMicrosoftProvider::~CMicrosoftProvider()
         {
             BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(rsaAlgorithmHandle_), 0);
         }
+
+        if (hashObjectHandle_ != nullptr)
+        {
+            BCryptDestroyHash(static_cast<BCRYPT_HASH_HANDLE>(hashObjectHandle_));
+        }
+
+        if (hashAlgorithmHandle_ != nullptr)
+        {
+            BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(hashAlgorithmHandle_), 0);
+        }
+
+        if (!hashObjectBuffer_.empty())
+        {
+            SecureZeroMemory(&hashObjectBuffer_[0], hashObjectBuffer_.size());
+        }
     }
     catch (...)
     {
@@ -300,7 +337,10 @@ CMicrosoftProvider::CMicrosoftProvider()
       blockSize_(16),
       rsaAlgorithmHandle_(nullptr),
       rsaKeyHandle_(nullptr),
-      rsaKeyBits_(0)
+      rsaKeyBits_(0),
+      hashAlgorithmHandle_(nullptr),
+      hashObjectHandle_(nullptr),
+      hashOutputSize_(0)
 {
 }
 // -----------------------------------------------------------------------------
@@ -1035,6 +1075,154 @@ bool CMicrosoftProvider::ComputeMac(const unsigned char* key, const unsigned int
                                            mac, macSize);
 
         BCryptCloseAlgorithmProvider(hmacAlgorithm, 0);
+        return status >= 0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::SelectAlgorithm(const HashAlgorithm algorithm)
+{
+    try
+    {
+        const wchar_t* algorithmName = HashAlgorithmName(algorithm);
+        if (algorithmName == nullptr)
+        {
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE algorithmHandle = nullptr;
+        if (BCryptOpenAlgorithmProvider(&algorithmHandle, algorithmName, nullptr, 0) < 0)
+        {
+            return false;
+        }
+
+        ULONG hashOutputSize = 0;
+        ULONG hashObjectSize = 0;
+        ULONG resultSize = 0;
+        if (BCryptGetProperty(algorithmHandle, BCRYPT_HASH_LENGTH,
+                              reinterpret_cast<PUCHAR>(&hashOutputSize), sizeof(hashOutputSize),
+                              &resultSize, 0) < 0 || resultSize != sizeof(hashOutputSize) || hashOutputSize == 0 ||
+            BCryptGetProperty(algorithmHandle, BCRYPT_OBJECT_LENGTH,
+                              reinterpret_cast<PUCHAR>(&hashObjectSize), sizeof(hashObjectSize),
+                              &resultSize, 0) < 0 || resultSize != sizeof(hashObjectSize) || hashObjectSize == 0)
+        {
+            BCryptCloseAlgorithmProvider(algorithmHandle, 0);
+            return false;
+        }
+
+        if (hashObjectHandle_ != nullptr)
+        {
+            BCryptDestroyHash(static_cast<BCRYPT_HASH_HANDLE>(hashObjectHandle_));
+            hashObjectHandle_ = nullptr;
+        }
+
+        if (hashAlgorithmHandle_ != nullptr)
+        {
+            BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(hashAlgorithmHandle_), 0);
+        }
+
+        hashAlgorithmHandle_ = algorithmHandle;
+        hashOutputSize_ = hashOutputSize;
+        hashObjectBuffer_.assign(hashObjectSize, 0);
+
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CMicrosoftProvider::GetHashSize(void) const
+{
+    return hashOutputSize_;
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::ComputeHash(const unsigned char* data, const unsigned int dataSize, unsigned char* hash, const unsigned int hashSize)
+{
+    return Init() && Update(data, dataSize) && Final(hash, hashSize);
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::Init(void)
+{
+    try
+    {
+        if (hashAlgorithmHandle_ == nullptr || hashObjectBuffer_.empty())
+        {
+            return false;
+        }
+
+        if (hashObjectHandle_ != nullptr)
+        {
+            BCryptDestroyHash(static_cast<BCRYPT_HASH_HANDLE>(hashObjectHandle_));
+            hashObjectHandle_ = nullptr;
+        }
+
+        BCRYPT_HASH_HANDLE hashHandle = nullptr;
+        if (BCryptCreateHash(static_cast<BCRYPT_ALG_HANDLE>(hashAlgorithmHandle_),
+                             &hashHandle,
+                             &hashObjectBuffer_[0], static_cast<ULONG>(hashObjectBuffer_.size()),
+                             nullptr, 0, 0) < 0)
+        {
+            return false;
+        }
+
+        hashObjectHandle_ = hashHandle;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::Update(const unsigned char* data, const unsigned int dataSize)
+{
+    try
+    {
+        if (hashObjectHandle_ == nullptr || (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        if (dataSize == 0)
+        {
+            return true;
+        }
+
+        return BCryptHashData(static_cast<BCRYPT_HASH_HANDLE>(hashObjectHandle_),
+                              const_cast<PUCHAR>(data), dataSize, 0) >= 0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::Final(unsigned char* hash, const unsigned int hashSize)
+{
+    try
+    {
+        if (hashObjectHandle_ == nullptr || hash == nullptr || hashSize < hashOutputSize_)
+        {
+            return false;
+        }
+
+        const NTSTATUS status = BCryptFinishHash(static_cast<BCRYPT_HASH_HANDLE>(hashObjectHandle_),
+                                                  hash, hashOutputSize_, 0);
+
+        BCryptDestroyHash(static_cast<BCRYPT_HASH_HANDLE>(hashObjectHandle_));
+        hashObjectHandle_ = nullptr;
+
         return status >= 0;
     }
     catch (...)

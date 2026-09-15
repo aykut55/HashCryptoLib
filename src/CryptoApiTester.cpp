@@ -462,6 +462,67 @@ bool RoundTripAsymmetricViaFactory(const char* testName, ICryptoProviderFactory&
 }
 // -----------------------------------------------------------------------------
 
+bool RoundTripHashViaFactory(const char* testName, ICryptoProviderFactory& factory, HashAlgorithm algorithm,
+                             const char* providerName, const char* algorithmName, bool expectSupported)
+{
+    const bool supported = factory.SupportsHashAlgorithm(algorithm);
+    if (supported != expectSupported)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] SupportsHashAlgorithm=" << supported << " expected=" << expectSupported << std::endl;
+        return false;
+    }
+
+    if (!expectSupported)
+    {
+        std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+                  << "] correctly unsupported" << std::endl;
+        return true;
+    }
+
+    std::unique_ptr<IHashService> hashService = factory.CreateHashService(algorithm);
+    if (!hashService)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] CreateHashService returned null" << std::endl;
+        return false;
+    }
+
+    const unsigned int hashSize = hashService->GetHashSize();
+    const char* plaintext = "provider factory hash round trip payload spanning more than one chunk of data";
+    const unsigned int len = static_cast<unsigned int>(std::strlen(plaintext));
+
+    std::vector<unsigned char> oneShotDigest(hashSize);
+    if (!hashService->ComputeHash(reinterpret_cast<const unsigned char*>(plaintext), len, oneShotDigest.data(), hashSize))
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] ComputeHash (one-shot)" << std::endl;
+        return false;
+    }
+
+    // Same content split across two Update() calls must produce the identical digest as the
+    // one-shot ComputeHash above -- proves the incremental Init/Update/Final path (what
+    // CCryptoApi::ComputeHashFile relies on for chunked file reads) agrees with the convenience
+    // one-shot path, not just that each path is internally consistent with itself.
+    const unsigned int splitPoint = len / 2;
+    std::vector<unsigned char> incrementalDigest(hashSize);
+    if (!hashService->Init() ||
+        !hashService->Update(reinterpret_cast<const unsigned char*>(plaintext), splitPoint) ||
+        !hashService->Update(reinterpret_cast<const unsigned char*>(plaintext) + splitPoint, len - splitPoint) ||
+        !hashService->Final(incrementalDigest.data(), hashSize) ||
+        incrementalDigest != oneShotDigest)
+    {
+        std::cout << testName << ": FAILED [" << providerName << "/" << algorithmName
+                  << "] Init/Update/Final mismatch vs one-shot ComputeHash" << std::endl;
+        return false;
+    }
+
+    std::cout << testName << ": PASSED [" << providerName << "/" << algorithmName
+              << "] one-shot and incremental digests agree via factory (" << hashSize << " bytes)" << std::endl;
+    return true;
+}
+// -----------------------------------------------------------------------------
+
 const char* AeadAlgorithmName(AeadAlgorithm algorithm)
 {
     switch (algorithm)
@@ -544,6 +605,29 @@ const char* AsymmetricAlgorithmName(AsymmetricAlgorithm algorithm)
         case ASYMMETRIC_RSA_3072: return "RSA-3072";
         case ASYMMETRIC_RSA_4096: return "RSA-4096";
         default:                  return "?";
+    }
+}
+// -----------------------------------------------------------------------------
+
+const char* HashAlgorithmName(HashAlgorithm algorithm)
+{
+    switch (algorithm)
+    {
+        case HASH_MD5:        return "MD5";
+        case HASH_SHA1:       return "SHA1";
+        case HASH_SHA224:     return "SHA224";
+        case HASH_SHA256:     return "SHA256";
+        case HASH_SHA384:     return "SHA384";
+        case HASH_SHA512:     return "SHA512";
+        case HASH_SHA512_256: return "SHA512_256";
+        case HASH_SHA3_224:   return "SHA3_224";
+        case HASH_SHA3_256:   return "SHA3_256";
+        case HASH_SHA3_384:   return "SHA3_384";
+        case HASH_SHA3_512:   return "SHA3_512";
+        case HASH_BLAKE2B:    return "BLAKE2B";
+        case HASH_BLAKE2S:    return "BLAKE2S";
+        case HASH_RIPEMD160:  return "RIPEMD160";
+        default:              return "?";
     }
 }
 // -----------------------------------------------------------------------------
@@ -634,6 +718,77 @@ int RunProviderFactoryInMemoryRoundTrip(const char* testName, const unsigned cha
         }
 
         std::cout << testName << ": PASSED [" << name << "/AES-256-GCM] (" << inputSize << " bytes)" << std::endl;
+    }
+
+    if (failures != 0)
+    {
+        std::cout << testName << ": " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+
+    std::cout << testName << ": PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+    return NO_ERROR;
+}
+// -----------------------------------------------------------------------------
+
+int HashViaFactoryInMemory(const char* testName, const unsigned char* inputData, std::size_t inputSize)
+{
+    struct ProviderCase
+    {
+        ProviderKind kind;
+        const char* name;
+    };
+
+    const ProviderCase providerCases[] =
+    {
+        { PROVIDER_MICROSOFT, "Microsoft" },
+        { PROVIDER_CRYPTOPP,  "CryptoPP" },
+        { PROVIDER_BOTAN,     "Botan" },
+        { PROVIDER_OPENSSL,   "OpenSSL" }
+    };
+
+    int failures = 0;
+
+    for (std::size_t caseIndex = 0; caseIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++caseIndex)
+    {
+        const ProviderKind kind = providerCases[caseIndex].kind;
+        const char* name = providerCases[caseIndex].name;
+
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+        std::unique_ptr<IHashService> hashService = factory ? factory->CreateHashService(HASH_SHA256) : nullptr;
+        if (!hashService)
+        {
+            std::cout << testName << ": FAILED [" << name << "] CreateProviderFactory/CreateHashService" << std::endl;
+            ++failures;
+            continue;
+        }
+
+        const unsigned int hashSize = hashService->GetHashSize();
+        std::vector<unsigned char> factoryDigest(hashSize);
+        if (!hashService->ComputeHash(inputData, static_cast<unsigned int>(inputSize), factoryDigest.data(), hashSize))
+        {
+            std::cout << testName << ": FAILED [" << name << "] ComputeHash via factory" << std::endl;
+            ++failures;
+            continue;
+        }
+
+        // Cross-check against the CCryptoApi facade (Hash-only 2-argument constructor) -- proves
+        // the two layers agree, not just that the Factory layer is internally consistent.
+        CCryptoApi cryptoApi(kind, HASH_SHA256);
+        std::vector<unsigned char> apiDigest(hashSize);
+        int apiDigestSize = 0;
+        const int status = cryptoApi.ComputeHashBuffer(inputData, static_cast<int>(inputSize),
+                                                        static_cast<int>(hashSize), apiDigest.data(), &apiDigestSize,
+                                                        nullptr, nullptr);
+        if (status != NO_ERROR || apiDigestSize != static_cast<int>(hashSize) ||
+            std::memcmp(apiDigest.data(), factoryDigest.data(), hashSize) != 0)
+        {
+            std::cout << testName << ": FAILED [" << name << "] CCryptoApi digest mismatch status=" << status << std::endl;
+            ++failures;
+            continue;
+        }
+
+        std::cout << testName << ": PASSED [" << name << "/SHA256] (" << inputSize << " bytes)" << std::endl;
     }
 
     if (failures != 0)
@@ -1125,6 +1280,286 @@ int CCryptoApiTester::RunEncryptDecryptBytesTest(void)
         }
 
         std::cout << "RunEncryptDecryptBytesTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashFileTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_hashfile_test_in.bin";
+        const char* knownVectorText = "abc";
+        const char* knownVectorHex = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+        std::vector<unsigned char> knownVectorData(knownVectorText, knownVectorText + std::strlen(knownVectorText));
+        if (!WriteTesterFile(inputFilePath, knownVectorData))
+        {
+            std::cout << "RunHashFileTest: FAILED to write known-vector input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi;
+
+        int requiredSize = 0;
+        int status = cryptoApi.ComputeHashFile(inputFilePath, 0, nullptr, &requiredSize, nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL || requiredSize != 32)
+        {
+            std::cout << "RunHashFileTest: FAILED size query status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> digest(requiredSize);
+        int digestSize = 0;
+        status = cryptoApi.ComputeHashFile(inputFilePath, requiredSize, &digest[0], &digestSize, &PrintFileProgress, nullptr);
+        std::remove(inputFilePath);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunHashFileTest: FAILED ComputeHashFile status=" << status << std::endl;
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        int requiredHexSize = 0;
+        CUtils::HexEncode(&digest[0], digestSize, false, 0, nullptr, &requiredHexSize);
+        std::vector<char> hexText(requiredHexSize);
+        int hexSize = 0;
+        CUtils::HexEncode(&digest[0], digestSize, false, requiredHexSize, &hexText[0], &hexSize);
+        const std::string hexString(hexText.begin(), hexText.end());
+
+        if (hexString != knownVectorHex)
+        {
+            std::cout << "RunHashFileTest: FAILED SHA-256(\"abc\") via file = " << hexString
+                      << " expected " << knownVectorHex << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunHashFileTest: PASSED SHA-256(\"abc\") via file = " << hexString << std::endl;
+
+        // Cancellation: a larger file so the callback fires more than twice, aborting at the 3rd
+        // chunk boundary with OPERATION_CANCELLED.
+        std::vector<unsigned char> largeData(2 * 1048576 + 999);
+        for (std::size_t index = 0; index < largeData.size(); ++index)
+        {
+            largeData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        if (!WriteTesterFile(inputFilePath, largeData))
+        {
+            std::cout << "RunHashFileTest: FAILED to write cancel-test input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int callCount = 0;
+        int cancelledSize = 0;
+        std::vector<unsigned char> cancelDigest(32);
+        const int cancelStatus = cryptoApi.ComputeHashFile(inputFilePath, 32, &cancelDigest[0], &cancelledSize,
+                                                            &CancelAfterThirdChunk, &callCount);
+        std::remove(inputFilePath);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunHashFileTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunHashFileTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashStringTest(void)
+{
+    try
+    {
+        const char* knownVectorText = "abc";
+        const char* knownVectorHex = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        const int textSize = static_cast<int>(std::strlen(knownVectorText));
+
+        CCryptoApi cryptoApi;
+
+        int requiredSize = 0;
+        int status = cryptoApi.ComputeHashString(knownVectorText, textSize, 0, nullptr, &requiredSize, nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL || requiredSize != 32)
+        {
+            std::cout << "RunHashStringTest: FAILED size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> digest(requiredSize);
+        int digestSize = 0;
+        status = cryptoApi.ComputeHashString(knownVectorText, textSize, requiredSize, &digest[0], &digestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunHashStringTest: FAILED ComputeHashString status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredHexSize = 0;
+        CUtils::HexEncode(&digest[0], digestSize, false, 0, nullptr, &requiredHexSize);
+        std::vector<char> hexText(requiredHexSize);
+        int hexSize = 0;
+        CUtils::HexEncode(&digest[0], digestSize, false, requiredHexSize, &hexText[0], &hexSize);
+        const std::string hexString(hexText.begin(), hexText.end());
+
+        if (hexString != knownVectorHex)
+        {
+            std::cout << "RunHashStringTest: FAILED SHA-256(\"abc\") = " << hexString
+                      << " expected " << knownVectorHex << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunHashStringTest: PASSED SHA-256(\"abc\") = " << hexString << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashBufferTest(void)
+{
+    try
+    {
+        std::vector<unsigned char> inputBuffer(2 * 1048576 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi;
+
+        int requiredSize = 0;
+        int status = cryptoApi.ComputeHashBuffer(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                  0, nullptr, &requiredSize, nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL || requiredSize != 32)
+        {
+            std::cout << "RunHashBufferTest: FAILED size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> digestA(requiredSize);
+        int digestASize = 0;
+        status = cryptoApi.ComputeHashBuffer(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             requiredSize, &digestA[0], &digestASize, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunHashBufferTest: FAILED ComputeHashBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        // Determinism: hashing the same content again must produce the identical digest.
+        std::vector<unsigned char> digestB(requiredSize);
+        int digestBSize = 0;
+        status = cryptoApi.ComputeHashBuffer(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             requiredSize, &digestB[0], &digestBSize, nullptr, nullptr);
+        if (status != NO_ERROR || digestBSize != digestASize || std::memcmp(&digestA[0], &digestB[0], digestASize) != 0)
+        {
+            std::cout << "RunHashBufferTest: FAILED determinism mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunHashBufferTest: PASSED (" << inputBuffer.size() << " bytes, deterministic)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, ComputeHashBuffer
+        // must stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.ComputeHashBuffer(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                              requiredSize, &digestA[0], &cancelledSize,
+                                                              &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunHashBufferTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunHashBufferTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashBytesTest(void)
+{
+    try
+    {
+        std::vector<unsigned char> inputBuffer(2 * 1048576 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi;
+
+        int requiredSize = 0;
+        int status = cryptoApi.ComputeHashBytes(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                0, nullptr, &requiredSize, nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL || requiredSize != 32)
+        {
+            std::cout << "RunHashBytesTest: FAILED size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bytesDigest(requiredSize);
+        int bytesDigestSize = 0;
+        status = cryptoApi.ComputeHashBytes(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                            requiredSize, &bytesDigest[0], &bytesDigestSize, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunHashBytesTest: FAILED ComputeHashBytes status=" << status << std::endl;
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        // ComputeHashBytes is an alias of ComputeHashBuffer -- same content must produce the
+        // identical digest through either entry point.
+        std::vector<unsigned char> bufferDigest(requiredSize);
+        int bufferDigestSize = 0;
+        status = cryptoApi.ComputeHashBuffer(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             requiredSize, &bufferDigest[0], &bufferDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR || bufferDigestSize != bytesDigestSize ||
+            std::memcmp(&bufferDigest[0], &bytesDigest[0], bytesDigestSize) != 0)
+        {
+            std::cout << "RunHashBytesTest: FAILED ComputeHashBuffer/Bytes mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunHashBytesTest: PASSED (" << inputBuffer.size() << " bytes, matches ComputeHashBuffer)" << std::endl;
+
+        // Cancellation, same as RunHashBufferTest.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.ComputeHashBytes(&inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                             requiredSize, &bytesDigest[0], &cancelledSize,
+                                                             &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunHashBytesTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunHashBytesTest: PASSED cancellation" << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -4628,6 +5063,831 @@ int CCryptoApiTester::RunEncryptFileHexBase64CompositionTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunHashHexBase64CompositionTest(void)
+{
+    try
+    {
+        const char* text = "Pijamal\xC4\xB1 hasta ya\xC4\x9F\xC4\xB1z \xC5\x9Fof\xC3\xB6re \xC3\xA7" "abucak g\xC3\xBCvendi.";
+        const int textSize = static_cast<int>(std::strlen(text));
+
+        CCryptoApi cryptoApi;
+
+        int requiredDigestSize = 0;
+        int status = cryptoApi.ComputeHashString(text, textSize, 0, nullptr, &requiredDigestSize, nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunHashHexBase64CompositionTest: FAILED hash size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> digest(requiredDigestSize);
+        int digestSize = 0;
+        status = cryptoApi.ComputeHashString(text, textSize, requiredDigestSize, &digest[0], &digestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunHashHexBase64CompositionTest: FAILED ComputeHashString status=" << status << std::endl;
+            return status;
+        }
+
+        int failures = 0;
+
+        // Hex path: digest -> Hex text -> back to digest bytes.
+        {
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, true, 0, nullptr, &requiredHexSize);
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, true, requiredHexSize, &hexText[0], &hexSize);
+            const std::string hexString(hexText.begin(), hexText.end());
+
+            int requiredDecodedSize = 0;
+            CUtils::HexDecode(hexString.c_str(), static_cast<int>(hexString.size()), 0, nullptr, &requiredDecodedSize);
+            std::vector<unsigned char> decoded(requiredDecodedSize);
+            int decodedSize = 0;
+            CUtils::HexDecode(hexString.c_str(), static_cast<int>(hexString.size()), requiredDecodedSize, &decoded[0], &decodedSize);
+
+            if (decodedSize != digestSize || std::memcmp(&decoded[0], &digest[0], digestSize) != 0)
+            {
+                std::cout << "RunHashHexBase64CompositionTest: FAILED Hex path mismatch" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunHashHexBase64CompositionTest: PASSED Hex path (" << hexString << ")" << std::endl;
+            }
+        }
+
+        // Base64 path: digest -> Base64 text -> back to digest bytes.
+        {
+            int requiredBase64Size = 0;
+            CUtils::Base64Encode(&digest[0], digestSize, 0, nullptr, &requiredBase64Size);
+            std::vector<char> base64Text(requiredBase64Size);
+            int base64Size = 0;
+            CUtils::Base64Encode(&digest[0], digestSize, requiredBase64Size, &base64Text[0], &base64Size);
+            const std::string base64String(base64Text.begin(), base64Text.end());
+
+            int requiredDecodedSize = 0;
+            CUtils::Base64Decode(base64String.c_str(), static_cast<int>(base64String.size()), 0, nullptr, &requiredDecodedSize);
+            std::vector<unsigned char> decoded(requiredDecodedSize);
+            int decodedSize = 0;
+            CUtils::Base64Decode(base64String.c_str(), static_cast<int>(base64String.size()), requiredDecodedSize, &decoded[0], &decodedSize);
+
+            if (decodedSize != digestSize || std::memcmp(&decoded[0], &digest[0], digestSize) != 0)
+            {
+                std::cout << "RunHashHexBase64CompositionTest: FAILED Base64 path mismatch" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunHashHexBase64CompositionTest: PASSED Base64 path (" << base64String << ")" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunHashHexBase64CompositionTest: PASSED (Hex and Base64 digest composition round-trips)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunHashHexBase64CompositionTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashFileHexBase64CompositionTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_hashfilehexb64_in.bin";
+        const char* hexTextFilePath = "cryptoapi_hashfilehexb64.hex";
+        const char* base64TextFilePath = "cryptoapi_hashfilehexb64.b64";
+
+        std::vector<unsigned char> inputData(4096);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        const char* allPaths[] = { inputFilePath, hexTextFilePath, base64TextFilePath };
+        struct Cleanup
+        {
+            const char** paths;
+            std::size_t count;
+            ~Cleanup() { for (std::size_t index = 0; index < count; ++index) { std::remove(paths[index]); } }
+        } cleanup = { allPaths, sizeof(allPaths) / sizeof(allPaths[0]) };
+
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunHashFileHexBase64CompositionTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi;
+
+        int requiredDigestSize = 0;
+        int status = cryptoApi.ComputeHashFile(inputFilePath, 0, nullptr, &requiredDigestSize, nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunHashFileHexBase64CompositionTest: FAILED hash size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> digest(requiredDigestSize);
+        int digestSize = 0;
+        status = cryptoApi.ComputeHashFile(inputFilePath, requiredDigestSize, &digest[0], &digestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunHashFileHexBase64CompositionTest: FAILED ComputeHashFile status=" << status << std::endl;
+            return status;
+        }
+
+        int failures = 0;
+
+        // Hex path: digest -> Hex text file -> back to digest bytes.
+        {
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, true, 0, nullptr, &requiredHexSize);
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, true, requiredHexSize, &hexText[0], &hexSize);
+
+            std::ofstream hexFileStream(hexTextFilePath, std::ios::binary);
+            hexFileStream.write(&hexText[0], static_cast<std::streamsize>(hexText.size()));
+            hexFileStream.close();
+
+            std::ifstream hexReadStream(hexTextFilePath, std::ios::binary);
+            const std::string hexFromFile((std::istreambuf_iterator<char>(hexReadStream)), std::istreambuf_iterator<char>());
+
+            int requiredDecodedSize = 0;
+            CUtils::HexDecode(hexFromFile.c_str(), static_cast<int>(hexFromFile.size()), 0, nullptr, &requiredDecodedSize);
+            std::vector<unsigned char> decoded(requiredDecodedSize);
+            int decodedSize = 0;
+            CUtils::HexDecode(hexFromFile.c_str(), static_cast<int>(hexFromFile.size()), requiredDecodedSize, &decoded[0], &decodedSize);
+
+            if (decodedSize != digestSize || std::memcmp(&decoded[0], &digest[0], digestSize) != 0)
+            {
+                std::cout << "RunHashFileHexBase64CompositionTest: FAILED Hex path mismatch" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunHashFileHexBase64CompositionTest: PASSED Hex path (" << hexTextFilePath << ")" << std::endl;
+            }
+        }
+
+        // Base64 path: digest -> Base64 text file -> back to digest bytes.
+        {
+            int requiredBase64Size = 0;
+            CUtils::Base64Encode(&digest[0], digestSize, 0, nullptr, &requiredBase64Size);
+            std::vector<char> base64Text(requiredBase64Size);
+            int base64Size = 0;
+            CUtils::Base64Encode(&digest[0], digestSize, requiredBase64Size, &base64Text[0], &base64Size);
+
+            std::ofstream base64FileStream(base64TextFilePath, std::ios::binary);
+            base64FileStream.write(&base64Text[0], static_cast<std::streamsize>(base64Text.size()));
+            base64FileStream.close();
+
+            std::ifstream base64ReadStream(base64TextFilePath, std::ios::binary);
+            const std::string base64FromFile((std::istreambuf_iterator<char>(base64ReadStream)), std::istreambuf_iterator<char>());
+
+            int requiredDecodedSize = 0;
+            CUtils::Base64Decode(base64FromFile.c_str(), static_cast<int>(base64FromFile.size()), 0, nullptr, &requiredDecodedSize);
+            std::vector<unsigned char> decoded(requiredDecodedSize);
+            int decodedSize = 0;
+            CUtils::Base64Decode(base64FromFile.c_str(), static_cast<int>(base64FromFile.size()), requiredDecodedSize, &decoded[0], &decodedSize);
+
+            if (decodedSize != digestSize || std::memcmp(&decoded[0], &digest[0], digestSize) != 0)
+            {
+                std::cout << "RunHashFileHexBase64CompositionTest: FAILED Base64 path mismatch" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunHashFileHexBase64CompositionTest: PASSED Base64 path (" << base64TextFilePath << ")" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunHashFileHexBase64CompositionTest: PASSED (Hex and Base64 file digest composition round-trips)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunHashFileHexBase64CompositionTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunMicrosoftProviderHashTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256);
+
+        const int hashSize = cryptoApi.GetHashSize();
+        if (hashSize != 32)
+        {
+            std::cout << "RunMicrosoftProviderHashTest: FAILED GetHashSize expected 32 got " << hashSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        struct KnownVector
+        {
+            const char* text;
+            const char* expectedHex;
+        };
+
+        const KnownVector knownVectors[] =
+        {
+            { "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+            { "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+        };
+
+        for (std::size_t index = 0; index < sizeof(knownVectors) / sizeof(knownVectors[0]); ++index)
+        {
+            const char* text = knownVectors[index].text;
+            const char* expectedHex = knownVectors[index].expectedHex;
+            const int textSize = static_cast<int>(std::strlen(text));
+
+            int requiredSize = 0;
+            int status = cryptoApi.ComputeHashString(text, textSize, 0, nullptr, &requiredSize, nullptr, nullptr);
+            if (status != BUFFER_TOO_SMALL || requiredSize != hashSize)
+            {
+                std::cout << "RunMicrosoftProviderHashTest: FAILED size query status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::vector<unsigned char> digest(requiredSize);
+            int digestSize = 0;
+            status = cryptoApi.ComputeHashString(text, textSize, requiredSize, &digest[0], &digestSize, nullptr, nullptr);
+            if (status != NO_ERROR || digestSize != hashSize)
+            {
+                std::cout << "RunMicrosoftProviderHashTest: FAILED ComputeHashString status=" << status << std::endl;
+                return status;
+            }
+
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, 0, nullptr, &requiredHexSize);
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, requiredHexSize, &hexText[0], &hexSize);
+            const std::string hexString(hexText.begin(), hexText.end());
+
+            if (hexString != expectedHex)
+            {
+                std::cout << "RunMicrosoftProviderHashTest: FAILED SHA-256(\"" << text << "\") = " << hexString
+                          << " expected " << expectedHex << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::cout << "RunMicrosoftProviderHashTest: PASSED SHA-256(\"" << text << "\") = " << hexString << std::endl;
+        }
+
+        const char* consistencyText = "The quick brown fox jumps over the lazy dog";
+        const int consistencyTextSize = static_cast<int>(std::strlen(consistencyText));
+        const unsigned char* consistencyBytes = reinterpret_cast<const unsigned char*>(consistencyText);
+
+        std::vector<unsigned char> stringDigest(hashSize);
+        int stringDigestSize = 0;
+        int status = cryptoApi.ComputeHashString(consistencyText, consistencyTextSize, hashSize, &stringDigest[0], &stringDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderHashTest: FAILED consistency ComputeHashString status=" << status << std::endl;
+            return status;
+        }
+
+        std::vector<unsigned char> bufferDigest(hashSize);
+        int bufferDigestSize = 0;
+        status = cryptoApi.ComputeHashBuffer(consistencyBytes, consistencyTextSize, hashSize, &bufferDigest[0], &bufferDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR || bufferDigestSize != stringDigestSize ||
+            std::memcmp(&bufferDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunMicrosoftProviderHashTest: FAILED ComputeHashBuffer mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* tempFilePath = "cryptoapi_msft_hash_test.bin";
+        std::vector<unsigned char> fileContent(consistencyBytes, consistencyBytes + consistencyTextSize);
+        if (!WriteTesterFile(tempFilePath, fileContent))
+        {
+            std::cout << "RunMicrosoftProviderHashTest: FAILED to write temp file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> fileDigest(hashSize);
+        int fileDigestSize = 0;
+        status = cryptoApi.ComputeHashFile(tempFilePath, hashSize, &fileDigest[0], &fileDigestSize, nullptr, nullptr);
+        std::remove(tempFilePath);
+
+        if (status != NO_ERROR || fileDigestSize != stringDigestSize ||
+            std::memcmp(&fileDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunMicrosoftProviderHashTest: FAILED ComputeHashFile mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderHashTest: PASSED Buffer/String/File consistency" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderHashTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256);
+
+        const int hashSize = cryptoApi.GetHashSize();
+        if (hashSize != 32)
+        {
+            std::cout << "RunCryptoPPProviderHashTest: FAILED GetHashSize expected 32 got " << hashSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        struct KnownVector
+        {
+            const char* text;
+            const char* expectedHex;
+        };
+
+        const KnownVector knownVectors[] =
+        {
+            { "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+            { "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+        };
+
+        for (std::size_t index = 0; index < sizeof(knownVectors) / sizeof(knownVectors[0]); ++index)
+        {
+            const char* text = knownVectors[index].text;
+            const char* expectedHex = knownVectors[index].expectedHex;
+            const int textSize = static_cast<int>(std::strlen(text));
+
+            int requiredSize = 0;
+            int status = cryptoApi.ComputeHashString(text, textSize, 0, nullptr, &requiredSize, nullptr, nullptr);
+            if (status != BUFFER_TOO_SMALL || requiredSize != hashSize)
+            {
+                std::cout << "RunCryptoPPProviderHashTest: FAILED size query status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::vector<unsigned char> digest(requiredSize);
+            int digestSize = 0;
+            status = cryptoApi.ComputeHashString(text, textSize, requiredSize, &digest[0], &digestSize, nullptr, nullptr);
+            if (status != NO_ERROR || digestSize != hashSize)
+            {
+                std::cout << "RunCryptoPPProviderHashTest: FAILED ComputeHashString status=" << status << std::endl;
+                return status;
+            }
+
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, 0, nullptr, &requiredHexSize);
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, requiredHexSize, &hexText[0], &hexSize);
+            const std::string hexString(hexText.begin(), hexText.end());
+
+            if (hexString != expectedHex)
+            {
+                std::cout << "RunCryptoPPProviderHashTest: FAILED SHA-256(\"" << text << "\") = " << hexString
+                          << " expected " << expectedHex << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::cout << "RunCryptoPPProviderHashTest: PASSED SHA-256(\"" << text << "\") = " << hexString << std::endl;
+        }
+
+        const char* consistencyText = "The quick brown fox jumps over the lazy dog";
+        const int consistencyTextSize = static_cast<int>(std::strlen(consistencyText));
+        const unsigned char* consistencyBytes = reinterpret_cast<const unsigned char*>(consistencyText);
+
+        std::vector<unsigned char> stringDigest(hashSize);
+        int stringDigestSize = 0;
+        int status = cryptoApi.ComputeHashString(consistencyText, consistencyTextSize, hashSize, &stringDigest[0], &stringDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderHashTest: FAILED consistency ComputeHashString status=" << status << std::endl;
+            return status;
+        }
+
+        std::vector<unsigned char> bufferDigest(hashSize);
+        int bufferDigestSize = 0;
+        status = cryptoApi.ComputeHashBuffer(consistencyBytes, consistencyTextSize, hashSize, &bufferDigest[0], &bufferDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR || bufferDigestSize != stringDigestSize ||
+            std::memcmp(&bufferDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunCryptoPPProviderHashTest: FAILED ComputeHashBuffer mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* tempFilePath = "cryptoapi_cryptopp_hash_test.bin";
+        std::vector<unsigned char> fileContent(consistencyBytes, consistencyBytes + consistencyTextSize);
+        if (!WriteTesterFile(tempFilePath, fileContent))
+        {
+            std::cout << "RunCryptoPPProviderHashTest: FAILED to write temp file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> fileDigest(hashSize);
+        int fileDigestSize = 0;
+        status = cryptoApi.ComputeHashFile(tempFilePath, hashSize, &fileDigest[0], &fileDigestSize, nullptr, nullptr);
+        std::remove(tempFilePath);
+
+        if (status != NO_ERROR || fileDigestSize != stringDigestSize ||
+            std::memcmp(&fileDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunCryptoPPProviderHashTest: FAILED ComputeHashFile mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderHashTest: PASSED Buffer/String/File consistency" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderHashTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256);
+
+        const int hashSize = cryptoApi.GetHashSize();
+        if (hashSize != 32)
+        {
+            std::cout << "RunBotanProviderHashTest: FAILED GetHashSize expected 32 got " << hashSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        struct KnownVector
+        {
+            const char* text;
+            const char* expectedHex;
+        };
+
+        const KnownVector knownVectors[] =
+        {
+            { "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+            { "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+        };
+
+        for (std::size_t index = 0; index < sizeof(knownVectors) / sizeof(knownVectors[0]); ++index)
+        {
+            const char* text = knownVectors[index].text;
+            const char* expectedHex = knownVectors[index].expectedHex;
+            const int textSize = static_cast<int>(std::strlen(text));
+
+            int requiredSize = 0;
+            int status = cryptoApi.ComputeHashString(text, textSize, 0, nullptr, &requiredSize, nullptr, nullptr);
+            if (status != BUFFER_TOO_SMALL || requiredSize != hashSize)
+            {
+                std::cout << "RunBotanProviderHashTest: FAILED size query status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::vector<unsigned char> digest(requiredSize);
+            int digestSize = 0;
+            status = cryptoApi.ComputeHashString(text, textSize, requiredSize, &digest[0], &digestSize, nullptr, nullptr);
+            if (status != NO_ERROR || digestSize != hashSize)
+            {
+                std::cout << "RunBotanProviderHashTest: FAILED ComputeHashString status=" << status << std::endl;
+                return status;
+            }
+
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, 0, nullptr, &requiredHexSize);
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, requiredHexSize, &hexText[0], &hexSize);
+            const std::string hexString(hexText.begin(), hexText.end());
+
+            if (hexString != expectedHex)
+            {
+                std::cout << "RunBotanProviderHashTest: FAILED SHA-256(\"" << text << "\") = " << hexString
+                          << " expected " << expectedHex << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::cout << "RunBotanProviderHashTest: PASSED SHA-256(\"" << text << "\") = " << hexString << std::endl;
+        }
+
+        const char* consistencyText = "The quick brown fox jumps over the lazy dog";
+        const int consistencyTextSize = static_cast<int>(std::strlen(consistencyText));
+        const unsigned char* consistencyBytes = reinterpret_cast<const unsigned char*>(consistencyText);
+
+        std::vector<unsigned char> stringDigest(hashSize);
+        int stringDigestSize = 0;
+        int status = cryptoApi.ComputeHashString(consistencyText, consistencyTextSize, hashSize, &stringDigest[0], &stringDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderHashTest: FAILED consistency ComputeHashString status=" << status << std::endl;
+            return status;
+        }
+
+        std::vector<unsigned char> bufferDigest(hashSize);
+        int bufferDigestSize = 0;
+        status = cryptoApi.ComputeHashBuffer(consistencyBytes, consistencyTextSize, hashSize, &bufferDigest[0], &bufferDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR || bufferDigestSize != stringDigestSize ||
+            std::memcmp(&bufferDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunBotanProviderHashTest: FAILED ComputeHashBuffer mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* tempFilePath = "cryptoapi_botan_hash_test.bin";
+        std::vector<unsigned char> fileContent(consistencyBytes, consistencyBytes + consistencyTextSize);
+        if (!WriteTesterFile(tempFilePath, fileContent))
+        {
+            std::cout << "RunBotanProviderHashTest: FAILED to write temp file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> fileDigest(hashSize);
+        int fileDigestSize = 0;
+        status = cryptoApi.ComputeHashFile(tempFilePath, hashSize, &fileDigest[0], &fileDigestSize, nullptr, nullptr);
+        std::remove(tempFilePath);
+
+        if (status != NO_ERROR || fileDigestSize != stringDigestSize ||
+            std::memcmp(&fileDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunBotanProviderHashTest: FAILED ComputeHashFile mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderHashTest: PASSED Buffer/String/File consistency" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderHashTest(void)
+{
+    try
+    {
+        CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256);
+
+        const int hashSize = cryptoApi.GetHashSize();
+        if (hashSize != 32)
+        {
+            std::cout << "RunOpenSslProviderHashTest: FAILED GetHashSize expected 32 got " << hashSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        struct KnownVector
+        {
+            const char* text;
+            const char* expectedHex;
+        };
+
+        const KnownVector knownVectors[] =
+        {
+            { "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+            { "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+        };
+
+        for (std::size_t index = 0; index < sizeof(knownVectors) / sizeof(knownVectors[0]); ++index)
+        {
+            const char* text = knownVectors[index].text;
+            const char* expectedHex = knownVectors[index].expectedHex;
+            const int textSize = static_cast<int>(std::strlen(text));
+
+            int requiredSize = 0;
+            int status = cryptoApi.ComputeHashString(text, textSize, 0, nullptr, &requiredSize, nullptr, nullptr);
+            if (status != BUFFER_TOO_SMALL || requiredSize != hashSize)
+            {
+                std::cout << "RunOpenSslProviderHashTest: FAILED size query status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::vector<unsigned char> digest(requiredSize);
+            int digestSize = 0;
+            status = cryptoApi.ComputeHashString(text, textSize, requiredSize, &digest[0], &digestSize, nullptr, nullptr);
+            if (status != NO_ERROR || digestSize != hashSize)
+            {
+                std::cout << "RunOpenSslProviderHashTest: FAILED ComputeHashString status=" << status << std::endl;
+                return status;
+            }
+
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, 0, nullptr, &requiredHexSize);
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, requiredHexSize, &hexText[0], &hexSize);
+            const std::string hexString(hexText.begin(), hexText.end());
+
+            if (hexString != expectedHex)
+            {
+                std::cout << "RunOpenSslProviderHashTest: FAILED SHA-256(\"" << text << "\") = " << hexString
+                          << " expected " << expectedHex << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::cout << "RunOpenSslProviderHashTest: PASSED SHA-256(\"" << text << "\") = " << hexString << std::endl;
+        }
+
+        const char* consistencyText = "The quick brown fox jumps over the lazy dog";
+        const int consistencyTextSize = static_cast<int>(std::strlen(consistencyText));
+        const unsigned char* consistencyBytes = reinterpret_cast<const unsigned char*>(consistencyText);
+
+        std::vector<unsigned char> stringDigest(hashSize);
+        int stringDigestSize = 0;
+        int status = cryptoApi.ComputeHashString(consistencyText, consistencyTextSize, hashSize, &stringDigest[0], &stringDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderHashTest: FAILED consistency ComputeHashString status=" << status << std::endl;
+            return status;
+        }
+
+        std::vector<unsigned char> bufferDigest(hashSize);
+        int bufferDigestSize = 0;
+        status = cryptoApi.ComputeHashBuffer(consistencyBytes, consistencyTextSize, hashSize, &bufferDigest[0], &bufferDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR || bufferDigestSize != stringDigestSize ||
+            std::memcmp(&bufferDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunOpenSslProviderHashTest: FAILED ComputeHashBuffer mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* tempFilePath = "cryptoapi_openssl_hash_test.bin";
+        std::vector<unsigned char> fileContent(consistencyBytes, consistencyBytes + consistencyTextSize);
+        if (!WriteTesterFile(tempFilePath, fileContent))
+        {
+            std::cout << "RunOpenSslProviderHashTest: FAILED to write temp file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> fileDigest(hashSize);
+        int fileDigestSize = 0;
+        status = cryptoApi.ComputeHashFile(tempFilePath, hashSize, &fileDigest[0], &fileDigestSize, nullptr, nullptr);
+        std::remove(tempFilePath);
+
+        if (status != NO_ERROR || fileDigestSize != stringDigestSize ||
+            std::memcmp(&fileDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunOpenSslProviderHashTest: FAILED ComputeHashFile mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderHashTest: PASSED Buffer/String/File consistency" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashAlgorithmsTest(void)
+{
+    try
+    {
+        struct ProviderCase
+        {
+            ProviderKind kind;
+            const char* name;
+        };
+
+        const ProviderCase providerCases[] =
+        {
+            { PROVIDER_MICROSOFT, "Microsoft" },
+            { PROVIDER_CRYPTOPP,  "CryptoPP" },
+            { PROVIDER_BOTAN,     "Botan" },
+            { PROVIDER_OPENSSL,   "OpenSSL" }
+        };
+
+        struct HashCase
+        {
+            HashAlgorithm algorithm;
+            const char* name;
+        };
+
+        const HashCase hashCases[] =
+        {
+            { HASH_MD5,        "MD5" },
+            { HASH_SHA1,       "SHA1" },
+            { HASH_SHA224,     "SHA224" },
+            { HASH_SHA256,     "SHA256" },
+            { HASH_SHA384,     "SHA384" },
+            { HASH_SHA512,     "SHA512" },
+            { HASH_SHA512_256, "SHA512_256" },
+            { HASH_SHA3_224,   "SHA3_224" },
+            { HASH_SHA3_256,   "SHA3_256" },
+            { HASH_SHA3_384,   "SHA3_384" },
+            { HASH_SHA3_512,   "SHA3_512" },
+            { HASH_BLAKE2B,    "BLAKE2B" },
+            { HASH_BLAKE2S,    "BLAKE2S" },
+            { HASH_RIPEMD160,  "RIPEMD160" }
+        };
+
+        const unsigned char testData[] = { 'C', 'r', 'y', 'p', 't', 'o', 'A', 'P', 'I', ' ', 'h', 'a', 's', 'h' };
+        const int testDataSize = static_cast<int>(sizeof(testData));
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t providerIndex = 0; providerIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++providerIndex)
+        {
+            const ProviderKind kind = providerCases[providerIndex].kind;
+            const char* providerName = providerCases[providerIndex].name;
+
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+            if (!factory)
+            {
+                std::cout << "RunHashAlgorithmsTest: FAILED [" << providerName << "] CreateProviderFactory" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            for (std::size_t hashIndex = 0; hashIndex < sizeof(hashCases) / sizeof(hashCases[0]); ++hashIndex)
+            {
+                const HashAlgorithm algorithm = hashCases[hashIndex].algorithm;
+                const char* algorithmName = hashCases[hashIndex].name;
+                const bool supported = factory->SupportsHashAlgorithm(algorithm);
+
+                CCryptoApi cryptoApi(kind, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, algorithm);
+                const int hashSize = cryptoApi.GetHashSize();
+
+                if (!supported)
+                {
+                    if (hashSize != 0)
+                    {
+                        std::cout << "RunHashAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                                  << "] expected unsupported but GetHashSize=" << hashSize << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::cout << "RunHashAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                                  << "] correctly unsupported" << std::endl;
+                    }
+                    continue;
+                }
+
+                ++supportedCount;
+
+                if (hashSize <= 0)
+                {
+                    std::cout << "RunHashAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] GetHashSize=" << hashSize << " for a supported algorithm" << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> digest(static_cast<std::size_t>(hashSize));
+                int digestSize = 0;
+                const int status = cryptoApi.ComputeHashBuffer(testData, testDataSize, hashSize, &digest[0], &digestSize, nullptr, nullptr);
+                if (status != NO_ERROR || digestSize != hashSize)
+                {
+                    std::cout << "RunHashAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] ComputeHashBuffer status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::cout << "RunHashAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                          << "] digest (" << digestSize << " bytes)" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunHashAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and computed)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunHashAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try
@@ -5488,6 +6748,260 @@ int CCryptoApiTester::RunProviderFactoryBytesTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunProviderFactoryHashTest(void)
+{
+    try
+    {
+        int failures = 0;
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_MICROSOFT);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryHashTest: FAILED CreateProviderFactory(PROVIDER_MICROSOFT)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_SHA256, "Microsoft", "SHA256", true)) ++failures;
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_RIPEMD160, "Microsoft", "RIPEMD160", false)) ++failures;
+            }
+        }
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_CRYPTOPP);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryHashTest: FAILED CreateProviderFactory(PROVIDER_CRYPTOPP)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_SHA256, "CryptoPP", "SHA256", true)) ++failures;
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_BLAKE2B, "CryptoPP", "BLAKE2B", true)) ++failures;
+            }
+        }
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_BOTAN);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryHashTest: FAILED CreateProviderFactory(PROVIDER_BOTAN)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_SHA256, "Botan", "SHA256", true)) ++failures;
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_SHA512_256, "Botan", "SHA512_256", true)) ++failures;
+            }
+        }
+
+        {
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_OPENSSL);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryHashTest: FAILED CreateProviderFactory(PROVIDER_OPENSSL)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_SHA256, "OpenSSL", "SHA256", true)) ++failures;
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_SHA3_512, "OpenSSL", "SHA3_512", true)) ++failures;
+            }
+        }
+
+        if (failures != 0)
+        {
+            std::cout << "RunProviderFactoryHashTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunProviderFactoryHashTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryHashFileTest(void)
+{
+    try
+    {
+        struct ProviderCase
+        {
+            ProviderKind kind;
+            const char* name;
+        };
+
+        const ProviderCase providerCases[] =
+        {
+            { PROVIDER_MICROSOFT, "Microsoft" },
+            { PROVIDER_CRYPTOPP,  "CryptoPP" },
+            { PROVIDER_BOTAN,     "Botan" },
+            { PROVIDER_OPENSSL,   "OpenSSL" }
+        };
+
+        const char* inputFilePath = "cryptoapi_factory_hashfiletest_in.bin";
+
+        std::vector<unsigned char> inputData(2 * 1048576 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int failures = 0;
+
+        for (std::size_t caseIndex = 0; caseIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++caseIndex)
+        {
+            const ProviderKind kind = providerCases[caseIndex].kind;
+            const char* name = providerCases[caseIndex].name;
+
+            if (!WriteTesterFile(inputFilePath, inputData))
+            {
+                std::cout << "RunProviderFactoryHashFileTest: FAILED [" << name << "] write input file" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+            std::unique_ptr<IHashService> firstHashService = factory ? factory->CreateHashService(HASH_SHA256) : nullptr;
+            if (!firstHashService)
+            {
+                std::cout << "RunProviderFactoryHashFileTest: FAILED [" << name << "] CreateProviderFactory/CreateHashService" << std::endl;
+                std::remove(inputFilePath);
+                ++failures;
+                continue;
+            }
+
+            std::vector<unsigned char> readBackData;
+            if (!ReadTesterFile(inputFilePath, readBackData))
+            {
+                std::cout << "RunProviderFactoryHashFileTest: FAILED [" << name << "] read input file" << std::endl;
+                std::remove(inputFilePath);
+                ++failures;
+                continue;
+            }
+
+            const unsigned int hashSize = firstHashService->GetHashSize();
+            std::vector<unsigned char> firstDigest(hashSize);
+            if (!firstHashService->ComputeHash(&readBackData[0], static_cast<unsigned int>(readBackData.size()), firstDigest.data(), hashSize))
+            {
+                std::cout << "RunProviderFactoryHashFileTest: FAILED [" << name << "] ComputeHash (first instance)" << std::endl;
+                std::remove(inputFilePath);
+                ++failures;
+                continue;
+            }
+
+            // A second, independent IHashService instance from the same factory -- like a
+            // different process re-hashing the same file later -- must agree exactly.
+            std::unique_ptr<IHashService> secondHashService = factory->CreateHashService(HASH_SHA256);
+            std::vector<unsigned char> secondDigest(hashSize);
+            if (!secondHashService || !secondHashService->ComputeHash(&readBackData[0], static_cast<unsigned int>(readBackData.size()), secondDigest.data(), hashSize) ||
+                secondDigest != firstDigest)
+            {
+                std::cout << "RunProviderFactoryHashFileTest: FAILED [" << name << "] second-instance mismatch" << std::endl;
+                std::remove(inputFilePath);
+                ++failures;
+                continue;
+            }
+
+            // Cross-check against CCryptoApi::ComputeHashFile (Hash-only 2-argument constructor)
+            // reading the same file from disk end to end.
+            CCryptoApi cryptoApi(kind, HASH_SHA256);
+            std::vector<unsigned char> apiDigest(hashSize);
+            int apiDigestSize = 0;
+            const int status = cryptoApi.ComputeHashFile(inputFilePath, static_cast<int>(hashSize), apiDigest.data(), &apiDigestSize, nullptr, nullptr);
+
+            std::remove(inputFilePath);
+
+            if (status != NO_ERROR || apiDigestSize != static_cast<int>(hashSize) ||
+                std::memcmp(apiDigest.data(), firstDigest.data(), hashSize) != 0)
+            {
+                std::cout << "RunProviderFactoryHashFileTest: FAILED [" << name << "] CCryptoApi::ComputeHashFile mismatch status=" << status << std::endl;
+                ++failures;
+                continue;
+            }
+
+            std::cout << "RunProviderFactoryHashFileTest: PASSED [" << name << "/SHA256] (" << inputData.size() << " bytes)" << std::endl;
+        }
+
+        if (failures != 0)
+        {
+            std::cout << "RunProviderFactoryHashFileTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunProviderFactoryHashFileTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryHashStringTest(void)
+{
+    try
+    {
+        std::vector<char> inputText(2 * 1048576 + 321);
+        for (std::size_t index = 0; index < inputText.size(); ++index)
+        {
+            inputText[index] = static_cast<char>('A' + (index % 26));
+        }
+
+        return HashViaFactoryInMemory("RunProviderFactoryHashStringTest",
+                                      reinterpret_cast<const unsigned char*>(&inputText[0]), inputText.size());
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryHashBufferTest(void)
+{
+    try
+    {
+        std::vector<unsigned char> inputBuffer(2 * 1048576 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        return HashViaFactoryInMemory("RunProviderFactoryHashBufferTest", &inputBuffer[0], inputBuffer.size());
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunProviderFactoryHashBytesTest(void)
+{
+    try
+    {
+        std::vector<unsigned char> inputBuffer(2 * 1048576 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        return HashViaFactoryInMemory("RunProviderFactoryHashBytesTest", &inputBuffer[0], inputBuffer.size());
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunMicrosoftProviderAllAlgorithmsTest(void)
 {
     try
@@ -5970,6 +7484,30 @@ int CCryptoApiTester::RunEncryptDecryptBufferTestNonBlocking(void)
 int CCryptoApiTester::RunEncryptDecryptBytesTestNonBlocking(void)
 {
     return runNonBlocking("RunEncryptDecryptBytesTest", &CCryptoApiTester::RunEncryptDecryptBytesTest);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashFileTestNonBlocking(void)
+{
+    return runNonBlocking("RunHashFileTest", &CCryptoApiTester::RunHashFileTest);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashStringTestNonBlocking(void)
+{
+    return runNonBlocking("RunHashStringTest", &CCryptoApiTester::RunHashStringTest);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashBufferTestNonBlocking(void)
+{
+    return runNonBlocking("RunHashBufferTest", &CCryptoApiTester::RunHashBufferTest);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunHashBytesTestNonBlocking(void)
+{
+    return runNonBlocking("RunHashBytesTest", &CCryptoApiTester::RunHashBytesTest);
 }
 // -----------------------------------------------------------------------------
 

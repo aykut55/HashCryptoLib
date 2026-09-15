@@ -3,6 +3,7 @@
 
 #include "Providers/AeadCipher.h"
 #include "Providers/AsymmetricCipher.h"
+#include "Providers/HashService.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
@@ -13,7 +14,7 @@
 namespace CryptoApiNS
 {
 
-class CCryptoPPProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService
+class CCryptoPPProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService
 {
 public:
     virtual ~CCryptoPPProvider();
@@ -89,6 +90,17 @@ public:
     virtual bool ComputeMac( const unsigned char* key, const unsigned int keySize,
                             const unsigned char* data, const unsigned int dataSize,
                             unsigned char* mac, const unsigned int macSize);
+
+    // IHashService
+    virtual bool SelectAlgorithm(const HashAlgorithm algorithm);
+    virtual unsigned int GetHashSize(void) const;
+
+    virtual bool ComputeHash( const unsigned char* data, const unsigned int dataSize,
+                             unsigned char* hash, const unsigned int hashSize);
+
+    virtual bool Init(void);
+    virtual bool Update(const unsigned char* data, const unsigned int dataSize);
+    virtual bool Final(unsigned char* hash, const unsigned int hashSize);
 
 protected:
 

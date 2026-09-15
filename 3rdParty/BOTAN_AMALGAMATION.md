@@ -25,7 +25,7 @@ Visual Studio Developer Command Prompt / PowerShell'de (yani `cl.exe` PATH'te),
 ```bat
 :: x64
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160 ^
   --cpu=x86_64
 move /Y botan_all.h x64\botan_all.h
 move /Y botan_all.cpp x64\botan_all.cpp
@@ -33,7 +33,7 @@ del botan_all.obj
 
 :: Win32
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160 ^
   --cpu=x86_32
 move /Y botan_all.h Win32\botan_all.h
 move /Y botan_all.cpp Win32\botan_all.cpp
@@ -49,6 +49,16 @@ ile en uygununu seçer, o yüzden üçünü de sorgusuz eklemek güvenli.
 
 `configure.py` amalgamation çıktısını her zaman çalıştırıldığı dizinin köküne yazar
 (`--with-build-dir` bu davranışı değiştirmez); bu yüzden yukarıdaki `move` adımları gerekli.
+
+## Hash modülleri (2026-09-15)
+
+`CBotanProvider`'ın `IHashService` desteği için `md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160`
+modülleri eklendi (mevcut `sha2_32` zaten SHA-224/256'yı kapsıyordu). Not: `md5` modülü Botan
+tarafından "Deprecated" olarak işaretleniyor (configure.py çıktısında sarı uyarı basıyor) ama
+derlemeyi engellemiyor -- sadece MD5'in kriptografik olarak kırık olduğuna dair standart bir
+uyarı, kod tarafında ekstra bir işlem gerektirmiyor. `x86_32` (Win32) hedefinde `sha2_64_avx2`/
+`sha2_64_x86` gibi CPU-özel hızlandırma modülleri otomatik atlanıyor (32-bit'te uygulanamaz),
+tıpkı `sha2_32_avx2`'nin Win32'de atlanması gibi -- bu beklenen davranış, hata değil.
 
 ## Modül listesini genişletirken
 

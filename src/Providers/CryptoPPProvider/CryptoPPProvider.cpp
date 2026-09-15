@@ -1,6 +1,7 @@
 #include "CryptoPPProvider.h"
 
 #include "cryptopp890/aes.h"
+#include "cryptopp890/blake2.h"
 #include "cryptopp890/camellia.h"
 #include "cryptopp890/ccm.h"
 #include "cryptopp890/chachapoly.h"
@@ -8,14 +9,17 @@
 #include "cryptopp890/filters.h"
 #include "cryptopp890/gcm.h"
 #include "cryptopp890/hmac.h"
+#include "cryptopp890/md5.h"
 #include "cryptopp890/modes.h"
 #include "cryptopp890/oaep.h"
 #include "cryptopp890/osrng.h"
 #include "cryptopp890/pwdbased.h"
+#include "cryptopp890/ripemd.h"
 #include "cryptopp890/rsa.h"
 #include "cryptopp890/secblock.h"
 #include "cryptopp890/serpent.h"
 #include "cryptopp890/sha.h"
+#include "cryptopp890/sha3.h"
 #include "cryptopp890/twofish.h"
 
 #include <memory>
@@ -385,6 +389,12 @@ struct CCryptoPPProvider::Impl
     bool rsaKeyGenerated = false;
     CryptoPP::RSA::PrivateKey rsaPrivateKey;
     CryptoPP::RSA::PublicKey rsaPublicKey;
+
+    // IHashService state. CryptoPP::HashTransformation is the common polymorphic base for every
+    // hash class used below (MD5/SHA1/SHA2xx/SHA3xx/RIPEMD160 derive from it directly; BLAKE2b/
+    // BLAKE2s derive from MessageAuthenticationCode, which is itself a HashTransformation, so the
+    // same pointer type covers all 14 algorithms uniformly).
+    std::unique_ptr<CryptoPP::HashTransformation> hashFunction;
 };
 
 CCryptoPPProvider::~CCryptoPPProvider()
@@ -864,6 +874,138 @@ bool CCryptoPPProvider::ComputeMac(const unsigned char* key, const unsigned int 
         CryptoPP::HMAC<CryptoPP::SHA256> hmac(reinterpret_cast<const CryptoPP::byte*>(key), keySize);
         hmac.CalculateDigest(reinterpret_cast<CryptoPP::byte*>(mac),
                              reinterpret_cast<const CryptoPP::byte*>(data), dataSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::SelectAlgorithm(const HashAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        std::unique_ptr<CryptoPP::HashTransformation> hashFunction;
+        switch (algorithm)
+        {
+            case HASH_MD5:        hashFunction.reset(new CryptoPP::MD5());        break;
+            case HASH_SHA1:       hashFunction.reset(new CryptoPP::SHA1());       break;
+            case HASH_SHA224:     hashFunction.reset(new CryptoPP::SHA224());     break;
+            case HASH_SHA256:     hashFunction.reset(new CryptoPP::SHA256());     break;
+            case HASH_SHA384:     hashFunction.reset(new CryptoPP::SHA384());     break;
+            case HASH_SHA512:     hashFunction.reset(new CryptoPP::SHA512());     break;
+            case HASH_SHA3_224:   hashFunction.reset(new CryptoPP::SHA3_224());   break;
+            case HASH_SHA3_256:   hashFunction.reset(new CryptoPP::SHA3_256());   break;
+            case HASH_SHA3_384:   hashFunction.reset(new CryptoPP::SHA3_384());   break;
+            case HASH_SHA3_512:   hashFunction.reset(new CryptoPP::SHA3_512());   break;
+            case HASH_BLAKE2B:    hashFunction.reset(new CryptoPP::BLAKE2b());    break; // 64-byte default
+            case HASH_BLAKE2S:    hashFunction.reset(new CryptoPP::BLAKE2s());    break; // 32-byte default
+            case HASH_RIPEMD160:  hashFunction.reset(new CryptoPP::RIPEMD160());  break;
+            // HASH_SHA512_256: no CryptoPP class for the truncated SHA-512/256 variant -- correctly
+            // unsupported here (falls through to default).
+            default:
+                return false;
+        }
+
+        impl_->hashFunction = std::move(hashFunction);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CCryptoPPProvider::GetHashSize(void) const
+{
+    try
+    {
+        return (impl_ && impl_->hashFunction) ? impl_->hashFunction->DigestSize() : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::ComputeHash(const unsigned char* data, const unsigned int dataSize, unsigned char* hash, const unsigned int hashSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->hashFunction || hash == nullptr ||
+            hashSize < impl_->hashFunction->DigestSize() || (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        impl_->hashFunction->CalculateDigest(reinterpret_cast<CryptoPP::byte*>(hash),
+                                             reinterpret_cast<const CryptoPP::byte*>(data), dataSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::Init(void)
+{
+    try
+    {
+        if (!impl_ || !impl_->hashFunction)
+        {
+            return false;
+        }
+
+        impl_->hashFunction->Restart();
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::Update(const unsigned char* data, const unsigned int dataSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->hashFunction || (dataSize > 0 && data == nullptr))
+        {
+            return false;
+        }
+
+        impl_->hashFunction->Update(reinterpret_cast<const CryptoPP::byte*>(data), dataSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::Final(unsigned char* hash, const unsigned int hashSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->hashFunction || hash == nullptr || hashSize < impl_->hashFunction->DigestSize())
+        {
+            return false;
+        }
+
+        impl_->hashFunction->Final(reinterpret_cast<CryptoPP::byte*>(hash));
         return true;
     }
     catch (...)

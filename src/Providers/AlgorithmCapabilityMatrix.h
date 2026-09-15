@@ -5,11 +5,11 @@
 // 
 // Reference only -- no declarations, nothing here is included by any .cpp.
 //
-// Central encryption/decryption capability matrix across all four provider libraries: Windows
+// Central encryption/decryption/hash capability matrix across all four provider libraries: Windows
 // CNG/BCrypt ("MS"), Crypto++ 8.9.0 ("CPP"), Botan 3.13.0 ("Botan"), OpenSSL 4.0.2 ("OSSL").
-// Scope is deliberately encryption/decryption only (AEAD, legacy block modes, raw ciphers, RSA
-// encryption) -- hashes, MACs, digital signatures and key-agreement schemes are a separate,
-// later phase and are NOT listed here.
+// Scope is encryption/decryption (AEAD, legacy block modes, raw ciphers, RSA encryption) plus, as
+// of 2026-09-15, hash/message-digest algorithms -- MACs, digital signatures and key-agreement
+// schemes remain a separate, later phase and are NOT listed here.
 //
 // Legend:
 //   W  = Wired AND verified by an actual test in this repository (see CryptoApiTester.cpp /
@@ -112,6 +112,32 @@
 //   Algorithm                    MS    CPP   Botan   OSSL
 //   ------------------------     ----  ----  -----   ----
 //   RSA (encrypt/decrypt)        W     Y     Y       Y
+//
+// ================================================================================================
+// Hash (message digest) -- see HashAlgorithm in ProviderTypes.h. Verified 2026-09-15 by
+// RunHashAlgorithmsTest (all 4 providers x all 14 values, cross-checked against
+// SupportsHashAlgorithm) plus known FIPS 180-4 test vectors (SHA-256("")/SHA-256("abc")) in the 4
+// Run<Vendor>ProviderHashTest methods. Windows CNG's gaps below are hard API limits (no
+// BCRYPT_SHA224/SHA512_256/BLAKE2B/BLAKE2S/RIPEMD160_ALGORITHM identifier exists at all), not a
+// wiring gap this SDK could close later.
+// ================================================================================================
+//
+//   Algorithm                    MS    CPP   Botan   OSSL
+//   ------------------------     ----  ----  -----   ----
+//   MD5                          W     W     W       W
+//   SHA-1                        W     W     W       W
+//   SHA-224                      N     W     W       W
+//   SHA-256                      W     W     W       W
+//   SHA-384                      W     W     W       W
+//   SHA-512                      W     W     W       W
+//   SHA-512/256                  N     N     W       W
+//   SHA3-224                     N     W     W       W
+//   SHA3-256                     W     W     W       W
+//   SHA3-384                     W     W     W       W
+//   SHA3-512                     W     W     W       W
+//   BLAKE2b-512                  N     W     W       W
+//   BLAKE2s-256                  N     W     W       W
+//   RIPEMD-160                   N     W     W       W
 //
 // ================================================================================================
 // CRYPTO++ 8.9.0 -- full algorithm surface (not limited to encryption/decryption). Some entries
@@ -643,6 +669,122 @@
 //       are all non-AES cipher families, outside AesOnlineToolsResearch.md's scope, so not relevant
 //       to a future RunAESTests(); listed here only as a generic-cipher-coverage reference in case
 //       that scope ever expands. See also the aes_richness_design_track memory file.
+//
+// ================================================================================================
+
+// ================================================================================================
+// WIKIPEDIA "List of hash functions" -- external reference only, not a provider in this SDK.
+// Source: https://en.wikipedia.org/wiki/List_of_hash_functions (fetched 2026-09-15). Wikipedia
+// groups these into 6 categories; reproduced here in the same grouping, category by category, as
+// published (not reorganized). Most of this list (CRCs, checksums, universal-hash families,
+// non-cryptographic hashes) is a different problem domain from what this SDK does -- fast
+// data-structure/integrity hashing, not cryptographic message digests -- so cross-checking them
+// against MS/CPP/Botan/OSSL the way earlier sections of this file do would mostly just be a wall
+// of "N"; only the two cryptographic-hash categories at the end get a real cross-check.
+// ================================================================================================
+//
+//   Cyclic redundancy checks:
+//       cksum (Unix, 32-bit CRC+length), CRC-8, CRC-16, CRC-32, CRC-64
+//
+//   Checksums:
+//       BSD checksum, SYSV checksum, sum8, Internet Checksum (16-bit ones'-complement sum),
+//       sum24, sum32, fletcher-4/8/16/32, Adler-32, xor8, Luhn algorithm, Verhoeff algorithm,
+//       Damm algorithm
+//
+//   Universal hash function families:
+//       Rabin fingerprint, tabulation hashing, universal one-way hash function, Zobrist hashing
+//
+//   Non-cryptographic hash functions:
+//       Pearson hashing, Paul Hsieh's SuperFastHash, Buzhash, FNV (Fowler-Noll-Vo), Jenkins hash
+//       function, Bernstein's hash djb2, PJW hash / ELF hash, MurmurHash, Fast-Hash, SpookyHash,
+//       CityHash, FarmHash, MetroHash, numeric hash (nhash), xxHash, t1ha (Fast Positive Hash),
+//       GxHash (AES-based), pHash (perceptual), dhash (perceptual), SDBM, OSDB hash, komihash
+//
+//   Keyed cryptographic hash functions (MACs / keyed constructions):
+//       BLAKE2 (prefix-MAC), BLAKE3 (keyed mode), HMAC, KMAC (Keccak-based), MD6, OMAC/CMAC,
+//       PMAC, Poly1305-AES, SipHash, HighwayHash, UMAC, VMAC
+//
+//   Unkeyed cryptographic hash functions:
+//       BLAKE-256, BLAKE-512, BLAKE2s, BLAKE2b, BLAKE2X, BLAKE3, ECOH, FSB, GOST (R 34.11-94),
+//       Grostl, HAS-160, HAVAL, JH, LSH, MD2, MD4, MD5, MD6, RadioGatun, RIPEMD, RIPEMD-128,
+//       RIPEMD-160, RIPEMD-256, RIPEMD-320, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-3,
+//       Skein, Snefru, Spectral Hash, Streebog, SWIFFT, Tiger, Whirlpool
+//
+// ------------------------------------------------------------------------------------------------
+// Cross-check against MS / CPP / Botan / OSSL -- keyed + unkeyed cryptographic categories only.
+// Algorithms already W/wired in the Hash table earlier in this file (MD5, SHA-1, SHA-224/256/
+// 384/512, SHA-3, BLAKE2b/BLAKE2s, RIPEMD-160) are not repeated here. HMAC/CMAC/KMAC/SipHash/VMAC
+// are MACs, already covered by IMacService's design space, not repeated either (IMacService itself
+// is fixed to HMAC-SHA256 only, see MacService.h). Y*/N* = not independently re-verified against
+// this exact vendored source this round (based on general library knowledge / earlier verified
+// facts elsewhere in this file); plain Y/N = consistent with a source-confirmed line above.
+// ------------------------------------------------------------------------------------------------
+//
+//   Algorithm                    MS    CPP   Botan   OSSL   Notes
+//   ------------------------     ----  ----  -----   ----   ------------------------------------
+//   MD2                          Y*    Y     N       Y*     CPP: "Weak::" namespace; Botan removed
+//                                                            MD2 (not in src/lib/hash/); OSSL:
+//                                                            legacy provider
+//   MD4                          Y*    Y     N*       N*     CPP: "Weak::" namespace
+//   MD6                          N     N     N        N      DARPA SHA-3 candidate, eliminated
+//                                                            round 2; not shipped by any of the 3
+//   RIPEMD (128/256/320)         N     Y     N        N      Only RIPEMD-160 confirmed W earlier;
+//                                                            Botan's src/lib/hash/ has no 128/256/
+//                                                            320 variant, only rmd160
+//   Tiger                        N     Y     N        N      CORRECTION already on file above:
+//                                                            Botan 3.x removed Tiger (had it in
+//                                                            2.x); OSSL has no tiger digest file
+//   Whirlpool                    N     Y     Y        Y*     Source-confirmed Y for Botan above;
+//                                                            OSSL: legacy provider
+//   GOST (R 34.11-94)            N     N*    Y*       N*     Botan ships gost_3411 (the 1994
+//                                                            variant, distinct from Streebog/
+//                                                            34.11-2012 which Botan also has)
+//   Grostl                       N     N     N        N      SHA-3 finalist, not standardized,
+//                                                            not shipped by any of the 3
+//   HAS-160                      N     N     N        N      Korean standard (KCDSA companion),
+//                                                            not shipped by any of the 3
+//   HAVAL                        N     N     N        N      Already N* in the DEC cross-check
+//                                                            above; not in any of the 3
+//   JH                           N     N     N        N      SHA-3 finalist, not standardized,
+//                                                            not shipped by any of the 3
+//   LSH                          N     Y*    N        N      CryptoPP's full-surface catalogue
+//                                                            above lists "LSH (256/512)"; Korean
+//                                                            standard, not in Botan/OSSL
+//   Skein                        N     N     Y        N      Botan ships skein (Skein-512 only);
+//                                                            not in CPP's hash-function catalogue
+//                                                            above (only Threefish, a related
+//                                                            block cipher, is)
+//   Snefru                       N     N     N        N      Already N in the DEC cross-check
+//                                                            above; not in any of the 3
+//   Spectral Hash                N     N     N        N      Withdrawn/broken NIST SHA-3 submission
+//   Streebog (256/512)           N     N     Y        N      Source-confirmed Y for Botan above
+//                                                            (34.11-2012 variant)
+//   SWIFFT                       N     N     N        N      Lattice-based, provably-secure-style
+//                                                            proposal, not a shipped primitive in
+//                                                            any of the 3
+//   ECOH                         N     N     N        N      Elliptic-curve-based NIST SHA-3
+//                                                            submission, eliminated round 1
+//   FSB (Fast Syndrome-Based)    N     N     N        N      Code-based NIST SHA-3 submission,
+//                                                            eliminated round 1
+//   BLAKE-256 / BLAKE-512        N     N     N        N      Original BLAKE (SHA-3 finalist, lost
+//                                                            to Keccak); superseded by BLAKE2 in
+//                                                            all 3 libraries, BLAKE1 itself unshipped
+//   BLAKE2X                      N*    N*    N*       N*     XOF/extendable-output mode of BLAKE2;
+//                                                            not separately exposed as its own
+//                                                            algorithm identifier in any of the 3
+//   BLAKE3                       N     N     N        N      Newer than all 3 libraries' vendored
+//                                                            versions in this repo; not shipped
+//   RadioGatun                   N     N     N        N      Keccak predecessor from the same
+//                                                            team, not standardized/shipped
+//
+//   Verdict: this SDK's 14-value HashAlgorithm enum already covers every cryptographic hash from
+//   Wikipedia's list that at least one of the 4 providers ships with real, current support (MD5,
+//   SHA-1/224/256/384/512, SHA-3, BLAKE2b/2s, RIPEMD-160, SHA-512/256 -- the last one not on
+//   Wikipedia's list by that exact name but already wired). Genuinely missing candidates worth
+//   knowing about if this scope ever expands: Whirlpool (CPP+Botan+OSSL all Y), Skein-512 (Botan
+//   only), Streebog (Botan only), GOST R 34.11-94 (Botan only), MD2/MD4 (legacy/broken, CPP+OSSL
+//   only, arguably not worth adding), RIPEMD-128/256/320 (CPP only). Nothing else on the list has
+//   even one of the 4 providers behind it.
 //
 // ================================================================================================
 

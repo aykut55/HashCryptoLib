@@ -3,6 +3,7 @@
 
 #include "Providers/AeadCipher.h"
 #include "Providers/AsymmetricCipher.h"
+#include "Providers/HashService.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
@@ -47,6 +48,12 @@ public:
     // MAC (HMAC-SHA256) is algorithm-independent (no SelectAlgorithm needed), used to add
     // Encrypt-then-MAC integrity on top of ILegacyCipher output.
     virtual std::unique_ptr<IMacService> CreateMacService() = 0;
+
+    // Not every provider implements every hash algorithm (see HashAlgorithm in ProviderTypes.h);
+    // providers must have SupportsHashAlgorithm() return false and CreateHashService() return
+    // nullptr for unsupported values, rather than omitting them.
+    virtual bool SupportsHashAlgorithm(const HashAlgorithm algorithm) const = 0;
+    virtual std::unique_ptr<IHashService> CreateHashService(const HashAlgorithm algorithm) = 0;
 
 protected:
 

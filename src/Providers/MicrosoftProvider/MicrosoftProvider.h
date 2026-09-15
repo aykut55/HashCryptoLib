@@ -3,6 +3,7 @@
 
 #include "Providers/AeadCipher.h"
 #include "Providers/AsymmetricCipher.h"
+#include "Providers/HashService.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
@@ -13,7 +14,7 @@
 namespace CryptoApiNS
 {
 
-class CMicrosoftProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService
+class CMicrosoftProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService
 {
 public:
     virtual ~CMicrosoftProvider();
@@ -90,6 +91,17 @@ public:
                             const unsigned char* data, const unsigned int dataSize,
                             unsigned char* mac, const unsigned int macSize);
 
+    // IHashService
+    virtual bool SelectAlgorithm(const HashAlgorithm algorithm);
+    virtual unsigned int GetHashSize(void) const;
+
+    virtual bool ComputeHash( const unsigned char* data, const unsigned int dataSize,
+                             unsigned char* hash, const unsigned int hashSize);
+
+    virtual bool Init(void);
+    virtual bool Update(const unsigned char* data, const unsigned int dataSize);
+    virtual bool Final(unsigned char* hash, const unsigned int hashSize);
+
 protected:
 
 private:
@@ -113,6 +125,15 @@ private:
     void* rsaAlgorithmHandle_;
     void* rsaKeyHandle_;
     unsigned int rsaKeyBits_;
+
+    // IHashService state -- separate from algorithmHandle_/keyHandle_ above (unrelated, never both
+    // in use for the same instance). hashObjectBuffer_ backs the CNG hash object for the
+    // incremental BCryptCreateHash/BCryptHashData/BCryptFinishHash API, sized per
+    // BCRYPT_OBJECT_LENGTH like keyObject_ is for symmetric ciphers.
+    void* hashAlgorithmHandle_;
+    void* hashObjectHandle_;
+    std::vector<unsigned char> hashObjectBuffer_;
+    unsigned int hashOutputSize_;
 
 };
 
