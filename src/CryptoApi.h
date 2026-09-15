@@ -22,6 +22,11 @@ class CCryptoApi
 public:
     virtual ~CCryptoApi();
              CCryptoApi();
+
+    // AEAD-only: for callers who only need EncryptBuffer/DecryptBuffer/EncryptBytes/DecryptBytes/
+    // EncryptString/DecryptString/EncryptFile/DecryptFile -- the original, most common case this
+    // class was built for. The single-purpose constructors below (Hash-only/Asymmetric-only/
+    // Legacy-only) follow this same pattern for their own primitive.
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm);
 
     // Hash-only: for callers who only need ComputeHashBuffer/ComputeHashBytes/ComputeHashString/
@@ -32,6 +37,17 @@ public:
     // constructor above by the 2nd parameter's type (HashAlgorithm vs AeadAlgorithm are distinct
     // enum types, so there is no overload ambiguity).
              CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm);
+
+    // Asymmetric-only: for callers who only need GenerateAsymmetricKeyPair/EncryptWithPublicKey/
+    // DecryptWithPrivateKey/GetMaxAsymmetricPlaintextSize/GetAsymmetricCiphertextSize. Same
+    // reasoning as the Hash-only constructor above -- RSA never touches AEAD, so a caller
+    // shouldn't have to pick an AeadAlgorithm just to use it. No overload ambiguity: AsymmetricAlgorithm
+    // is a distinct enum type from AeadAlgorithm/HashAlgorithm.
+             CCryptoApi(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm);
+
+    // Legacy-only: for callers who only need EncryptLegacyBuffer/DecryptLegacyBuffer. Same
+    // reasoning again -- Legacy+MAC never touches AEAD either.
+             CCryptoApi(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm);
 
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm);

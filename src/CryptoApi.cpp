@@ -251,6 +251,16 @@ CCryptoApi::CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hash
 }
 // -----------------------------------------------------------------------------
 
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256)
+{
+}
+// -----------------------------------------------------------------------------
+
 CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256)
 {
 }
