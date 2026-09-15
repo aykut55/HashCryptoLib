@@ -119,10 +119,12 @@ int main()
     cryptoApiTester.RunOpenSslProviderAllAlgorithmsTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunEncodingUtilsTest();
 
-    cryptoApiTester.RunAesConfigurationDemoTest();
+    //cryptoApiTester.RunAesConfigurationDemoTest();
+
+    cryptoApiTester.RunPaddingUtilsTest();
 #endif
 
 

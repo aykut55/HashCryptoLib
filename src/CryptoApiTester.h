@@ -108,6 +108,12 @@ public:
     // base64 characters, wrong padding).
     int RunEncodingUtilsTest(void);
 
+    // Exercises CUtils::Pad/Unpad (src/Utils/Utils.h) for all 7 PaddingScheme values: round-trip
+    // over inputs both aligned to and misaligned from a 16-byte (AES) block size, known PKCS7
+    // vectors, PADDING_NONE's alignment requirement, and Unpad's rejection of malformed padding
+    // (bad pad-length byte, inconsistent pad bytes, wrong ISO97971 marker).
+    int RunPaddingUtilsTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

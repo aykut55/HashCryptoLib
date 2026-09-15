@@ -518,6 +518,22 @@ const char* LegacyAlgorithmName(LegacySymmetricAlgorithm algorithm)
 }
 // -----------------------------------------------------------------------------
 
+const char* PaddingSchemeName(PaddingScheme scheme)
+{
+    switch (scheme)
+    {
+        case PADDING_PKCS7:     return "PKCS7";
+        case PADDING_PKCS5:     return "PKCS5";
+        case PADDING_ANSI_X923: return "AnsiX923";
+        case PADDING_ISO_10126: return "Iso10126";
+        case PADDING_ISO_97971: return "Iso97971";
+        case PADDING_ZERO:      return "ZeroPadding";
+        case PADDING_NONE:      return "NoPadding";
+        default:                return "?";
+    }
+}
+// -----------------------------------------------------------------------------
+
 const char* AsymmetricAlgorithmName(AsymmetricAlgorithm algorithm)
 {
     switch (algorithm)
@@ -4052,6 +4068,211 @@ int CCryptoApiTester::RunEncodingUtilsTest(void)
         }
 
         std::cout << "RunEncodingUtilsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPaddingUtilsTest(void)
+{
+    try
+    {
+        const unsigned int blockSize = 16;
+        int failures = 0;
+
+        // Known PKCS7 vector: 5-byte "HELLO" padded to one 16-byte block with 11 bytes of 0x0B.
+        {
+            const unsigned char input[] = { 'H', 'E', 'L', 'L', 'O' };
+            const unsigned char expected[16] =
+            {
+                'H', 'E', 'L', 'L', 'O',
+                0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B
+            };
+
+            unsigned char padded[16];
+            int paddedSize = 0;
+            int status = CUtils::Pad(PADDING_PKCS7, blockSize, input, static_cast<int>(sizeof(input)), sizeof(padded), padded, &paddedSize);
+            if (status != NO_ERROR || paddedSize != 16 || std::memcmp(padded, expected, 16) != 0)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED PKCS7 known vector status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunPaddingUtilsTest: PASSED PKCS7 known vector" << std::endl;
+            }
+        }
+
+        // Round-trip: every padding-adding scheme, over a misaligned and an already-aligned input.
+        // Avoid trailing 0x00 bytes in the plaintext for the round-trip check since ZeroPadding
+        // cannot distinguish real trailing zero bytes from its own padding (documented caveat, not
+        // tested as a failure here).
+        {
+            struct SchemeCase { PaddingScheme scheme; };
+            const SchemeCase schemeCases[] =
+            {
+                { PADDING_PKCS7 }, { PADDING_PKCS5 }, { PADDING_ANSI_X923 },
+                { PADDING_ISO_10126 }, { PADDING_ISO_97971 }, { PADDING_ZERO }
+            };
+
+            const unsigned char misaligned[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x2A };
+            const unsigned char aligned[]    = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x2A };
+
+            struct InputCase { const unsigned char* data; int size; const char* label; };
+            const InputCase inputCases[] =
+            {
+                { misaligned, static_cast<int>(sizeof(misaligned)), "misaligned" },
+                { aligned,    static_cast<int>(sizeof(aligned)),    "aligned" }
+            };
+
+            for (std::size_t schemeIndex = 0; schemeIndex < sizeof(schemeCases) / sizeof(schemeCases[0]); ++schemeIndex)
+            {
+                const PaddingScheme scheme = schemeCases[schemeIndex].scheme;
+                const char* schemeName = PaddingSchemeName(scheme);
+
+                for (std::size_t inputIndex = 0; inputIndex < sizeof(inputCases) / sizeof(inputCases[0]); ++inputIndex)
+                {
+                    const unsigned char* data = inputCases[inputIndex].data;
+                    const int dataSize = inputCases[inputIndex].size;
+                    const char* inputLabel = inputCases[inputIndex].label;
+
+                    int requiredPadSize = 0;
+                    int status = CUtils::Pad(scheme, blockSize, data, dataSize, 0, nullptr, &requiredPadSize);
+                    if (status != BUFFER_TOO_SMALL)
+                    {
+                        std::cout << "RunPaddingUtilsTest: FAILED [" << schemeName << "/" << inputLabel << "] Pad size query status=" << status << std::endl;
+                        ++failures;
+                        continue;
+                    }
+
+                    std::vector<unsigned char> padded(requiredPadSize);
+                    int paddedSize = 0;
+                    status = CUtils::Pad(scheme, blockSize, data, dataSize, requiredPadSize, padded.empty() ? nullptr : &padded[0], &paddedSize);
+                    if (status != NO_ERROR || paddedSize % static_cast<int>(blockSize) != 0)
+                    {
+                        std::cout << "RunPaddingUtilsTest: FAILED [" << schemeName << "/" << inputLabel << "] Pad status=" << status << std::endl;
+                        ++failures;
+                        continue;
+                    }
+
+                    int requiredUnpadSize = 0;
+                    status = CUtils::Unpad(scheme, blockSize, &padded[0], paddedSize, 0, nullptr, &requiredUnpadSize);
+                    if (status != BUFFER_TOO_SMALL)
+                    {
+                        std::cout << "RunPaddingUtilsTest: FAILED [" << schemeName << "/" << inputLabel << "] Unpad size query status=" << status << std::endl;
+                        ++failures;
+                        continue;
+                    }
+
+                    std::vector<unsigned char> unpadded(requiredUnpadSize);
+                    int unpaddedSize = 0;
+                    status = CUtils::Unpad(scheme, blockSize, &padded[0], paddedSize, requiredUnpadSize, unpadded.empty() ? nullptr : &unpadded[0], &unpaddedSize);
+                    if (status != NO_ERROR || unpaddedSize != dataSize || std::memcmp(&unpadded[0], data, static_cast<std::size_t>(dataSize)) != 0)
+                    {
+                        std::cout << "RunPaddingUtilsTest: FAILED [" << schemeName << "/" << inputLabel << "] Unpad/mismatch status=" << status << std::endl;
+                        ++failures;
+                        continue;
+                    }
+
+                    std::cout << "RunPaddingUtilsTest: PASSED [" << schemeName << "/" << inputLabel << "] round-trip (" << paddedSize << " bytes)" << std::endl;
+                }
+            }
+        }
+
+        // PADDING_NONE: aligned input passes through unchanged; misaligned input is rejected.
+        {
+            const unsigned char aligned[16] = { 0 };
+            int requiredSize = 0;
+            int status = CUtils::Pad(PADDING_NONE, blockSize, aligned, static_cast<int>(sizeof(aligned)), 0, nullptr, &requiredSize);
+            if (status != BUFFER_TOO_SMALL || requiredSize != static_cast<int>(sizeof(aligned)))
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED NoPadding aligned size query status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunPaddingUtilsTest: PASSED NoPadding aligned size query" << std::endl;
+            }
+
+            const unsigned char misaligned[5] = { 0 };
+            if (CUtils::Pad(PADDING_NONE, blockSize, misaligned, static_cast<int>(sizeof(misaligned)), 0, nullptr, &requiredSize) != INVALID_ARGUMENT)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED NoPadding misaligned input not rejected" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunPaddingUtilsTest: PASSED NoPadding misaligned input rejected" << std::endl;
+            }
+
+            if (CUtils::Unpad(PADDING_NONE, blockSize, misaligned, static_cast<int>(sizeof(misaligned)), 0, nullptr, &requiredSize) != INVALID_ARGUMENT)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED NoPadding Unpad misaligned input not rejected" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunPaddingUtilsTest: PASSED NoPadding Unpad misaligned input rejected" << std::endl;
+            }
+        }
+
+        // Malformed padding must be rejected by Unpad.
+        {
+            unsigned char dummyOutput[16];
+            int dummySize = 0;
+
+            unsigned char zeroPadByte[16] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15, 0x00 };
+            if (CUtils::Unpad(PADDING_PKCS7, blockSize, zeroPadByte, 16, sizeof(dummyOutput), dummyOutput, &dummySize) != INVALID_DATA)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED PKCS7 zero pad-length byte not rejected" << std::endl;
+                ++failures;
+            }
+
+            unsigned char tooLargePadByte[16] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15, 0xFF };
+            if (CUtils::Unpad(PADDING_PKCS7, blockSize, tooLargePadByte, 16, sizeof(dummyOutput), dummyOutput, &dummySize) != INVALID_DATA)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED PKCS7 out-of-range pad-length byte not rejected" << std::endl;
+                ++failures;
+            }
+
+            unsigned char inconsistentPadBytes[16] = { 1,2,3,4,5,6,7,8,9,10,11,12, 0x00, 0x04, 0x04, 0x04 };
+            if (CUtils::Unpad(PADDING_PKCS7, blockSize, inconsistentPadBytes, 16, sizeof(dummyOutput), dummyOutput, &dummySize) != INVALID_DATA)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED PKCS7 inconsistent pad bytes not rejected" << std::endl;
+                ++failures;
+            }
+
+            unsigned char ansiInconsistent[16] = { 1,2,3,4,5,6,7,8,9,10,11,12, 0x01, 0x00, 0x00, 0x04 };
+            if (CUtils::Unpad(PADDING_ANSI_X923, blockSize, ansiInconsistent, 16, sizeof(dummyOutput), dummyOutput, &dummySize) != INVALID_DATA)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED AnsiX923 inconsistent pad bytes not rejected" << std::endl;
+                ++failures;
+            }
+
+            unsigned char noIso97971Marker[16] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,0x00 };
+            if (CUtils::Unpad(PADDING_ISO_97971, blockSize, noIso97971Marker, 16, sizeof(dummyOutput), dummyOutput, &dummySize) != INVALID_DATA)
+            {
+                std::cout << "RunPaddingUtilsTest: FAILED Iso97971 missing 0x80 marker not rejected" << std::endl;
+                ++failures;
+            }
+
+            if (failures == 0)
+            {
+                std::cout << "RunPaddingUtilsTest: PASSED malformed-padding rejection" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunPaddingUtilsTest: PASSED (all Pad/Unpad checks)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunPaddingUtilsTest: " << failures << " FAILURE(S)" << std::endl;
         return UNEXPECTED_ERROR;
     }
     catch (...)

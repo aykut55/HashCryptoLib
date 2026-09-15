@@ -3,6 +3,8 @@
 #include "../CryptoApi.h"
 #include "../Definitions/Definitions.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace
@@ -373,6 +375,272 @@ int CUtils::Base64Decode(const char* inputString, const int inputStringSize, con
         if (outputBufferSize)
         {
             *outputBufferSize = outputIndex;
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CUtils::Pad(const PaddingScheme scheme, const unsigned int blockSize, const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (blockSize == 0 || blockSize > 255)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const unsigned int remainder = static_cast<unsigned int>(inputBufferSize) % blockSize;
+
+        int padLength = 0;
+        switch (scheme)
+        {
+            case PADDING_NONE:
+                if (remainder != 0)
+                {
+                    return INVALID_ARGUMENT;
+                }
+                padLength = 0;
+                break;
+
+            case PADDING_ZERO:
+                padLength = remainder == 0 ? 0 : static_cast<int>(blockSize - remainder);
+                break;
+
+            case PADDING_PKCS7:
+            case PADDING_PKCS5:
+            case PADDING_ANSI_X923:
+            case PADDING_ISO_10126:
+            case PADDING_ISO_97971:
+                padLength = static_cast<int>(blockSize - remainder);
+                break;
+
+            default:
+                return INVALID_ARGUMENT;
+        }
+
+        const int requiredSize = inputBufferSize + padLength;
+
+        if (outputBuffer == nullptr || outputBufferCapacity < requiredSize)
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = requiredSize;
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        if (inputBufferSize > 0)
+        {
+            std::memcpy(outputBuffer, inputBuffer, static_cast<std::size_t>(inputBufferSize));
+        }
+
+        unsigned char* padStart = outputBuffer + inputBufferSize;
+
+        switch (scheme)
+        {
+            case PADDING_NONE:
+                break;
+
+            case PADDING_ZERO:
+                if (padLength > 0)
+                {
+                    std::memset(padStart, 0x00, static_cast<std::size_t>(padLength));
+                }
+                break;
+
+            case PADDING_PKCS7:
+            case PADDING_PKCS5:
+                std::memset(padStart, static_cast<unsigned char>(padLength), static_cast<std::size_t>(padLength));
+                break;
+
+            case PADDING_ANSI_X923:
+                if (padLength > 1)
+                {
+                    std::memset(padStart, 0x00, static_cast<std::size_t>(padLength - 1));
+                }
+                padStart[padLength - 1] = static_cast<unsigned char>(padLength);
+                break;
+
+            case PADDING_ISO_10126:
+                for (int index = 0; index < padLength - 1; ++index)
+                {
+                    padStart[index] = static_cast<unsigned char>(std::rand() & 0xFF);
+                }
+                padStart[padLength - 1] = static_cast<unsigned char>(padLength);
+                break;
+
+            case PADDING_ISO_97971:
+                padStart[0] = 0x80;
+                if (padLength > 1)
+                {
+                    std::memset(padStart + 1, 0x00, static_cast<std::size_t>(padLength - 1));
+                }
+                break;
+
+            default:
+                return INVALID_ARGUMENT;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = requiredSize;
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CUtils::Unpad(const PaddingScheme scheme, const unsigned int blockSize, const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (blockSize == 0 || blockSize > 255)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (inputBufferSize <= 0 || inputBuffer == nullptr || (static_cast<unsigned int>(inputBufferSize) % blockSize) != 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        int dataLength = inputBufferSize;
+
+        switch (scheme)
+        {
+            case PADDING_NONE:
+                break;
+
+            case PADDING_ZERO:
+            {
+                int index = inputBufferSize;
+                while (index > 0 && inputBuffer[index - 1] == 0x00)
+                {
+                    --index;
+                }
+                dataLength = index;
+                break;
+            }
+
+            case PADDING_PKCS7:
+            case PADDING_PKCS5:
+            {
+                const unsigned char padValue = inputBuffer[inputBufferSize - 1];
+                if (padValue == 0 || padValue > blockSize || static_cast<int>(padValue) > inputBufferSize)
+                {
+                    return INVALID_DATA;
+                }
+
+                for (int index = 0; index < padValue; ++index)
+                {
+                    if (inputBuffer[inputBufferSize - 1 - index] != padValue)
+                    {
+                        return INVALID_DATA;
+                    }
+                }
+
+                dataLength = inputBufferSize - padValue;
+                break;
+            }
+
+            case PADDING_ANSI_X923:
+            {
+                const unsigned char padValue = inputBuffer[inputBufferSize - 1];
+                if (padValue == 0 || padValue > blockSize || static_cast<int>(padValue) > inputBufferSize)
+                {
+                    return INVALID_DATA;
+                }
+
+                for (int index = 1; index < padValue; ++index)
+                {
+                    if (inputBuffer[inputBufferSize - 1 - index] != 0x00)
+                    {
+                        return INVALID_DATA;
+                    }
+                }
+
+                dataLength = inputBufferSize - padValue;
+                break;
+            }
+
+            case PADDING_ISO_10126:
+            {
+                const unsigned char padValue = inputBuffer[inputBufferSize - 1];
+                if (padValue == 0 || padValue > blockSize || static_cast<int>(padValue) > inputBufferSize)
+                {
+                    return INVALID_DATA;
+                }
+
+                dataLength = inputBufferSize - padValue;
+                break;
+            }
+
+            case PADDING_ISO_97971:
+            {
+                int index = inputBufferSize;
+                while (index > 0 && inputBuffer[index - 1] == 0x00)
+                {
+                    --index;
+                }
+
+                if (index == 0 || inputBuffer[index - 1] != 0x80)
+                {
+                    return INVALID_DATA;
+                }
+
+                dataLength = index - 1;
+                break;
+            }
+
+            default:
+                return INVALID_ARGUMENT;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < dataLength)
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = dataLength;
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        if (dataLength > 0)
+        {
+            std::memcpy(outputBuffer, inputBuffer, static_cast<std::size_t>(dataLength));
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = dataLength;
         }
 
         return NO_ERROR;
