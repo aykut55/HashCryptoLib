@@ -4,6 +4,7 @@
 #include "Providers/AeadCipher.h"
 #include "Providers/AsymmetricCipher.h"
 #include "Providers/HashService.h"
+#include "Providers/KeyAgreementService.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
@@ -15,7 +16,7 @@
 namespace CryptoApiNS
 {
 
-class CCryptoPPProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService, public ISignatureEngine
+class CCryptoPPProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService, public ISignatureEngine, public IKeyAgreementService
 {
 public:
     virtual ~CCryptoPPProvider();
@@ -114,6 +115,17 @@ public:
 
     virtual bool Verify( const unsigned char* data, const unsigned int dataSize,
                         const unsigned char* signature, const unsigned int signatureSize);
+
+    // IKeyAgreementService (GenerateKeyPair declared above, shared with IAsymmetricCipher/
+    // ISignatureEngine -- dispatches on impl_->asymmetricModeIsKeyAgreement, see Impl in the .cpp).
+    virtual bool SelectAlgorithm(const KeyAgreementAlgorithm algorithm);
+    virtual unsigned int GetPublicKeySize(void) const;
+    virtual unsigned int GetSharedSecretSize(void) const;
+
+    virtual bool GetPublicKey(unsigned char* publicKey, const unsigned int publicKeySize) const;
+
+    virtual bool DeriveSharedSecret( const unsigned char* peerPublicKey, const unsigned int peerPublicKeySize,
+                                    unsigned char* sharedSecret, const unsigned int sharedSecretSize);
 
 protected:
 

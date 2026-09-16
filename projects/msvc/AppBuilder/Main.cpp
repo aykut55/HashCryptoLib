@@ -197,5 +197,21 @@ int main()
     cryptoApiTester.RunSignatureAlgorithmsTest();
 #endif
 
+#if 0
+    cryptoApiTester.RunMicrosoftProviderKeyAgreementTest();
+
+    cryptoApiTester.RunCryptoPPProviderKeyAgreementTest();
+
+    cryptoApiTester.RunBotanProviderKeyAgreementTest();
+
+    cryptoApiTester.RunOpenSslProviderKeyAgreementTest();
+
+    cryptoApiTester.RunKeyAgreementAlgorithmsTest();
+#endif
+
+#if 0
+    cryptoApiTester.RunAESTests();
+#endif
+
     return 0;
 }

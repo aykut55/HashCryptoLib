@@ -218,4 +218,37 @@ std::unique_ptr<ISignatureEngine> COpenSslProviderFactory::CreateSignatureEngine
 }
 // -----------------------------------------------------------------------------
 
+bool COpenSslProviderFactory::SupportsKeyAgreementAlgorithm(const KeyAgreementAlgorithm algorithm) const
+{
+    try
+    {
+        COpenSslProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IKeyAgreementService> COpenSslProviderFactory::CreateKeyAgreementEngine(const KeyAgreementAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<COpenSslProvider> provider(new COpenSslProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

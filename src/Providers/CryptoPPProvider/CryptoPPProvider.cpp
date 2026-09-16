@@ -51,6 +51,34 @@ namespace
         }
     }
 
+    // --- Key agreement (IKeyAgreementService) -----------------------------------------------------
+
+    // KEYAGREEMENT_ECDH_P256: CryptoPP::ECDH<ECP>::Domain::PublicKeyLength() for secp256r1 is the
+    // SEC1 uncompressed point (0x04||X||Y), 1 + 2*32 bytes.
+    // KEYAGREEMENT_X25519: CryptoPP::x25519::PUBLIC_KEYLENGTH is the raw 32-byte u-coordinate.
+    unsigned int KeyAgreementPublicKeySize(const KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256: return 1u + 2u * 32u;
+            case KEYAGREEMENT_X25519:    return 32u;
+            default:                     return 0;
+        }
+    }
+
+    // Both curves produce a 32-byte shared secret: ECDH<ECP>::Domain::AgreedValueLength() for
+    // secp256r1 is the raw X-coordinate (no leading type byte, unlike PublicKeyLength()); x25519's
+    // AgreedValueLength() is its native 32-byte output.
+    unsigned int KeyAgreementSharedSecretSize(const KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256: return 32u;
+            case KEYAGREEMENT_X25519:    return 32u;
+            default:                     return 0;
+        }
+    }
+
     // --- AEAD engines --------------------------------------------------------------------------
 
     class IAeadEngine
@@ -428,6 +456,23 @@ struct CCryptoPPProvider::Impl
     CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PublicKey ecdsaPublicKey;
     std::unique_ptr<CryptoPP::ed25519Signer> ed25519SignerPtr;
     std::unique_ptr<CryptoPP::ed25519Verifier> ed25519VerifierPtr;
+
+    // IKeyAgreementService state -- separate key material from rsaPrivateKey/sigRsaPrivateKey/
+    // ecdsaPrivateKey above (all distinct key pairs, never in use simultaneously for the same
+    // instance). CryptoPP::SimpleKeyAgreementDomain is the common abstract base for both
+    // ECDH<ECP>::Domain and x25519 (both implement GeneratePrivateKey/GeneratePublicKey/Agree
+    // over caller-owned byte buffers, so one pointer type covers both algorithms uniformly --
+    // unlike ECDSA/RSA/Ed25519 above, the domain object itself holds no key state).
+    // asymmetricModeIsKeyAgreement dispatches GenerateKeyPair() (shared with IAsymmetricCipher/
+    // ISignatureEngine, see the header comment); checked before asymmetricModeIsSignature.
+    bool asymmetricModeIsKeyAgreement = false;
+    KeyAgreementAlgorithm keyAgreementAlgorithm = KEYAGREEMENT_ECDH_P256;
+    bool keyAgreementKeyGenerated = false;
+    unsigned int keyAgreementPublicKeySize = 0;
+    unsigned int keyAgreementSharedSecretSize = 0;
+    std::unique_ptr<CryptoPP::SimpleKeyAgreementDomain> keyAgreementDomain;
+    CryptoPP::SecByteBlock keyAgreementPrivateKey;
+    CryptoPP::SecByteBlock keyAgreementPublicKey;
 };
 
 CCryptoPPProvider::~CCryptoPPProvider()
@@ -749,6 +794,7 @@ bool CCryptoPPProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
         impl_->rsaKeyBits = keyBits;
         impl_->rsaKeyGenerated = false;
         impl_->asymmetricModeIsSignature = false;
+        impl_->asymmetricModeIsKeyAgreement = false;
         return true;
     }
     catch (...)
@@ -765,6 +811,48 @@ bool CCryptoPPProvider::GenerateKeyPair(void)
         if (!impl_)
         {
             return false;
+        }
+
+        if (impl_->asymmetricModeIsKeyAgreement)
+        {
+            CryptoPP::AutoSeededRandomPool rng;
+
+            std::unique_ptr<CryptoPP::SimpleKeyAgreementDomain> domain;
+            switch (impl_->keyAgreementAlgorithm)
+            {
+                case KEYAGREEMENT_ECDH_P256:
+                {
+                    // DH_Domain has no (RandomNumberGenerator&, OID) constructor -- only
+                    // DL_GroupParameters_EC itself takes an OID directly (Initialize(const OID&)
+                    // has no RNG overload, unlike DL_PrivateKey_EC::Initialize(rng, oid) used for
+                    // ECDSA above), so the group parameters are built first and handed to Domain.
+                    const CryptoPP::DL_GroupParameters_EC<CryptoPP::ECP> groupParams(CryptoPP::ASN1::secp256r1());
+                    domain.reset(new CryptoPP::ECDH<CryptoPP::ECP>::Domain(groupParams));
+                    break;
+                }
+                case KEYAGREEMENT_X25519:
+                    domain.reset(new CryptoPP::x25519());
+                    break;
+                default:
+                    return false;
+            }
+
+            CryptoPP::SecByteBlock privateKey(domain->PrivateKeyLength());
+            CryptoPP::SecByteBlock publicKey(domain->PublicKeyLength());
+            domain->GenerateKeyPair(rng, privateKey, publicKey);
+
+            // PublicKeyLength()/AgreedValueLength() come straight from the concrete algorithm
+            // (ECDH<ECP>::Domain or x25519) rather than the KeyAgreementPublicKeySize()/
+            // KeyAgreementSharedSecretSize() helpers above, which exist only to size buffers before
+            // a domain object is available (SelectAlgorithm-time validation, and the other 3
+            // providers' equivalents) -- here the authoritative values are already at hand.
+            impl_->keyAgreementDomain = std::move(domain);
+            impl_->keyAgreementPrivateKey = privateKey;
+            impl_->keyAgreementPublicKey = publicKey;
+            impl_->keyAgreementPublicKeySize = static_cast<unsigned int>(publicKey.size());
+            impl_->keyAgreementSharedSecretSize = static_cast<unsigned int>(impl_->keyAgreementDomain->AgreedValueLength());
+            impl_->keyAgreementKeyGenerated = true;
+            return true;
         }
 
         if (impl_->asymmetricModeIsSignature)
@@ -1121,6 +1209,7 @@ bool CCryptoPPProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
         impl_->signatureKeyGenerated = false;
         impl_->signatureSize = 0;
         impl_->asymmetricModeIsSignature = true;
+        impl_->asymmetricModeIsKeyAgreement = false;
         return true;
     }
     catch (...)
@@ -1222,6 +1311,107 @@ bool CCryptoPPProvider::Verify(const unsigned char* data, const unsigned int dat
             default:
                 return false;
         }
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::SelectAlgorithm(const KeyAgreementAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256:
+            case KEYAGREEMENT_X25519:
+                break;
+            default:
+                return false;
+        }
+
+        impl_->keyAgreementAlgorithm = algorithm;
+        impl_->keyAgreementKeyGenerated = false;
+        impl_->keyAgreementDomain.reset();
+        impl_->keyAgreementPrivateKey.CleanNew(0);
+        impl_->keyAgreementPublicKey.CleanNew(0);
+        impl_->keyAgreementPublicKeySize = 0;
+        impl_->keyAgreementSharedSecretSize = 0;
+        impl_->asymmetricModeIsKeyAgreement = true;
+        impl_->asymmetricModeIsSignature = false;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CCryptoPPProvider::GetPublicKeySize(void) const
+{
+    return (impl_ && impl_->keyAgreementKeyGenerated) ? impl_->keyAgreementPublicKeySize : 0;
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CCryptoPPProvider::GetSharedSecretSize(void) const
+{
+    return (impl_ && impl_->keyAgreementKeyGenerated) ? impl_->keyAgreementSharedSecretSize : 0;
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::GetPublicKey(unsigned char* publicKey, const unsigned int publicKeySize) const
+{
+    try
+    {
+        if (!impl_ || !impl_->keyAgreementKeyGenerated || publicKey == nullptr ||
+            publicKeySize < impl_->keyAgreementPublicKeySize)
+        {
+            return false;
+        }
+
+        std::memcpy(publicKey, impl_->keyAgreementPublicKey.data(), impl_->keyAgreementPublicKeySize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CCryptoPPProvider::DeriveSharedSecret(const unsigned char* peerPublicKey, const unsigned int peerPublicKeySize, unsigned char* sharedSecret, const unsigned int sharedSecretSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->keyAgreementKeyGenerated || !impl_->keyAgreementDomain ||
+            peerPublicKey == nullptr || peerPublicKeySize != impl_->keyAgreementPublicKeySize ||
+            sharedSecret == nullptr || sharedSecretSize < impl_->keyAgreementSharedSecretSize)
+        {
+            return false;
+        }
+
+        CryptoPP::SecByteBlock agreedValue(impl_->keyAgreementDomain->AgreedValueLength());
+        if (!impl_->keyAgreementDomain->Agree(agreedValue, impl_->keyAgreementPrivateKey,
+                                              reinterpret_cast<const CryptoPP::byte*>(peerPublicKey)))
+        {
+            return false;
+        }
+
+        if (agreedValue.size() != impl_->keyAgreementSharedSecretSize)
+        {
+            return false;
+        }
+
+        std::memcpy(sharedSecret, agreedValue.data(), agreedValue.size());
+        return true;
     }
     catch (...)
     {

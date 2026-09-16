@@ -4,6 +4,7 @@
 #include "Providers/AeadCipher.h"
 #include "Providers/AsymmetricCipher.h"
 #include "Providers/HashService.h"
+#include "Providers/KeyAgreementService.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
@@ -61,6 +62,12 @@ public:
     // CreateSignatureEngine() return nullptr for unsupported values, rather than omitting them.
     virtual bool SupportsSignatureAlgorithm(const SignatureAlgorithm algorithm) const = 0;
     virtual std::unique_ptr<ISignatureEngine> CreateSignatureEngine(const SignatureAlgorithm algorithm) = 0;
+
+    // Not every provider implements every key agreement algorithm (see KeyAgreementAlgorithm in
+    // ProviderTypes.h); providers must have SupportsKeyAgreementAlgorithm() return false and
+    // CreateKeyAgreementEngine() return nullptr for unsupported values, rather than omitting them.
+    virtual bool SupportsKeyAgreementAlgorithm(const KeyAgreementAlgorithm algorithm) const = 0;
+    virtual std::unique_ptr<IKeyAgreementService> CreateKeyAgreementEngine(const KeyAgreementAlgorithm algorithm) = 0;
 
 protected:
 

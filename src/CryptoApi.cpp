@@ -236,52 +236,62 @@ CCryptoApi::~CCryptoApi()
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi() : providerKind_(PROVIDER_MICROSOFT), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const SignatureAlgorithm signatureAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(signatureAlgorithm)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const SignatureAlgorithm signatureAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(signatureAlgorithm), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const KeyAgreementAlgorithm keyAgreementAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(AEAD_AES_256_GCM), asymmetricAlgorithm_(ASYMMETRIC_RSA_2048), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(keyAgreementAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(LEGACY_AES_256_CBC), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(HASH_SHA256), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
 {
 }
 // -----------------------------------------------------------------------------
 
-CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(signatureAlgorithm)
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(signatureAlgorithm), keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256)
+{
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi::CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm, const KeyAgreementAlgorithm keyAgreementAlgorithm) : providerKind_(providerKind), aeadAlgorithm_(aeadAlgorithm), asymmetricAlgorithm_(asymmetricAlgorithm), legacyAlgorithm_(legacyAlgorithm), hashAlgorithm_(hashAlgorithm), signatureAlgorithm_(signatureAlgorithm), keyAgreementAlgorithm_(keyAgreementAlgorithm)
 {
 }
 // -----------------------------------------------------------------------------
@@ -2143,6 +2153,180 @@ int CCryptoApi::VerifyBuffer(const unsigned char* inputBuffer, const int inputBu
     }
     catch (...)
     {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
+// Key agreement (Diffie-Hellman style) -- see KeyAgreementAlgorithm in ProviderTypes.h and the
+// 7-argument/key-agreement-only constructors. Kept in its own section at the end of the file, like
+// Signature above: no password, no ciphertext, and unlike Hash it caches a key pair across calls.
+// ================================================================================================
+
+int CCryptoApi::GenerateKeyAgreementKeyPair(void)
+{
+    try
+    {
+        if (!keyAgreementEngine_)
+        {
+            std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+            if (!providerFactory)
+            {
+                return UNEXPECTED_ERROR;
+            }
+
+            keyAgreementEngine_ = providerFactory->CreateKeyAgreementEngine(keyAgreementAlgorithm_);
+            if (!keyAgreementEngine_)
+            {
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        return keyAgreementEngine_->GenerateKeyPair() ? NO_ERROR : UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::GetKeyAgreementPublicKeySize(void) const
+{
+    try
+    {
+        return keyAgreementEngine_ ? static_cast<int>(keyAgreementEngine_->GetPublicKeySize()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::GetSharedSecretSize(void) const
+{
+    try
+    {
+        return keyAgreementEngine_ ? static_cast<int>(keyAgreementEngine_->GetSharedSecretSize()) : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::ExportKeyAgreementPublicKey(const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (!keyAgreementEngine_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int requiredSize = keyAgreementEngine_->GetPublicKeySize();
+        if (requiredSize == 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(requiredSize))
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(requiredSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        if (!keyAgreementEngine_->GetPublicKey(outputBuffer, static_cast<unsigned int>(outputBufferCapacity)))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(requiredSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::DeriveSharedSecret(const unsigned char* peerPublicKeyBuffer, const int peerPublicKeyBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
+        if (peerPublicKeyBufferSize < 0 || (peerPublicKeyBufferSize > 0 && peerPublicKeyBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (!keyAgreementEngine_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int requiredSize = keyAgreementEngine_->GetSharedSecretSize();
+        if (requiredSize == 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(requiredSize))
+        {
+            if (outputBufferSize)
+            {
+                *outputBufferSize = static_cast<int>(requiredSize);
+            }
+
+            return BUFFER_TOO_SMALL;
+        }
+
+        if (!keyAgreementEngine_->DeriveSharedSecret(peerPublicKeyBuffer, static_cast<unsigned int>(peerPublicKeyBufferSize),
+                                                     outputBuffer, static_cast<unsigned int>(outputBufferCapacity)))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        if (outputBufferSize)
+        {
+            *outputBufferSize = static_cast<int>(requiredSize);
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        if (outputBufferSize)
+        {
+            *outputBufferSize = 0;
+        }
+
         return UNEXPECTED_ERROR;
     }
 }

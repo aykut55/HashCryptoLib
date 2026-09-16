@@ -132,6 +132,20 @@ enum SignatureAlgorithm
     SIGNATURE_ED25519             = 4
 };
 
+// Key agreement (Diffie-Hellman style) algorithm/curve combinations. Like SignatureAlgorithm,
+// GenerateKeyPair() creates a fresh key pair per selected value -- no caller-supplied key and no
+// RSA analogue (RSA does not do key agreement). Shared secret output is a fixed size for every
+// value here (see IKeyAgreementService::GetSharedSecretSize). Not every ProviderKind supports every
+// value here; query ICryptoProviderFactory::SupportsKeyAgreementAlgorithm() before
+// CreateKeyAgreementEngine(). Windows CNG has no X25519 support through a standard, documented API
+// (only via a non-standard generic curve parameterization), so KEYAGREEMENT_X25519 is intentionally
+// unsupported on PROVIDER_MICROSOFT -- same reasoning as SIGNATURE_ED25519 being unsupported there.
+enum KeyAgreementAlgorithm
+{
+    KEYAGREEMENT_ECDH_P256 = 0,
+    KEYAGREEMENT_X25519    = 1
+};
+
 } // namespace CryptoApiNS
 
 #endif

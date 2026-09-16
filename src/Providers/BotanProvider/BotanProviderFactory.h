@@ -33,6 +33,9 @@ public:
     virtual bool SupportsSignatureAlgorithm(const SignatureAlgorithm algorithm) const;
     virtual std::unique_ptr<ISignatureEngine> CreateSignatureEngine(const SignatureAlgorithm algorithm);
 
+    virtual bool SupportsKeyAgreementAlgorithm(const KeyAgreementAlgorithm algorithm) const;
+    virtual std::unique_ptr<IKeyAgreementService> CreateKeyAgreementEngine(const KeyAgreementAlgorithm algorithm);
+
 protected:
 
 private:

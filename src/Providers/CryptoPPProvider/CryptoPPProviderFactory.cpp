@@ -218,4 +218,37 @@ std::unique_ptr<ISignatureEngine> CCryptoPPProviderFactory::CreateSignatureEngin
 }
 // -----------------------------------------------------------------------------
 
+bool CCryptoPPProviderFactory::SupportsKeyAgreementAlgorithm(const KeyAgreementAlgorithm algorithm) const
+{
+    try
+    {
+        CCryptoPPProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IKeyAgreementService> CCryptoPPProviderFactory::CreateKeyAgreementEngine(const KeyAgreementAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CCryptoPPProvider> provider(new CCryptoPPProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

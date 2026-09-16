@@ -140,6 +140,37 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Key agreement (IKeyAgreementService) -----------------------------------------------------
+
+    // KEYAGREEMENT_ECDH_P256: SEC1 uncompressed point (0x04||X||Y), 1 + 2*32 bytes -- Botan's
+    // PK_Key_Agreement_Key::public_value() for an ECDH_PrivateKey returns exactly this encoding.
+    // KEYAGREEMENT_X25519: raw 32-byte u-coordinate (X25519_PrivateKey::public_value()).
+    unsigned int KeyAgreementPublicKeySize(const KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case KEYAGREEMENT_ECDH_P256: return 1u + 2u * 32u;
+        case KEYAGREEMENT_X25519:    return 32u;
+        default:                     return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // Both curves produce a 32-byte shared secret via Botan::PK_Key_Agreement's "Raw" KDF (P-256:
+    // the raw X-coordinate of the agreed point; X25519: its native output size). "Raw" is handled
+    // inline by kdf.h -- not a separate concrete KDF module -- so it needs no extra amalgamation
+    // module (see BOTAN_AMALGAMATION.md).
+    unsigned int KeyAgreementSharedSecretSize(const KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case KEYAGREEMENT_ECDH_P256: return 32u;
+        case KEYAGREEMENT_X25519:    return 32u;
+        default:                     return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct CBotanProvider::Impl
@@ -169,6 +200,19 @@ struct CBotanProvider::Impl
     bool signatureKeyGenerated = false;
     unsigned int signatureSize = 0;
     std::unique_ptr<Botan::Private_Key> signatureKey;
+
+    // IKeyAgreementService state -- separate key from rsaPrivateKey/signatureKey above (all three
+    // are distinct key pairs, never in use simultaneously for the same instance).
+    // Botan::PK_Key_Agreement_Key is the common base for ECDH_PrivateKey/X25519_PrivateKey (both
+    // also inherit Botan::Private_Key, so PK_Key_Agreement's constructor accepts it directly).
+    // asymmetricModeIsKeyAgreement dispatches GenerateKeyPair() (shared with IAsymmetricCipher/
+    // ISignatureEngine, see the header comment); checked before asymmetricModeIsSignature.
+    bool asymmetricModeIsKeyAgreement = false;
+    KeyAgreementAlgorithm keyAgreementAlgorithm = KEYAGREEMENT_ECDH_P256;
+    bool keyAgreementKeyGenerated = false;
+    unsigned int keyAgreementPublicKeySize = 0;
+    unsigned int keyAgreementSharedSecretSize = 0;
+    std::unique_ptr<Botan::PK_Key_Agreement_Key> keyAgreementKey;
 };
 
 CBotanProvider::~CBotanProvider()
@@ -588,6 +632,7 @@ bool CBotanProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
         impl_->rsaKeyGenerated = false;
         impl_->rsaPrivateKey.reset();
         impl_->asymmetricModeIsSignature = false;
+        impl_->asymmetricModeIsKeyAgreement = false;
         return true;
     }
     catch (...)
@@ -604,6 +649,33 @@ bool CBotanProvider::GenerateKeyPair(void)
         if (!impl_)
         {
             return false;
+        }
+
+        if (impl_->asymmetricModeIsKeyAgreement)
+        {
+            Botan::AutoSeeded_RNG rng;
+
+            switch (impl_->keyAgreementAlgorithm)
+            {
+                case KEYAGREEMENT_ECDH_P256:
+                {
+                    const Botan::EC_Group group = Botan::EC_Group::from_name("secp256r1");
+                    impl_->keyAgreementKey.reset(new Botan::ECDH_PrivateKey(rng, group));
+                    break;
+                }
+                case KEYAGREEMENT_X25519:
+                {
+                    impl_->keyAgreementKey.reset(new Botan::X25519_PrivateKey(rng));
+                    break;
+                }
+                default:
+                    return false;
+            }
+
+            impl_->keyAgreementPublicKeySize = KeyAgreementPublicKeySize(impl_->keyAgreementAlgorithm);
+            impl_->keyAgreementSharedSecretSize = KeyAgreementSharedSecretSize(impl_->keyAgreementAlgorithm);
+            impl_->keyAgreementKeyGenerated = true;
+            return true;
         }
 
         if (impl_->asymmetricModeIsSignature)
@@ -938,6 +1010,7 @@ bool CBotanProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
         impl_->signatureKey.reset();
         impl_->signatureSize = 0;
         impl_->asymmetricModeIsSignature = true;
+        impl_->asymmetricModeIsKeyAgreement = false;
         return true;
     }
     catch (...)
@@ -1008,6 +1081,109 @@ bool CBotanProvider::Verify(const unsigned char* data, const unsigned int dataSi
         Botan::PK_Verifier verifier(*impl_->signatureKey, padding);
         verifier.update(data, dataSize);
         return verifier.check_signature(signature, signatureSize);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::SelectAlgorithm(const KeyAgreementAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256:
+            case KEYAGREEMENT_X25519:
+                break;
+            default:
+                return false;
+        }
+
+        impl_->keyAgreementAlgorithm = algorithm;
+        impl_->keyAgreementKeyGenerated = false;
+        impl_->keyAgreementKey.reset();
+        impl_->keyAgreementPublicKeySize = 0;
+        impl_->keyAgreementSharedSecretSize = 0;
+        impl_->asymmetricModeIsKeyAgreement = true;
+        impl_->asymmetricModeIsSignature = false;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetPublicKeySize(void) const
+{
+    return (impl_ && impl_->keyAgreementKeyGenerated) ? impl_->keyAgreementPublicKeySize : 0;
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CBotanProvider::GetSharedSecretSize(void) const
+{
+    return (impl_ && impl_->keyAgreementKeyGenerated) ? impl_->keyAgreementSharedSecretSize : 0;
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::GetPublicKey(unsigned char* publicKey, const unsigned int publicKeySize) const
+{
+    try
+    {
+        if (!impl_ || !impl_->keyAgreementKeyGenerated || !impl_->keyAgreementKey ||
+            publicKey == nullptr || publicKeySize < impl_->keyAgreementPublicKeySize)
+        {
+            return false;
+        }
+
+        const std::vector<uint8_t> encoded = impl_->keyAgreementKey->public_value();
+        if (encoded.size() != impl_->keyAgreementPublicKeySize)
+        {
+            return false;
+        }
+
+        std::memcpy(publicKey, encoded.data(), encoded.size());
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CBotanProvider::DeriveSharedSecret(const unsigned char* peerPublicKey, const unsigned int peerPublicKeySize, unsigned char* sharedSecret, const unsigned int sharedSecretSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->keyAgreementKeyGenerated || !impl_->keyAgreementKey ||
+            peerPublicKey == nullptr || peerPublicKeySize != impl_->keyAgreementPublicKeySize ||
+            sharedSecret == nullptr || sharedSecretSize < impl_->keyAgreementSharedSecretSize)
+        {
+            return false;
+        }
+
+        Botan::AutoSeeded_RNG rng;
+        Botan::PK_Key_Agreement ka(*impl_->keyAgreementKey, rng, "Raw");
+
+        const Botan::SymmetricKey secret = ka.derive_key(impl_->keyAgreementSharedSecretSize, peerPublicKey, peerPublicKeySize);
+        const Botan::secure_vector<uint8_t> secretBytes = secret.bits_of();
+        if (secretBytes.size() != impl_->keyAgreementSharedSecretSize)
+        {
+            return false;
+        }
+
+        std::memcpy(sharedSecret, secretBytes.data(), secretBytes.size());
+        return true;
     }
     catch (...)
     {

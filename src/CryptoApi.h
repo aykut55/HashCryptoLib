@@ -17,6 +17,7 @@ namespace CryptoApiNS
 
 class IAsymmetricCipher;
 class ISignatureEngine;
+class IKeyAgreementService;
 
 class CCryptoApi
 {
@@ -54,10 +55,16 @@ public:
     // GetSignatureSize. Same reasoning again -- signing never touches AEAD either.
              CCryptoApi(const ProviderKind providerKind, const SignatureAlgorithm signatureAlgorithm);
 
+    // Key-agreement-only: for callers who only need GenerateKeyAgreementKeyPair/
+    // GetKeyAgreementPublicKeySize/GetSharedSecretSize/ExportKeyAgreementPublicKey/
+    // DeriveSharedSecret. Same reasoning again -- key agreement never touches AEAD either.
+             CCryptoApi(const ProviderKind providerKind, const KeyAgreementAlgorithm keyAgreementAlgorithm);
+
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm);
+             CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm, const KeyAgreementAlgorithm keyAgreementAlgorithm);
 
     const char* GetVersion(void) const;
 
@@ -260,6 +267,43 @@ public:
                      const unsigned char* signatureBuffer, const int signatureBufferSize,
                      bool* isValid);
 
+    // ============================================================================================
+    // Key agreement (Diffie-Hellman style) -- see KeyAgreementAlgorithm in ProviderTypes.h and the
+    // 7-argument/key-agreement-only constructors. Unlike RSA/Signature above (both self-contained
+    // round trips inside one instance), key agreement is inherently two-party: two SEPARATE
+    // CCryptoApi instances (same providerKind and keyAgreementAlgorithm) each call
+    // GenerateKeyAgreementKeyPair() once, exchange public keys via ExportKeyAgreementPublicKey(),
+    // and each calls DeriveSharedSecret() with the OTHER instance's exported public key. Both
+    // sides then hold byte-identical shared secrets. See IKeyAgreementService's own doc comment for
+    // why a public key exported by one ProviderKind must not be fed to a different ProviderKind.
+    // ============================================================================================
+
+    // Generates a fresh key pair for this instance's keyAgreementAlgorithm_. Must be called once
+    // before GetKeyAgreementPublicKeySize/GetSharedSecretSize/ExportKeyAgreementPublicKey/
+    // DeriveSharedSecret; calling it again rotates to a fresh key pair (a shared secret already
+    // derived from the old key pair is unaffected, but the peer must re-fetch the new public key
+    // before a following DeriveSharedSecret() call on either side agrees again).
+    int GenerateKeyAgreementKeyPair(void);
+
+    // Exact public key size ExportKeyAgreementPublicKey() produces; 0 before a key pair exists.
+    int GetKeyAgreementPublicKeySize(void) const;
+
+    // Exact shared secret size DeriveSharedSecret() produces; 0 before a key pair exists.
+    int GetSharedSecretSize(void) const;
+
+    // Exports this instance's own public key, to be handed to the peer instance (see the section
+    // comment above). No chunking, no password.
+    int ExportKeyAgreementPublicKey( const int outputBufferCapacity,
+                                    unsigned char* outputBuffer,
+                                    int* outputBufferSize);
+
+    // Combines this instance's private key with peerPublicKeyBuffer (as produced by the peer
+    // instance's own ExportKeyAgreementPublicKey()) to compute the shared secret.
+    int DeriveSharedSecret( const unsigned char* peerPublicKeyBuffer, const int peerPublicKeyBufferSize,
+                           const int outputBufferCapacity,
+                           unsigned char* outputBuffer,
+                           int* outputBufferSize);
+
 protected:
 
 private:
@@ -344,6 +388,15 @@ private:
     // is the expensive part and both Sign and Verify need the same key pair to be meaningful.
     SignatureAlgorithm signatureAlgorithm_;
     std::unique_ptr<ISignatureEngine> signatureEngine_;
+
+    // Key agreement algorithm this instance uses for GenerateKeyAgreementKeyPair; fixed for the
+    // instance's lifetime. keyAgreementEngine_ is null until GenerateKeyAgreementKeyPair()
+    // succeeds, and then holds the key pair for the instance's lifetime (see
+    // ExportKeyAgreementPublicKey/DeriveSharedSecret above) -- cached like signatureEngine_/
+    // asymmetricCipher_ above, not stateless per-call, since key generation is the expensive part
+    // and the exported public key must stay tied to the same private key across calls.
+    KeyAgreementAlgorithm keyAgreementAlgorithm_;
+    std::unique_ptr<IKeyAgreementService> keyAgreementEngine_;
 
 };
 

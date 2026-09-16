@@ -4,6 +4,7 @@
 #include "Providers/AeadCipher.h"
 #include "Providers/AsymmetricCipher.h"
 #include "Providers/HashService.h"
+#include "Providers/KeyAgreementService.h"
 #include "Providers/KeyDerivation.h"
 #include "Providers/LegacyCipher.h"
 #include "Providers/MacService.h"
@@ -15,7 +16,7 @@
 namespace CryptoApiNS
 {
 
-class CMicrosoftProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService, public ISignatureEngine
+class CMicrosoftProvider : public IAeadCipher, public IKeyDerivation, public IRandomSource, public ILegacyCipher, public IAsymmetricCipher, public IMacService, public IHashService, public ISignatureEngine, public IKeyAgreementService
 {
 public:
     virtual ~CMicrosoftProvider();
@@ -116,6 +117,17 @@ public:
     virtual bool Verify( const unsigned char* data, const unsigned int dataSize,
                         const unsigned char* signature, const unsigned int signatureSize);
 
+    // IKeyAgreementService (GenerateKeyPair declared above, shared with IAsymmetricCipher/
+    // ISignatureEngine -- dispatches on asymmetricModeIsKeyAgreement_, see its declaration below).
+    virtual bool SelectAlgorithm(const KeyAgreementAlgorithm algorithm);
+    virtual unsigned int GetPublicKeySize(void) const;
+    virtual unsigned int GetSharedSecretSize(void) const;
+
+    virtual bool GetPublicKey(unsigned char* publicKey, const unsigned int publicKeySize) const;
+
+    virtual bool DeriveSharedSecret( const unsigned char* peerPublicKey, const unsigned int peerPublicKeySize,
+                                    unsigned char* sharedSecret, const unsigned int sharedSecretSize);
+
 protected:
 
 private:
@@ -159,6 +171,18 @@ private:
     void* hashObjectHandle_;
     std::vector<unsigned char> hashObjectBuffer_;
     unsigned int hashOutputSize_;
+
+    // IKeyAgreementService state -- separate key material from rsaAlgorithmHandle_/rsaKeyHandle_
+    // and signatureAlgorithmHandle_/signatureKeyHandle_ above (all three are distinct key pairs,
+    // never in use simultaneously for the same instance). asymmetricModeIsKeyAgreement_ is the
+    // dispatch flag GenerateKeyPair() checks first (before asymmetricModeIsSignature_) to decide
+    // which key pair to generate -- see the comment on GenerateKeyPair's declaration above.
+    bool asymmetricModeIsKeyAgreement_;
+    KeyAgreementAlgorithm keyAgreementAlgorithm_;
+    void* keyAgreementAlgorithmHandle_;
+    void* keyAgreementKeyHandle_;
+    unsigned int keyAgreementPublicKeySize_;
+    unsigned int keyAgreementSharedSecretSize_;
 
 };
 

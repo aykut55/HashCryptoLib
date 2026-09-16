@@ -193,6 +193,47 @@ public:
     // cleanly rejected.
     int RunSignatureAlgorithmsTest(void);
 
+    // Exercises CCryptoApi's Key agreement surface (GenerateKeyAgreementKeyPair/
+    // GetKeyAgreementPublicKeySize/GetSharedSecretSize/ExportKeyAgreementPublicKey/
+    // DeriveSharedSecret via the 7-argument or Key-agreement-only 2-argument constructor).
+    // Unlike Signature/RSA above (self-contained round trip inside one CCryptoApi instance), key
+    // agreement is inherently two-party: each method creates TWO independent CCryptoApi instances
+    // ("alice"/"bob") of the same provider+algorithm, has each generate its own key pair, exchanges
+    // exported public keys, and asserts both sides derive a byte-identical shared secret -- plus
+    // that substituting a tampered peer public key does not silently reproduce the same secret.
+    // Each method exercises a different KeyAgreementAlgorithm for coverage diversity (breadth of
+    // both values x all 4 providers is RunKeyAgreementAlgorithmsTest's job, not this one's):
+    // Microsoft/CryptoPP use ECDH-P256 (Microsoft's only supported value -- see
+    // ccryptoapi_factory_unification_goal memory on CNG's lack of standard X25519), Botan/OpenSSL
+    // use X25519. One full independent method per provider (no shared helper).
+    int RunMicrosoftProviderKeyAgreementTest(void);
+
+    int RunCryptoPPProviderKeyAgreementTest(void);
+
+    int RunBotanProviderKeyAgreementTest(void);
+
+    int RunOpenSslProviderKeyAgreementTest(void);
+
+    // Breadth companion to the 4 Run<Vendor>ProviderKeyAgreementTest methods: loops every
+    // ProviderKind x every KeyAgreementAlgorithm value, each iteration creating a fresh alice/bob
+    // pair via CCryptoApi's Key-agreement-only 2-argument constructor +
+    // GenerateKeyAgreementKeyPair/ExportKeyAgreementPublicKey/DeriveSharedSecret, cross-checked
+    // against ICryptoProviderFactory::SupportsKeyAgreementAlgorithm() as ground truth -- supported
+    // combinations must agree on a shared secret, unsupported ones (KEYAGREEMENT_X25519 on
+    // Microsoft) must be cleanly rejected.
+    int RunKeyAgreementAlgorithmsTest(void);
+
+    // Full AES parameter matrix: 13 AEAD (GCM/CCM/EAX/SIV/GCM-SIV x supported key sizes) + 15
+    // Legacy (CBC/CTR/CFB/OFB/ECB x 128/192/256) = 28 algorithm/mode/key-size combinations, x 4
+    // providers = 112 literal blocks. Deliberately written WITHOUT a for/while loop over the
+    // algorithm lists (unlike RunSignatureAlgorithmsTest/RunKeyAgreementAlgorithmsTest above) --
+    // user explicitly asked to see each combination's CCryptoApi constructor argument spelled out
+    // on its own, not abstracted into a cases[] loop. Each block round-trips (or, for a provider
+    // lacking that mode, asserts correctly-unsupported) via EncryptBuffer/DecryptBuffer (AEAD) or
+    // EncryptLegacyBuffer/DecryptLegacyBuffer (Legacy). Support/non-support per block is taken
+    // directly from each C*Provider.cpp's own AeadAlgorithmName/LegacyAlgorithmName switch.
+    int RunAESTests(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

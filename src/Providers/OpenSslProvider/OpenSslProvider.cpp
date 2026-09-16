@@ -1,9 +1,11 @@
 #include "OpenSslProvider.h"
 
 #include "openssl/bn.h"
+#include "openssl/core_names.h"
 #include "openssl/ec.h"
 #include "openssl/evp.h"
 #include "openssl/hmac.h"
+#include "openssl/params.h"
 #include "openssl/rand.h"
 #include "openssl/rsa.h"
 
@@ -141,6 +143,45 @@ namespace
         }
     }
     // -----------------------------------------------------------------------------
+
+    // --- Key agreement (IKeyAgreementService) -----------------------------------------------------
+
+    const char* KeyAgreementKeyType(const KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case KEYAGREEMENT_ECDH_P256: return "EC";
+        case KEYAGREEMENT_X25519:    return "X25519";
+        default:                     return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // KEYAGREEMENT_ECDH_P256: SEC1 uncompressed point (0x04||X||Y), 1 + 2*32 bytes.
+    // KEYAGREEMENT_X25519: raw 32-byte u-coordinate.
+    unsigned int KeyAgreementPublicKeySize(const KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case KEYAGREEMENT_ECDH_P256: return 1u + 2u * 32u;
+        case KEYAGREEMENT_X25519:    return 32u;
+        default:                     return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // Both curves produce a 32-byte shared secret (P-256: the raw X-coordinate of the agreed
+    // point; X25519: its native output size).
+    unsigned int KeyAgreementSharedSecretSize(const KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case KEYAGREEMENT_ECDH_P256: return 32u;
+        case KEYAGREEMENT_X25519:    return 32u;
+        default:                     return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
 }
 
 struct COpenSslProvider::Impl
@@ -177,13 +218,27 @@ struct COpenSslProvider::Impl
     unsigned int signatureSize;
     EVP_PKEY* signatureKey;
 
+    // IKeyAgreementService state -- separate key from rsaKey/signatureKey above (all three are
+    // distinct key pairs, never in use simultaneously for the same instance).
+    // asymmetricModeIsKeyAgreement dispatches GenerateKeyPair() (shared with IAsymmetricCipher/
+    // ISignatureEngine, see the header comment); checked before asymmetricModeIsSignature.
+    bool asymmetricModeIsKeyAgreement;
+    KeyAgreementAlgorithm keyAgreementAlgorithm;
+    bool keyAgreementKeyGenerated;
+    unsigned int keyAgreementPublicKeySize;
+    unsigned int keyAgreementSharedSecretSize;
+    EVP_PKEY* keyAgreementKey;
+
     Impl()
         : cipher(nullptr), encryptCtx(EVP_CIPHER_CTX_new()), decryptCtx(EVP_CIPHER_CTX_new()),
           legacySelected(false), isCcm(false), isPadded(false), keySize(0), ivOrNonceSize(0),
           tagSize(0), blockSize(0), rsaKeyBits(0), rsaKeyGenerated(false), rsaKey(nullptr),
           hashAlgorithm(nullptr), hashCtx(nullptr),
           asymmetricModeIsSignature(false), signatureAlgorithm(SIGNATURE_ECDSA_P256_SHA256),
-          signatureKeyGenerated(false), signatureSize(0), signatureKey(nullptr)
+          signatureKeyGenerated(false), signatureSize(0), signatureKey(nullptr),
+          asymmetricModeIsKeyAgreement(false), keyAgreementAlgorithm(KEYAGREEMENT_ECDH_P256),
+          keyAgreementKeyGenerated(false), keyAgreementPublicKeySize(0),
+          keyAgreementSharedSecretSize(0), keyAgreementKey(nullptr)
     {
     }
     // -----------------------------------------------------------------------------
@@ -207,6 +262,10 @@ struct COpenSslProvider::Impl
         if (signatureKey != nullptr)
         {
             EVP_PKEY_free(signatureKey);
+        }
+        if (keyAgreementKey != nullptr)
+        {
+            EVP_PKEY_free(keyAgreementKey);
         }
     }
     // -----------------------------------------------------------------------------
@@ -671,6 +730,7 @@ bool COpenSslProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
             impl_->rsaKey = nullptr;
         }
         impl_->asymmetricModeIsSignature = false;
+        impl_->asymmetricModeIsKeyAgreement = false;
         return true;
     }
     catch (...)
@@ -687,6 +747,56 @@ bool COpenSslProvider::GenerateKeyPair(void)
         if (!impl_)
         {
             return false;
+        }
+
+        if (impl_->asymmetricModeIsKeyAgreement)
+        {
+            const char* keyType = KeyAgreementKeyType(impl_->keyAgreementAlgorithm);
+            if (keyType == nullptr)
+            {
+                return false;
+            }
+
+            EVP_PKEY_CTX* genCtx = EVP_PKEY_CTX_new_from_name(nullptr, keyType, nullptr);
+            if (genCtx == nullptr)
+            {
+                return false;
+            }
+
+            if (EVP_PKEY_keygen_init(genCtx) != 1)
+            {
+                EVP_PKEY_CTX_free(genCtx);
+                return false;
+            }
+
+            if (impl_->keyAgreementAlgorithm == KEYAGREEMENT_ECDH_P256)
+            {
+                if (EVP_PKEY_CTX_set_group_name(genCtx, "P-256") != 1)
+                {
+                    EVP_PKEY_CTX_free(genCtx);
+                    return false;
+                }
+            }
+
+            EVP_PKEY* newKey = nullptr;
+            if (EVP_PKEY_generate(genCtx, &newKey) != 1)
+            {
+                EVP_PKEY_CTX_free(genCtx);
+                return false;
+            }
+
+            EVP_PKEY_CTX_free(genCtx);
+
+            if (impl_->keyAgreementKey != nullptr)
+            {
+                EVP_PKEY_free(impl_->keyAgreementKey);
+            }
+
+            impl_->keyAgreementKey = newKey;
+            impl_->keyAgreementPublicKeySize = KeyAgreementPublicKeySize(impl_->keyAgreementAlgorithm);
+            impl_->keyAgreementSharedSecretSize = KeyAgreementSharedSecretSize(impl_->keyAgreementAlgorithm);
+            impl_->keyAgreementKeyGenerated = true;
+            return true;
         }
 
         if (impl_->asymmetricModeIsSignature)
@@ -1133,6 +1243,7 @@ bool COpenSslProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
         }
         impl_->signatureSize = 0;
         impl_->asymmetricModeIsSignature = true;
+        impl_->asymmetricModeIsKeyAgreement = false;
         return true;
     }
     catch (...)
@@ -1298,6 +1409,169 @@ bool COpenSslProvider::Verify(const unsigned char* data, const unsigned int data
         const int verifyStatus = EVP_DigestVerify(mdCtx, signature, signatureSize, data, dataSize);
         EVP_MD_CTX_free(mdCtx);
         return verifyStatus == 1;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::SelectAlgorithm(const KeyAgreementAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256:
+            case KEYAGREEMENT_X25519:
+                break;
+            default:
+                return false;
+        }
+
+        impl_->keyAgreementAlgorithm = algorithm;
+        impl_->keyAgreementKeyGenerated = false;
+        if (impl_->keyAgreementKey != nullptr)
+        {
+            EVP_PKEY_free(impl_->keyAgreementKey);
+            impl_->keyAgreementKey = nullptr;
+        }
+        impl_->keyAgreementPublicKeySize = 0;
+        impl_->keyAgreementSharedSecretSize = 0;
+        impl_->asymmetricModeIsKeyAgreement = true;
+        impl_->asymmetricModeIsSignature = false;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int COpenSslProvider::GetPublicKeySize(void) const
+{
+    return (impl_ && impl_->keyAgreementKeyGenerated) ? impl_->keyAgreementPublicKeySize : 0;
+}
+// -----------------------------------------------------------------------------
+
+unsigned int COpenSslProvider::GetSharedSecretSize(void) const
+{
+    return (impl_ && impl_->keyAgreementKeyGenerated) ? impl_->keyAgreementSharedSecretSize : 0;
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::GetPublicKey(unsigned char* publicKey, const unsigned int publicKeySize) const
+{
+    try
+    {
+        if (!impl_ || !impl_->keyAgreementKeyGenerated || impl_->keyAgreementKey == nullptr ||
+            publicKey == nullptr || publicKeySize < impl_->keyAgreementPublicKeySize)
+        {
+            return false;
+        }
+
+        unsigned char* encoded = nullptr;
+        const size_t encodedLen = EVP_PKEY_get1_encoded_public_key(impl_->keyAgreementKey, &encoded);
+        if (encodedLen == 0 || encoded == nullptr)
+        {
+            return false;
+        }
+
+        const bool sizeMatches = encodedLen == impl_->keyAgreementPublicKeySize;
+        if (sizeMatches)
+        {
+            std::memcpy(publicKey, encoded, encodedLen);
+        }
+
+        OPENSSL_free(encoded);
+        return sizeMatches;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool COpenSslProvider::DeriveSharedSecret(const unsigned char* peerPublicKey, const unsigned int peerPublicKeySize, unsigned char* sharedSecret, const unsigned int sharedSecretSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->keyAgreementKeyGenerated || impl_->keyAgreementKey == nullptr ||
+            peerPublicKey == nullptr || peerPublicKeySize != impl_->keyAgreementPublicKeySize ||
+            sharedSecret == nullptr || sharedSecretSize < impl_->keyAgreementSharedSecretSize)
+        {
+            return false;
+        }
+
+        EVP_PKEY* peerKey = nullptr;
+
+        if (impl_->keyAgreementAlgorithm == KEYAGREEMENT_X25519)
+        {
+            peerKey = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, peerPublicKey, peerPublicKeySize);
+        }
+        else
+        {
+            EVP_PKEY_CTX* buildCtx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+            if (buildCtx == nullptr)
+            {
+                return false;
+            }
+
+            if (EVP_PKEY_fromdata_init(buildCtx) != 1)
+            {
+                EVP_PKEY_CTX_free(buildCtx);
+                return false;
+            }
+
+            OSSL_PARAM params[3];
+            params[0] = OSSL_PARAM_construct_utf8_string(const_cast<char*>(OSSL_PKEY_PARAM_GROUP_NAME), const_cast<char*>("P-256"), 0);
+            params[1] = OSSL_PARAM_construct_octet_string(const_cast<char*>(OSSL_PKEY_PARAM_PUB_KEY), const_cast<unsigned char*>(peerPublicKey), peerPublicKeySize);
+            params[2] = OSSL_PARAM_construct_end();
+
+            if (EVP_PKEY_fromdata(buildCtx, &peerKey, EVP_PKEY_PUBLIC_KEY, params) != 1)
+            {
+                EVP_PKEY_CTX_free(buildCtx);
+                return false;
+            }
+
+            EVP_PKEY_CTX_free(buildCtx);
+        }
+
+        if (peerKey == nullptr)
+        {
+            return false;
+        }
+
+        EVP_PKEY_CTX* deriveCtx = EVP_PKEY_CTX_new_from_pkey(nullptr, impl_->keyAgreementKey, nullptr);
+        if (deriveCtx == nullptr)
+        {
+            EVP_PKEY_free(peerKey);
+            return false;
+        }
+
+        if (EVP_PKEY_derive_init(deriveCtx) != 1 || EVP_PKEY_derive_set_peer(deriveCtx, peerKey) != 1)
+        {
+            EVP_PKEY_CTX_free(deriveCtx);
+            EVP_PKEY_free(peerKey);
+            return false;
+        }
+
+        size_t secretLen = sharedSecretSize;
+        const bool derived = EVP_PKEY_derive(deriveCtx, sharedSecret, &secretLen) == 1 &&
+                             secretLen == impl_->keyAgreementSharedSecretSize;
+
+        EVP_PKEY_CTX_free(deriveCtx);
+        EVP_PKEY_free(peerKey);
+
+        return derived;
     }
     catch (...)
     {

@@ -6358,6 +6358,3367 @@ int CCryptoApiTester::RunSignatureAlgorithmsTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunMicrosoftProviderKeyAgreementTest(void)
+{
+    try
+    {
+        CCryptoApi alice(PROVIDER_MICROSOFT, KEYAGREEMENT_ECDH_P256);
+        CCryptoApi bob(PROVIDER_MICROSOFT, KEYAGREEMENT_ECDH_P256);
+
+        int status = alice.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED alice GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED bob GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int publicKeySize = alice.GetKeyAgreementPublicKeySize();
+        if (publicKeySize != 72 || bob.GetKeyAgreementPublicKeySize() != publicKeySize)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED GetKeyAgreementPublicKeySize expected 72 alice=" << publicKeySize
+                      << " bob=" << bob.GetKeyAgreementPublicKeySize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const int sharedSecretSize = alice.GetSharedSecretSize();
+        if (sharedSecretSize != 32 || bob.GetSharedSecretSize() != sharedSecretSize)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED GetSharedSecretSize expected 32 alice=" << sharedSecretSize
+                      << " bob=" << bob.GetSharedSecretSize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> alicePublicKey(static_cast<std::size_t>(publicKeySize));
+        int aliceActualPublicKeySize = 0;
+        status = alice.ExportKeyAgreementPublicKey(publicKeySize, &alicePublicKey[0], &aliceActualPublicKeySize);
+        if (status != NO_ERROR || aliceActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED alice ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobPublicKey(static_cast<std::size_t>(publicKeySize));
+        int bobActualPublicKeySize = 0;
+        status = bob.ExportKeyAgreementPublicKey(publicKeySize, &bobPublicKey[0], &bobActualPublicKeySize);
+        if (status != NO_ERROR || bobActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED bob ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> aliceSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int aliceSharedSecretSize = 0;
+        status = alice.DeriveSharedSecret(&bobPublicKey[0], bobActualPublicKeySize, sharedSecretSize, &aliceSharedSecret[0], &aliceSharedSecretSize);
+        if (status != NO_ERROR || aliceSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED alice DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int bobSharedSecretSize = 0;
+        status = bob.DeriveSharedSecret(&alicePublicKey[0], aliceActualPublicKeySize, sharedSecretSize, &bobSharedSecret[0], &bobSharedSecretSize);
+        if (status != NO_ERROR || bobSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED bob DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        if (aliceSharedSecret != bobSharedSecret)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED alice/bob shared secrets do not match" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderKeyAgreementTest: PASSED alice/bob agree on shared secret (" << sharedSecretSize << " bytes)" << std::endl;
+
+        std::vector<unsigned char> tamperedBobPublicKey(bobPublicKey);
+        tamperedBobPublicKey[0] = static_cast<unsigned char>(tamperedBobPublicKey[0] ^ 0xFF);
+        std::vector<unsigned char> aliceSharedSecretWithTamperedPeer(static_cast<std::size_t>(sharedSecretSize));
+        int aliceTamperedSize = 0;
+        const int tamperedStatus = alice.DeriveSharedSecret(&tamperedBobPublicKey[0], static_cast<int>(tamperedBobPublicKey.size()),
+                                                             sharedSecretSize, &aliceSharedSecretWithTamperedPeer[0], &aliceTamperedSize);
+        if (tamperedStatus == NO_ERROR && aliceSharedSecretWithTamperedPeer == aliceSharedSecret)
+        {
+            std::cout << "RunMicrosoftProviderKeyAgreementTest: FAILED tampered peer public key produced identical shared secret" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunMicrosoftProviderKeyAgreementTest: PASSED tampered peer public key rejected or yields a different secret" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCryptoPPProviderKeyAgreementTest(void)
+{
+    try
+    {
+        CCryptoApi alice(PROVIDER_CRYPTOPP, KEYAGREEMENT_ECDH_P256);
+        CCryptoApi bob(PROVIDER_CRYPTOPP, KEYAGREEMENT_ECDH_P256);
+
+        int status = alice.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED alice GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED bob GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int publicKeySize = alice.GetKeyAgreementPublicKeySize();
+        if (publicKeySize != 65 || bob.GetKeyAgreementPublicKeySize() != publicKeySize)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED GetKeyAgreementPublicKeySize expected 65 alice=" << publicKeySize
+                      << " bob=" << bob.GetKeyAgreementPublicKeySize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const int sharedSecretSize = alice.GetSharedSecretSize();
+        if (sharedSecretSize != 32 || bob.GetSharedSecretSize() != sharedSecretSize)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED GetSharedSecretSize expected 32 alice=" << sharedSecretSize
+                      << " bob=" << bob.GetSharedSecretSize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> alicePublicKey(static_cast<std::size_t>(publicKeySize));
+        int aliceActualPublicKeySize = 0;
+        status = alice.ExportKeyAgreementPublicKey(publicKeySize, &alicePublicKey[0], &aliceActualPublicKeySize);
+        if (status != NO_ERROR || aliceActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED alice ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobPublicKey(static_cast<std::size_t>(publicKeySize));
+        int bobActualPublicKeySize = 0;
+        status = bob.ExportKeyAgreementPublicKey(publicKeySize, &bobPublicKey[0], &bobActualPublicKeySize);
+        if (status != NO_ERROR || bobActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED bob ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> aliceSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int aliceSharedSecretSize = 0;
+        status = alice.DeriveSharedSecret(&bobPublicKey[0], bobActualPublicKeySize, sharedSecretSize, &aliceSharedSecret[0], &aliceSharedSecretSize);
+        if (status != NO_ERROR || aliceSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED alice DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int bobSharedSecretSize = 0;
+        status = bob.DeriveSharedSecret(&alicePublicKey[0], aliceActualPublicKeySize, sharedSecretSize, &bobSharedSecret[0], &bobSharedSecretSize);
+        if (status != NO_ERROR || bobSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED bob DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        if (aliceSharedSecret != bobSharedSecret)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED alice/bob shared secrets do not match" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderKeyAgreementTest: PASSED alice/bob agree on shared secret (" << sharedSecretSize << " bytes)" << std::endl;
+
+        std::vector<unsigned char> tamperedBobPublicKey(bobPublicKey);
+        tamperedBobPublicKey[0] = static_cast<unsigned char>(tamperedBobPublicKey[0] ^ 0xFF);
+        std::vector<unsigned char> aliceSharedSecretWithTamperedPeer(static_cast<std::size_t>(sharedSecretSize));
+        int aliceTamperedSize = 0;
+        const int tamperedStatus = alice.DeriveSharedSecret(&tamperedBobPublicKey[0], static_cast<int>(tamperedBobPublicKey.size()),
+                                                             sharedSecretSize, &aliceSharedSecretWithTamperedPeer[0], &aliceTamperedSize);
+        if (tamperedStatus == NO_ERROR && aliceSharedSecretWithTamperedPeer == aliceSharedSecret)
+        {
+            std::cout << "RunCryptoPPProviderKeyAgreementTest: FAILED tampered peer public key produced identical shared secret" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCryptoPPProviderKeyAgreementTest: PASSED tampered peer public key rejected or yields a different secret" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunBotanProviderKeyAgreementTest(void)
+{
+    try
+    {
+        CCryptoApi alice(PROVIDER_BOTAN, KEYAGREEMENT_X25519);
+        CCryptoApi bob(PROVIDER_BOTAN, KEYAGREEMENT_X25519);
+
+        int status = alice.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED alice GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED bob GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int publicKeySize = alice.GetKeyAgreementPublicKeySize();
+        if (publicKeySize != 32 || bob.GetKeyAgreementPublicKeySize() != publicKeySize)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED GetKeyAgreementPublicKeySize expected 32 alice=" << publicKeySize
+                      << " bob=" << bob.GetKeyAgreementPublicKeySize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const int sharedSecretSize = alice.GetSharedSecretSize();
+        if (sharedSecretSize != 32 || bob.GetSharedSecretSize() != sharedSecretSize)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED GetSharedSecretSize expected 32 alice=" << sharedSecretSize
+                      << " bob=" << bob.GetSharedSecretSize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> alicePublicKey(static_cast<std::size_t>(publicKeySize));
+        int aliceActualPublicKeySize = 0;
+        status = alice.ExportKeyAgreementPublicKey(publicKeySize, &alicePublicKey[0], &aliceActualPublicKeySize);
+        if (status != NO_ERROR || aliceActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED alice ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobPublicKey(static_cast<std::size_t>(publicKeySize));
+        int bobActualPublicKeySize = 0;
+        status = bob.ExportKeyAgreementPublicKey(publicKeySize, &bobPublicKey[0], &bobActualPublicKeySize);
+        if (status != NO_ERROR || bobActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED bob ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> aliceSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int aliceSharedSecretSize = 0;
+        status = alice.DeriveSharedSecret(&bobPublicKey[0], bobActualPublicKeySize, sharedSecretSize, &aliceSharedSecret[0], &aliceSharedSecretSize);
+        if (status != NO_ERROR || aliceSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED alice DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int bobSharedSecretSize = 0;
+        status = bob.DeriveSharedSecret(&alicePublicKey[0], aliceActualPublicKeySize, sharedSecretSize, &bobSharedSecret[0], &bobSharedSecretSize);
+        if (status != NO_ERROR || bobSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED bob DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        if (aliceSharedSecret != bobSharedSecret)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED alice/bob shared secrets do not match" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderKeyAgreementTest: PASSED alice/bob agree on shared secret (" << sharedSecretSize << " bytes)" << std::endl;
+
+        std::vector<unsigned char> tamperedBobPublicKey(bobPublicKey);
+        tamperedBobPublicKey[0] = static_cast<unsigned char>(tamperedBobPublicKey[0] ^ 0xFF);
+        std::vector<unsigned char> aliceSharedSecretWithTamperedPeer(static_cast<std::size_t>(sharedSecretSize));
+        int aliceTamperedSize = 0;
+        const int tamperedStatus = alice.DeriveSharedSecret(&tamperedBobPublicKey[0], static_cast<int>(tamperedBobPublicKey.size()),
+                                                             sharedSecretSize, &aliceSharedSecretWithTamperedPeer[0], &aliceTamperedSize);
+        if (tamperedStatus == NO_ERROR && aliceSharedSecretWithTamperedPeer == aliceSharedSecret)
+        {
+            std::cout << "RunBotanProviderKeyAgreementTest: FAILED tampered peer public key produced identical shared secret" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunBotanProviderKeyAgreementTest: PASSED tampered peer public key rejected or yields a different secret" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunOpenSslProviderKeyAgreementTest(void)
+{
+    try
+    {
+        CCryptoApi alice(PROVIDER_OPENSSL, KEYAGREEMENT_X25519);
+        CCryptoApi bob(PROVIDER_OPENSSL, KEYAGREEMENT_X25519);
+
+        int status = alice.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED alice GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED bob GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int publicKeySize = alice.GetKeyAgreementPublicKeySize();
+        if (publicKeySize != 32 || bob.GetKeyAgreementPublicKeySize() != publicKeySize)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED GetKeyAgreementPublicKeySize expected 32 alice=" << publicKeySize
+                      << " bob=" << bob.GetKeyAgreementPublicKeySize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const int sharedSecretSize = alice.GetSharedSecretSize();
+        if (sharedSecretSize != 32 || bob.GetSharedSecretSize() != sharedSecretSize)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED GetSharedSecretSize expected 32 alice=" << sharedSecretSize
+                      << " bob=" << bob.GetSharedSecretSize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> alicePublicKey(static_cast<std::size_t>(publicKeySize));
+        int aliceActualPublicKeySize = 0;
+        status = alice.ExportKeyAgreementPublicKey(publicKeySize, &alicePublicKey[0], &aliceActualPublicKeySize);
+        if (status != NO_ERROR || aliceActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED alice ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobPublicKey(static_cast<std::size_t>(publicKeySize));
+        int bobActualPublicKeySize = 0;
+        status = bob.ExportKeyAgreementPublicKey(publicKeySize, &bobPublicKey[0], &bobActualPublicKeySize);
+        if (status != NO_ERROR || bobActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED bob ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> aliceSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int aliceSharedSecretSize = 0;
+        status = alice.DeriveSharedSecret(&bobPublicKey[0], bobActualPublicKeySize, sharedSecretSize, &aliceSharedSecret[0], &aliceSharedSecretSize);
+        if (status != NO_ERROR || aliceSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED alice DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int bobSharedSecretSize = 0;
+        status = bob.DeriveSharedSecret(&alicePublicKey[0], aliceActualPublicKeySize, sharedSecretSize, &bobSharedSecret[0], &bobSharedSecretSize);
+        if (status != NO_ERROR || bobSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED bob DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        if (aliceSharedSecret != bobSharedSecret)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED alice/bob shared secrets do not match" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderKeyAgreementTest: PASSED alice/bob agree on shared secret (" << sharedSecretSize << " bytes)" << std::endl;
+
+        std::vector<unsigned char> tamperedBobPublicKey(bobPublicKey);
+        tamperedBobPublicKey[0] = static_cast<unsigned char>(tamperedBobPublicKey[0] ^ 0xFF);
+        std::vector<unsigned char> aliceSharedSecretWithTamperedPeer(static_cast<std::size_t>(sharedSecretSize));
+        int aliceTamperedSize = 0;
+        const int tamperedStatus = alice.DeriveSharedSecret(&tamperedBobPublicKey[0], static_cast<int>(tamperedBobPublicKey.size()),
+                                                             sharedSecretSize, &aliceSharedSecretWithTamperedPeer[0], &aliceTamperedSize);
+        if (tamperedStatus == NO_ERROR && aliceSharedSecretWithTamperedPeer == aliceSharedSecret)
+        {
+            std::cout << "RunOpenSslProviderKeyAgreementTest: FAILED tampered peer public key produced identical shared secret" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunOpenSslProviderKeyAgreementTest: PASSED tampered peer public key rejected or yields a different secret" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunKeyAgreementAlgorithmsTest(void)
+{
+    try
+    {
+        struct ProviderCase
+        {
+            ProviderKind kind;
+            const char* name;
+        };
+
+        const ProviderCase providerCases[] =
+        {
+            { PROVIDER_MICROSOFT, "Microsoft" },
+            { PROVIDER_CRYPTOPP,  "CryptoPP" },
+            { PROVIDER_BOTAN,     "Botan" },
+            { PROVIDER_OPENSSL,   "OpenSSL" }
+        };
+
+        struct KeyAgreementCase
+        {
+            KeyAgreementAlgorithm algorithm;
+            const char* name;
+        };
+
+        const KeyAgreementCase keyAgreementCases[] =
+        {
+            { KEYAGREEMENT_ECDH_P256, "ECDH_P256" },
+            { KEYAGREEMENT_X25519,    "X25519" }
+        };
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t providerIndex = 0; providerIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++providerIndex)
+        {
+            const ProviderKind kind = providerCases[providerIndex].kind;
+            const char* providerName = providerCases[providerIndex].name;
+
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+            if (!factory)
+            {
+                std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "] CreateProviderFactory" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            for (std::size_t algIndex = 0; algIndex < sizeof(keyAgreementCases) / sizeof(keyAgreementCases[0]); ++algIndex)
+            {
+                const KeyAgreementAlgorithm algorithm = keyAgreementCases[algIndex].algorithm;
+                const char* algorithmName = keyAgreementCases[algIndex].name;
+                const bool supported = factory->SupportsKeyAgreementAlgorithm(algorithm);
+
+                CCryptoApi alice(kind, algorithm);
+                CCryptoApi bob(kind, algorithm);
+                const int aliceKeyPairStatus = alice.GenerateKeyAgreementKeyPair();
+                const int bobKeyPairStatus = bob.GenerateKeyAgreementKeyPair();
+
+                if (!supported)
+                {
+                    if (aliceKeyPairStatus == NO_ERROR && bobKeyPairStatus == NO_ERROR)
+                    {
+                        std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                                  << "] expected unsupported but GenerateKeyAgreementKeyPair succeeded" << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::cout << "RunKeyAgreementAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                                  << "] correctly unsupported" << std::endl;
+                    }
+                    continue;
+                }
+
+                ++supportedCount;
+
+                if (aliceKeyPairStatus != NO_ERROR || bobKeyPairStatus != NO_ERROR)
+                {
+                    std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] GenerateKeyAgreementKeyPair alice=" << aliceKeyPairStatus << " bob=" << bobKeyPairStatus
+                              << " for a supported algorithm" << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                const int publicKeySize = alice.GetKeyAgreementPublicKeySize();
+                const int sharedSecretSize = alice.GetSharedSecretSize();
+                if (publicKeySize <= 0 || sharedSecretSize <= 0 ||
+                    bob.GetKeyAgreementPublicKeySize() != publicKeySize || bob.GetSharedSecretSize() != sharedSecretSize)
+                {
+                    std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] GetKeyAgreementPublicKeySize=" << publicKeySize << " GetSharedSecretSize=" << sharedSecretSize << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> alicePublicKey(static_cast<std::size_t>(publicKeySize));
+                int aliceActualPublicKeySize = 0;
+                int status = alice.ExportKeyAgreementPublicKey(publicKeySize, &alicePublicKey[0], &aliceActualPublicKeySize);
+                if (status != NO_ERROR || aliceActualPublicKeySize != publicKeySize)
+                {
+                    std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] alice ExportKeyAgreementPublicKey status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> bobPublicKey(static_cast<std::size_t>(publicKeySize));
+                int bobActualPublicKeySize = 0;
+                status = bob.ExportKeyAgreementPublicKey(publicKeySize, &bobPublicKey[0], &bobActualPublicKeySize);
+                if (status != NO_ERROR || bobActualPublicKeySize != publicKeySize)
+                {
+                    std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] bob ExportKeyAgreementPublicKey status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> aliceSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+                int aliceSharedSecretSize = 0;
+                status = alice.DeriveSharedSecret(&bobPublicKey[0], bobActualPublicKeySize, sharedSecretSize, &aliceSharedSecret[0], &aliceSharedSecretSize);
+                if (status != NO_ERROR || aliceSharedSecretSize != sharedSecretSize)
+                {
+                    std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] alice DeriveSharedSecret status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> bobSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+                int bobSharedSecretSize = 0;
+                status = bob.DeriveSharedSecret(&alicePublicKey[0], aliceActualPublicKeySize, sharedSecretSize, &bobSharedSecret[0], &bobSharedSecretSize);
+                if (status != NO_ERROR || bobSharedSecretSize != sharedSecretSize)
+                {
+                    std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] bob DeriveSharedSecret status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                if (aliceSharedSecret != bobSharedSecret)
+                {
+                    std::cout << "RunKeyAgreementAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] alice/bob shared secrets do not match" << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::cout << "RunKeyAgreementAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                          << "] shared secret (" << sharedSecretSize << " bytes)" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunKeyAgreementAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and agreed)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunKeyAgreementAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunAESTests(void)
+{
+    try
+    {
+        // Written deliberately WITHOUT a for/while loop over the algorithm lists (unlike
+        // RunSignatureAlgorithmsTest/RunKeyAgreementAlgorithmsTest above): every one of the 28 AES
+        // algorithm/mode/key-size combinations (13 AEAD + 15 Legacy) x 4 providers = 112 literal
+        // blocks below, each showing exactly which CCryptoApi constructor argument selects that
+        // combination. Support/non-support per block is taken directly from each
+        // C*Provider.cpp's own AeadAlgorithmName/LegacyAlgorithmName switch (not guessed) -- see
+        // AlgorithmCapabilityMatrix.h and ccryptoapi_key_agreement_support memory for the same
+        // matrix cross-checked independently.
+        const char* password = "RunAESTests P@ssw0rd!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        const unsigned char plaintext[] = "RunAESTests AES parameter matrix plaintext payload.";
+        const int plaintextSize = static_cast<int>(sizeof(plaintext) - 1);
+
+        int failures = 0;
+
+        // ============================================================================
+        // Microsoft -- AEAD (AES only)
+        // ============================================================================
+
+        // Microsoft/AEAD_AES_128_GCM -- AES-128-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_128_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_128_GCM] key=128 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_128_GCM] key=128 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_192_GCM -- AES-192-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_192_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_192_GCM] key=192 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_192_GCM] key=192 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_256_GCM -- AES-256-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_256_GCM] key=256 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_256_GCM] key=256 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_128_CCM -- AES-128-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_128_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_128_CCM] key=128 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_128_CCM] key=128 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_192_CCM -- AES-192-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_192_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_192_CCM] key=192 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_192_CCM] key=192 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_256_CCM -- AES-256-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_256_CCM] key=256 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_256_CCM] key=256 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_128_EAX -- AES-128-EAX (AEAD) -- expected unsupported: CNG has no EAX chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_128_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_128_EAX] key=128 mode=EAX expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_128_EAX] key=128 mode=EAX correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_192_EAX -- AES-192-EAX (AEAD) -- expected unsupported: CNG has no EAX chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_192_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_192_EAX] key=192 mode=EAX expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_192_EAX] key=192 mode=EAX correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_256_EAX -- AES-256-EAX (AEAD) -- expected unsupported: CNG has no EAX chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_256_EAX] key=256 mode=EAX expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_256_EAX] key=256 mode=EAX correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_128_SIV -- AES-128-SIV (AEAD) -- expected unsupported: CNG has no SIV chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_128_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_128_SIV] key=128 mode=SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_128_SIV] key=128 mode=SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_256_SIV -- AES-256-SIV (AEAD) -- expected unsupported: CNG has no SIV chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_256_SIV] key=256 mode=SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_256_SIV] key=256 mode=SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_128_GCM_SIV -- AES-128-GCM-SIV (AEAD) -- expected unsupported: CNG has no GCM-SIV chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_128_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/AEAD_AES_256_GCM_SIV -- AES-256-GCM-SIV (AEAD) -- expected unsupported: CNG has no GCM-SIV chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, AEAD_AES_256_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // ============================================================================
+        // Microsoft -- Legacy (AES only)
+        // ============================================================================
+
+        // Microsoft/LEGACY_AES_128_CBC -- AES-128-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_128_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_128_CBC] key=128 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_128_CBC] key=128 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_192_CBC -- AES-192-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_192_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_192_CBC] key=192 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_192_CBC] key=192 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_256_CBC -- AES-256-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_256_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_256_CBC] key=256 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_256_CBC] key=256 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_128_CTR -- AES-128-CTR (Legacy) -- expected unsupported: CNG has no CTR chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_128_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_128_CTR] key=128 mode=CTR expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_128_CTR] key=128 mode=CTR correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_192_CTR -- AES-192-CTR (Legacy) -- expected unsupported: CNG has no CTR chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_192_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_192_CTR] key=192 mode=CTR expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_192_CTR] key=192 mode=CTR correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_256_CTR -- AES-256-CTR (Legacy) -- expected unsupported: CNG has no CTR chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_256_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_256_CTR] key=256 mode=CTR expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_256_CTR] key=256 mode=CTR correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_128_CFB -- AES-128-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_128_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_128_CFB] key=128 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_128_CFB] key=128 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_192_CFB -- AES-192-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_192_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_192_CFB] key=192 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_192_CFB] key=192 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_256_CFB -- AES-256-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_256_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_256_CFB] key=256 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_256_CFB] key=256 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_128_OFB -- AES-128-OFB (Legacy) -- expected unsupported: CNG has no OFB chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_128_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_128_OFB] key=128 mode=OFB expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_128_OFB] key=128 mode=OFB correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_192_OFB -- AES-192-OFB (Legacy) -- expected unsupported: CNG has no OFB chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_192_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_192_OFB] key=192 mode=OFB expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_192_OFB] key=192 mode=OFB correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_256_OFB -- AES-256-OFB (Legacy) -- expected unsupported: CNG has no OFB chaining mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_256_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_256_OFB] key=256 mode=OFB expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_256_OFB] key=256 mode=OFB correctly unsupported" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_128_ECB -- AES-128-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_128_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_128_ECB] key=128 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_128_ECB] key=128 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_192_ECB -- AES-192-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_192_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_192_ECB] key=192 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_192_ECB] key=192 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Microsoft/LEGACY_AES_256_ECB -- AES-256-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_MICROSOFT, LEGACY_AES_256_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Microsoft/LEGACY_AES_256_ECB] key=256 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Microsoft/LEGACY_AES_256_ECB] key=256 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // ============================================================================
+        // CryptoPP -- AEAD (AES only)
+        // ============================================================================
+
+        // CryptoPP/AEAD_AES_128_GCM -- AES-128-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_128_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_128_GCM] key=128 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_128_GCM] key=128 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_192_GCM -- AES-192-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_192_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_192_GCM] key=192 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_192_GCM] key=192 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_256_GCM -- AES-256-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_256_GCM] key=256 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_256_GCM] key=256 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_128_CCM -- AES-128-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_128_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_128_CCM] key=128 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_128_CCM] key=128 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_192_CCM -- AES-192-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_192_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_192_CCM] key=192 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_192_CCM] key=192 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_256_CCM -- AES-256-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_256_CCM] key=256 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_256_CCM] key=256 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_128_EAX -- AES-128-EAX (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_128_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_128_EAX] key=128 mode=EAX status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_128_EAX] key=128 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_192_EAX -- AES-192-EAX (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_192_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_192_EAX] key=192 mode=EAX status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_192_EAX] key=192 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_256_EAX -- AES-256-EAX (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_256_EAX] key=256 mode=EAX status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_256_EAX] key=256 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_128_SIV -- AES-128-SIV (AEAD) -- expected unsupported: CryptoPP 8.9.0 has no built-in SIV mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_128_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_128_SIV] key=128 mode=SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_128_SIV] key=128 mode=SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_256_SIV -- AES-256-SIV (AEAD) -- expected unsupported: CryptoPP 8.9.0 has no built-in SIV mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_256_SIV] key=256 mode=SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_256_SIV] key=256 mode=SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_128_GCM_SIV -- AES-128-GCM-SIV (AEAD) -- expected unsupported: CryptoPP 8.9.0 has no built-in AES-GCM-SIV mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_128_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // CryptoPP/AEAD_AES_256_GCM_SIV -- AES-256-GCM-SIV (AEAD) -- expected unsupported: CryptoPP 8.9.0 has no built-in AES-GCM-SIV mode
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, AEAD_AES_256_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // ============================================================================
+        // CryptoPP -- Legacy (AES only)
+        // ============================================================================
+
+        // CryptoPP/LEGACY_AES_128_CBC -- AES-128-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_128_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_128_CBC] key=128 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_128_CBC] key=128 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_192_CBC -- AES-192-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_192_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_192_CBC] key=192 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_192_CBC] key=192 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_256_CBC -- AES-256-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_256_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_256_CBC] key=256 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_256_CBC] key=256 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_128_CTR -- AES-128-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_128_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_128_CTR] key=128 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_128_CTR] key=128 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_192_CTR -- AES-192-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_192_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_192_CTR] key=192 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_192_CTR] key=192 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_256_CTR -- AES-256-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_256_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_256_CTR] key=256 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_256_CTR] key=256 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_128_CFB -- AES-128-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_128_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_128_CFB] key=128 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_128_CFB] key=128 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_192_CFB -- AES-192-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_192_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_192_CFB] key=192 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_192_CFB] key=192 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_256_CFB -- AES-256-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_256_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_256_CFB] key=256 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_256_CFB] key=256 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_128_OFB -- AES-128-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_128_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_128_OFB] key=128 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_128_OFB] key=128 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_192_OFB -- AES-192-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_192_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_192_OFB] key=192 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_192_OFB] key=192 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_256_OFB -- AES-256-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_256_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_256_OFB] key=256 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_256_OFB] key=256 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_128_ECB -- AES-128-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_128_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_128_ECB] key=128 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_128_ECB] key=128 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_192_ECB -- AES-192-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_192_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_192_ECB] key=192 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_192_ECB] key=192 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // CryptoPP/LEGACY_AES_256_ECB -- AES-256-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_CRYPTOPP, LEGACY_AES_256_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [CryptoPP/LEGACY_AES_256_ECB] key=256 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [CryptoPP/LEGACY_AES_256_ECB] key=256 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // ============================================================================
+        // Botan -- AEAD (AES only)
+        // ============================================================================
+
+        // Botan/AEAD_AES_128_GCM -- AES-128-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_128_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_128_GCM] key=128 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_128_GCM] key=128 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_192_GCM -- AES-192-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_192_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_192_GCM] key=192 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_192_GCM] key=192 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_256_GCM -- AES-256-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_256_GCM] key=256 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_256_GCM] key=256 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_128_CCM -- AES-128-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_128_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_128_CCM] key=128 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_128_CCM] key=128 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_192_CCM -- AES-192-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_192_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_192_CCM] key=192 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_192_CCM] key=192 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_256_CCM -- AES-256-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_256_CCM] key=256 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_256_CCM] key=256 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_128_EAX -- AES-128-EAX (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_128_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_128_EAX] key=128 mode=EAX status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_128_EAX] key=128 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_192_EAX -- AES-192-EAX (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_192_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_192_EAX] key=192 mode=EAX status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_192_EAX] key=192 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_256_EAX -- AES-256-EAX (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_256_EAX] key=256 mode=EAX status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_256_EAX] key=256 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_128_SIV -- AES-128-SIV (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_128_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_128_SIV] key=128 mode=SIV status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_128_SIV] key=128 mode=SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_256_SIV -- AES-256-SIV (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_256_SIV] key=256 mode=SIV status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_256_SIV] key=256 mode=SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_128_GCM_SIV -- AES-128-GCM-SIV (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_128_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/AEAD_AES_256_GCM_SIV -- AES-256-GCM-SIV (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, AEAD_AES_256_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // ============================================================================
+        // Botan -- Legacy (AES only)
+        // ============================================================================
+
+        // Botan/LEGACY_AES_128_CBC -- AES-128-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_128_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_128_CBC] key=128 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_128_CBC] key=128 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_192_CBC -- AES-192-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_192_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_192_CBC] key=192 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_192_CBC] key=192 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_256_CBC -- AES-256-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_256_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_256_CBC] key=256 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_256_CBC] key=256 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_128_CTR -- AES-128-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_128_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_128_CTR] key=128 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_128_CTR] key=128 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_192_CTR -- AES-192-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_192_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_192_CTR] key=192 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_192_CTR] key=192 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_256_CTR -- AES-256-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_256_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_256_CTR] key=256 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_256_CTR] key=256 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_128_CFB -- AES-128-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_128_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_128_CFB] key=128 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_128_CFB] key=128 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_192_CFB -- AES-192-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_192_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_192_CFB] key=192 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_192_CFB] key=192 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_256_CFB -- AES-256-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_256_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_256_CFB] key=256 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_256_CFB] key=256 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_128_OFB -- AES-128-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_128_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_128_OFB] key=128 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_128_OFB] key=128 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_192_OFB -- AES-192-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_192_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_192_OFB] key=192 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_192_OFB] key=192 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_256_OFB -- AES-256-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_256_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_256_OFB] key=256 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_256_OFB] key=256 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_128_ECB -- AES-128-ECB (Legacy) -- expected unsupported: Botan 3.x has no standalone ECB Cipher_Mode factory entry
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_128_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_128_ECB] key=128 mode=ECB expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_128_ECB] key=128 mode=ECB correctly unsupported" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_192_ECB -- AES-192-ECB (Legacy) -- expected unsupported: Botan 3.x has no standalone ECB Cipher_Mode factory entry
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_192_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_192_ECB] key=192 mode=ECB expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_192_ECB] key=192 mode=ECB correctly unsupported" << std::endl;
+            }
+        }
+
+        // Botan/LEGACY_AES_256_ECB -- AES-256-ECB (Legacy) -- expected unsupported: Botan 3.x has no standalone ECB Cipher_Mode factory entry
+        {
+            CCryptoApi cryptoApi(PROVIDER_BOTAN, LEGACY_AES_256_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                             static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [Botan/LEGACY_AES_256_ECB] key=256 mode=ECB expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [Botan/LEGACY_AES_256_ECB] key=256 mode=ECB correctly unsupported" << std::endl;
+            }
+        }
+
+        // ============================================================================
+        // OpenSSL -- AEAD (AES only)
+        // ============================================================================
+
+        // OpenSSL/AEAD_AES_128_GCM -- AES-128-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_128_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_128_GCM] key=128 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_128_GCM] key=128 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_192_GCM -- AES-192-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_192_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_192_GCM] key=192 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_192_GCM] key=192 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_256_GCM -- AES-256-GCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_256_GCM] key=256 mode=GCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_256_GCM] key=256 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_128_CCM -- AES-128-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_128_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_128_CCM] key=128 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_128_CCM] key=128 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_192_CCM -- AES-192-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_192_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_192_CCM] key=192 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_192_CCM] key=192 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_256_CCM -- AES-256-CCM (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_CCM);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_256_CCM] key=256 mode=CCM status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_256_CCM] key=256 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_128_EAX -- AES-128-EAX (AEAD) -- expected unsupported: EAX never existed in OpenSSL
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_128_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_128_EAX] key=128 mode=EAX expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_128_EAX] key=128 mode=EAX correctly unsupported" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_192_EAX -- AES-192-EAX (AEAD) -- expected unsupported: EAX never existed in OpenSSL
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_192_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_192_EAX] key=192 mode=EAX expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_192_EAX] key=192 mode=EAX correctly unsupported" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_256_EAX -- AES-256-EAX (AEAD) -- expected unsupported: EAX never existed in OpenSSL
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_EAX);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_256_EAX] key=256 mode=EAX expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_256_EAX] key=256 mode=EAX correctly unsupported" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_128_SIV -- AES-128-SIV (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_128_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_128_SIV] key=128 mode=SIV status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_128_SIV] key=128 mode=SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_256_SIV -- AES-256-SIV (AEAD)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                 static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                 nullptr, nullptr);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                 static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                 nullptr, nullptr);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_256_SIV] key=256 mode=SIV status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_256_SIV] key=256 mode=SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_128_GCM_SIV -- AES-128-GCM-SIV (AEAD) -- expected unsupported: AES-GCM-SIV is not wired in OpenSSL's EVP cipher list here
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_128_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // OpenSSL/AEAD_AES_256_GCM_SIV -- AES-256-GCM-SIV (AEAD) -- expected unsupported: AES-GCM-SIV is not wired in OpenSSL's EVP cipher list here
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, AEAD_AES_256_GCM_SIV);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            const int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                       nullptr, nullptr);
+            if (status == NO_ERROR)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV expected unsupported but Encrypt succeeded" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV correctly unsupported" << std::endl;
+            }
+        }
+
+        // ============================================================================
+        // OpenSSL -- Legacy (AES only)
+        // ============================================================================
+
+        // OpenSSL/LEGACY_AES_128_CBC -- AES-128-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_128_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_128_CBC] key=128 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_128_CBC] key=128 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_192_CBC -- AES-192-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_192_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_192_CBC] key=192 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_192_CBC] key=192 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_256_CBC -- AES-256-CBC (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_256_CBC);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_256_CBC] key=256 mode=CBC status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_256_CBC] key=256 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_128_CTR -- AES-128-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_128_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_128_CTR] key=128 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_128_CTR] key=128 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_192_CTR -- AES-192-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_192_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_192_CTR] key=192 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_192_CTR] key=192 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_256_CTR -- AES-256-CTR (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_256_CTR);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_256_CTR] key=256 mode=CTR status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_256_CTR] key=256 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_128_CFB -- AES-128-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_128_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_128_CFB] key=128 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_128_CFB] key=128 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_192_CFB -- AES-192-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_192_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_192_CFB] key=192 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_192_CFB] key=192 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_256_CFB -- AES-256-CFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_256_CFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_256_CFB] key=256 mode=CFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_256_CFB] key=256 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_128_OFB -- AES-128-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_128_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_128_OFB] key=128 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_128_OFB] key=128 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_192_OFB -- AES-192-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_192_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_192_OFB] key=192 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_192_OFB] key=192 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_256_OFB -- AES-256-OFB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_256_OFB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_256_OFB] key=256 mode=OFB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_256_OFB] key=256 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_128_ECB -- AES-128-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_128_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_128_ECB] key=128 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_128_ECB] key=128 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_192_ECB -- AES-192-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_192_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_192_ECB] key=192 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_192_ECB] key=192 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        // OpenSSL/LEGACY_AES_256_ECB -- AES-256-ECB (Legacy)
+        {
+            CCryptoApi cryptoApi(PROVIDER_OPENSSL, LEGACY_AES_256_ECB);
+            std::vector<unsigned char> ciphertext(plaintextSize + 128);
+            int ciphertextSize = 0;
+            int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                       static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+            std::vector<unsigned char> decrypted(plaintextSize + 128);
+            int decryptedSize = 0;
+            if (status == NO_ERROR)
+            {
+                status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                       static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+            }
+            if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+            {
+                std::cout << "RunAESTests: FAILED [OpenSSL/LEGACY_AES_256_ECB] key=256 mode=ECB status=" << status << std::endl;
+                ++failures;
+            }
+            else
+            {
+                std::cout << "RunAESTests: PASSED [OpenSSL/LEGACY_AES_256_ECB] key=256 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunAESTests: PASSED (112 combinations checked, 87 supported+round-tripped, 25 correctly-unsupported)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunAESTests: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try

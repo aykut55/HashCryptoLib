@@ -218,4 +218,37 @@ std::unique_ptr<ISignatureEngine> CBotanProviderFactory::CreateSignatureEngine(c
 }
 // -----------------------------------------------------------------------------
 
+bool CBotanProviderFactory::SupportsKeyAgreementAlgorithm(const KeyAgreementAlgorithm algorithm) const
+{
+    try
+    {
+        CBotanProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IKeyAgreementService> CBotanProviderFactory::CreateKeyAgreementEngine(const KeyAgreementAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CBotanProvider> provider(new CBotanProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

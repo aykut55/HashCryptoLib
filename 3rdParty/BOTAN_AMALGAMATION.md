@@ -25,7 +25,7 @@ Visual Studio Developer Command Prompt / PowerShell'de (yani `cl.exe` PATH'te),
 ```bat
 :: x64
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem,ecdh,x25519,asn1,numbertheory ^
   --cpu=x86_64
 move /Y botan_all.h x64\botan_all.h
 move /Y botan_all.cpp x64\botan_all.cpp
@@ -33,7 +33,7 @@ del botan_all.obj
 
 :: Win32
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem,ecdh,x25519,asn1,numbertheory ^
   --cpu=x86_32
 move /Y botan_all.h Win32\botan_all.h
 move /Y botan_all.cpp Win32\botan_all.cpp
@@ -77,6 +77,18 @@ gotcha ile karşılaşıldı:
   (`pcurves_secp256r1`, P-256 için) eklemek yeterli, `pcurves` ve `pcurves_impl` otomatik geliyor.
 - `ed25519` modülü tek başına yeterli (sadece `sha2_64`'e bağımlı, o zaten hash çalışmasından beri
   ekli).
+
+## Key agreement (ECDH/X25519) modülleri (2026-09-16)
+
+`CBotanProvider`'ın `IKeyAgreementService` desteği (ECDH-P256, X25519) için `ecdh,x25519,asn1,
+numbertheory` modülleri eklendi. `ecdh`'nin kendi `<requires>` listesi `asn1,ec_group,ecc_key,
+numbertheory`; `ec_group`/`ecc_key` zaten listede olduğundan yalnız `asn1`/`numbertheory` elle
+eklendi (RSA/ECDSA de zaten bunlara transitively bağımlı olduğundan pratikte muhtemelen zaten
+dahil oluyorlardı, ama gotcha'ya göre elle yazmak garantili yol). `x25519`'un `<requires>`
+listesi boş (yalnız kendi dizini yeterli). Paylaşılan sır türetmesi Botan'ın `PK_Key_Agreement`
+sınıfının `"Raw"` KDF adıyla yapılıyor -- bu, `kdf.h` içinde ayrı bir modül gerektirmeden
+built-in olarak ele alınan özel bir isim (gerçek bir KDF değil, ham ECDH/X25519 çıktısını
+olduğu gibi döndürür), o yüzden `--enable-modules`'e ayrı bir kdf modülü eklenmesi gerekmedi.
 
 ## Modül listesini genişletirken
 

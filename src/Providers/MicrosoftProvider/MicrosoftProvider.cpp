@@ -307,6 +307,45 @@ namespace
             default:                            return 0;
         }
     }
+    // -------------------------------------------------------------------------
+
+    // Windows CNG has no X25519 support through a standard, documented API (only via a
+    // non-standard generic curve parameterization on newer Windows) -- same reasoning as
+    // SignatureAlgorithmName() above declining SIGNATURE_ED25519. Only ECDH-P256 is wired here.
+    const wchar_t* KeyAgreementAlgorithmName(KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256:
+                return BCRYPT_ECDH_P256_ALGORITHM;
+            default:
+                return nullptr;
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    // BCRYPT_ECCPUBLIC_BLOB layout: BCRYPT_ECCKEY_BLOB header (dwMagic + cbKey, two ULONGs = 8
+    // bytes) followed by the raw X and Y coordinates, each cbKey bytes (32 for P-256).
+    unsigned int KeyAgreementPublicKeySize(KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256: return 8 + 2u * 32u;
+            default:                     return 0;
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    // BCRYPT_KDF_RAW_SECRET yields the raw ECDH result (the X-coordinate of the agreed point),
+    // sized per the curve's field width -- 32 bytes for P-256.
+    unsigned int KeyAgreementSharedSecretSize(KeyAgreementAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case KEYAGREEMENT_ECDH_P256: return 32;
+            default:                     return 0;
+        }
+    }
 }
 // -----------------------------------------------------------------------------
 
@@ -363,6 +402,16 @@ CMicrosoftProvider::~CMicrosoftProvider()
         {
             BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(signatureAlgorithmHandle_), 0);
         }
+
+        if (keyAgreementKeyHandle_ != nullptr)
+        {
+            BCryptDestroyKey(static_cast<BCRYPT_KEY_HANDLE>(keyAgreementKeyHandle_));
+        }
+
+        if (keyAgreementAlgorithmHandle_ != nullptr)
+        {
+            BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(keyAgreementAlgorithmHandle_), 0);
+        }
     }
     catch (...)
     {
@@ -390,7 +439,13 @@ CMicrosoftProvider::CMicrosoftProvider()
       signatureAlgorithm_(SIGNATURE_ECDSA_P256_SHA256),
       signatureAlgorithmHandle_(nullptr),
       signatureKeyHandle_(nullptr),
-      signatureSize_(0)
+      signatureSize_(0),
+      asymmetricModeIsKeyAgreement_(false),
+      keyAgreementAlgorithm_(KEYAGREEMENT_ECDH_P256),
+      keyAgreementAlgorithmHandle_(nullptr),
+      keyAgreementKeyHandle_(nullptr),
+      keyAgreementPublicKeySize_(0),
+      keyAgreementSharedSecretSize_(0)
 {
 }
 // -----------------------------------------------------------------------------
@@ -933,6 +988,7 @@ bool CMicrosoftProvider::SelectAlgorithm(const AsymmetricAlgorithm algorithm)
         rsaAlgorithmHandle_ = algorithmHandle;
         rsaKeyBits_ = keyBits;
         asymmetricModeIsSignature_ = false;
+        asymmetricModeIsKeyAgreement_ = false;
         return true;
     }
     catch (...)
@@ -946,6 +1002,37 @@ bool CMicrosoftProvider::GenerateKeyPair(void)
 {
     try
     {
+        if (asymmetricModeIsKeyAgreement_)
+        {
+            if (keyAgreementAlgorithmHandle_ == nullptr)
+            {
+                return false;
+            }
+
+            BCRYPT_KEY_HANDLE keyHandle = nullptr;
+            if (BCryptGenerateKeyPair(static_cast<BCRYPT_ALG_HANDLE>(keyAgreementAlgorithmHandle_),
+                                      &keyHandle, 256, 0) < 0)
+            {
+                return false;
+            }
+
+            if (BCryptFinalizeKeyPair(keyHandle, 0) < 0)
+            {
+                BCryptDestroyKey(keyHandle);
+                return false;
+            }
+
+            if (keyAgreementKeyHandle_ != nullptr)
+            {
+                BCryptDestroyKey(static_cast<BCRYPT_KEY_HANDLE>(keyAgreementKeyHandle_));
+            }
+
+            keyAgreementKeyHandle_ = keyHandle;
+            keyAgreementPublicKeySize_ = KeyAgreementPublicKeySize(keyAgreementAlgorithm_);
+            keyAgreementSharedSecretSize_ = KeyAgreementSharedSecretSize(keyAgreementAlgorithm_);
+            return true;
+        }
+
         if (asymmetricModeIsSignature_)
         {
             if (signatureAlgorithmHandle_ == nullptr)
@@ -1347,6 +1434,7 @@ bool CMicrosoftProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
         signatureAlgorithm_ = algorithm;
         signatureSize_ = 0;
         asymmetricModeIsSignature_ = true;
+        asymmetricModeIsKeyAgreement_ = false;
         return true;
     }
     catch (...)
@@ -1458,6 +1546,128 @@ bool CMicrosoftProvider::Verify(const unsigned char* data, const unsigned int da
         return BCryptVerifySignature(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), nullptr,
                                      digest, sizeof(digest),
                                      const_cast<PUCHAR>(signature), signatureSize, 0) >= 0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::SelectAlgorithm(const KeyAgreementAlgorithm algorithm)
+{
+    try
+    {
+        const wchar_t* algorithmName = KeyAgreementAlgorithmName(algorithm);
+        if (algorithmName == nullptr)
+        {
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE algorithmHandle = nullptr;
+        if (BCryptOpenAlgorithmProvider(&algorithmHandle, algorithmName, nullptr, 0) < 0)
+        {
+            return false;
+        }
+
+        if (keyAgreementKeyHandle_ != nullptr)
+        {
+            BCryptDestroyKey(static_cast<BCRYPT_KEY_HANDLE>(keyAgreementKeyHandle_));
+            keyAgreementKeyHandle_ = nullptr;
+        }
+
+        if (keyAgreementAlgorithmHandle_ != nullptr)
+        {
+            BCryptCloseAlgorithmProvider(static_cast<BCRYPT_ALG_HANDLE>(keyAgreementAlgorithmHandle_), 0);
+        }
+
+        keyAgreementAlgorithmHandle_ = algorithmHandle;
+        keyAgreementAlgorithm_ = algorithm;
+        keyAgreementPublicKeySize_ = 0;
+        keyAgreementSharedSecretSize_ = 0;
+        asymmetricModeIsKeyAgreement_ = true;
+        asymmetricModeIsSignature_ = false;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CMicrosoftProvider::GetPublicKeySize(void) const
+{
+    return keyAgreementPublicKeySize_;
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CMicrosoftProvider::GetSharedSecretSize(void) const
+{
+    return keyAgreementSharedSecretSize_;
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::GetPublicKey(unsigned char* publicKey, const unsigned int publicKeySize) const
+{
+    try
+    {
+        if (keyAgreementKeyHandle_ == nullptr || publicKey == nullptr || publicKeySize < keyAgreementPublicKeySize_)
+        {
+            return false;
+        }
+
+        ULONG resultSize = 0;
+        if (BCryptExportKey(static_cast<BCRYPT_KEY_HANDLE>(keyAgreementKeyHandle_), nullptr,
+                            BCRYPT_ECCPUBLIC_BLOB, publicKey, publicKeySize, &resultSize, 0) < 0)
+        {
+            return false;
+        }
+
+        return resultSize == keyAgreementPublicKeySize_;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool CMicrosoftProvider::DeriveSharedSecret(const unsigned char* peerPublicKey, const unsigned int peerPublicKeySize, unsigned char* sharedSecret, const unsigned int sharedSecretSize)
+{
+    try
+    {
+        if (keyAgreementKeyHandle_ == nullptr || keyAgreementAlgorithmHandle_ == nullptr ||
+            peerPublicKey == nullptr || peerPublicKeySize != keyAgreementPublicKeySize_ ||
+            sharedSecret == nullptr || sharedSecretSize < keyAgreementSharedSecretSize_)
+        {
+            return false;
+        }
+
+        BCRYPT_KEY_HANDLE peerKeyHandle = nullptr;
+        if (BCryptImportKeyPair(static_cast<BCRYPT_ALG_HANDLE>(keyAgreementAlgorithmHandle_), nullptr,
+                                BCRYPT_ECCPUBLIC_BLOB, &peerKeyHandle,
+                                const_cast<PUCHAR>(peerPublicKey), peerPublicKeySize, 0) < 0)
+        {
+            return false;
+        }
+
+        BCRYPT_SECRET_HANDLE secretHandle = nullptr;
+        if (BCryptSecretAgreement(static_cast<BCRYPT_KEY_HANDLE>(keyAgreementKeyHandle_), peerKeyHandle,
+                                  &secretHandle, 0) < 0)
+        {
+            BCryptDestroyKey(peerKeyHandle);
+            return false;
+        }
+
+        ULONG resultSize = 0;
+        const NTSTATUS deriveStatus = BCryptDeriveKey(secretHandle, BCRYPT_KDF_RAW_SECRET, nullptr,
+                                                       sharedSecret, sharedSecretSize, &resultSize, 0);
+
+        BCryptDestroySecret(secretHandle);
+        BCryptDestroyKey(peerKeyHandle);
+
+        return deriveStatus >= 0 && resultSize == keyAgreementSharedSecretSize_;
     }
     catch (...)
     {

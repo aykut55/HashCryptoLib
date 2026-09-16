@@ -177,6 +177,7 @@
     <ClInclude Include="..\..\..\src\Providers\MacService.h" />
     <ClInclude Include="..\..\..\src\Providers\HashService.h" />
     <ClInclude Include="..\..\..\src\Providers\SignatureEngine.h" />
+    <ClInclude Include="..\..\..\src\Providers\KeyAgreementService.h" />
     <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h" />
     <ClInclude Include="..\..\..\src\Providers\AlgorithmCapabilityMatrix.h" />
     <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h" />
@@ -202,6 +203,7 @@
     <ClCompile Include="..\..\..\src\Providers\MacService.cpp" />
     <ClCompile Include="..\..\..\src\Providers\HashService.cpp" />
     <ClCompile Include="..\..\..\src\Providers\SignatureEngine.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\KeyAgreementService.cpp" />
     <ClCompile Include="..\..\..\src\Providers\CryptoProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Providers\CryptoProviderRegistry.cpp" />
     <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp" />
@@ -215,7 +217,9 @@
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
          e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
          $(Platform) picks the right one. -->
-    <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp" />
+    <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="Main.cpp" />
   </ItemGroup>
   <ItemGroup>
