@@ -213,5 +213,9 @@ int main()
     cryptoApiTester.RunAESTests();
 #endif
 
+#if 0
+    cryptoApiTester.RunSharedInstanceTest();
+#endif
+
     return 0;
 }

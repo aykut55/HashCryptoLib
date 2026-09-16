@@ -9723,6 +9723,87 @@ int CCryptoApiTester::RunAESTests(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunSharedInstanceTest(void)
+{
+    try
+    {
+        CCryptoApi::ResetShared();
+
+        CCryptoApi& first = CCryptoApi::GetShared(PROVIDER_MICROSOFT, SIGNATURE_ECDSA_P256_SHA256);
+        CCryptoApi& second = CCryptoApi::GetShared(PROVIDER_MICROSOFT, SIGNATURE_ECDSA_P256_SHA256);
+        if (&first != &second)
+        {
+            std::cout << "RunSharedInstanceTest: FAILED same-config GetShared returned different instances" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunSharedInstanceTest: PASSED same-config GetShared returns identical instance" << std::endl;
+
+        CCryptoApi& different = CCryptoApi::GetShared(PROVIDER_OPENSSL, SIGNATURE_ECDSA_P256_SHA256);
+        if (&different == &first)
+        {
+            std::cout << "RunSharedInstanceTest: FAILED different-config GetShared returned the same instance" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunSharedInstanceTest: PASSED different-config GetShared returns a different instance" << std::endl;
+
+        int status = first.GenerateSignatureKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunSharedInstanceTest: FAILED GenerateSignatureKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const int signatureSize = second.GetSignatureSize();
+        if (signatureSize != 64)
+        {
+            std::cout << "RunSharedInstanceTest: FAILED second reference did not see the key pair generated through first, GetSignatureSize=" << signatureSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* message = "RunSharedInstanceTest message to sign";
+        const int messageSize = static_cast<int>(std::strlen(message));
+        const unsigned char* messageBytes = reinterpret_cast<const unsigned char*>(message);
+
+        std::vector<unsigned char> signature(static_cast<std::size_t>(signatureSize));
+        int actualSignatureSize = 0;
+        status = first.SignBuffer(messageBytes, messageSize, signatureSize, &signature[0], &actualSignatureSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunSharedInstanceTest: FAILED SignBuffer via first status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = second.VerifyBuffer(messageBytes, messageSize, &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunSharedInstanceTest: FAILED VerifyBuffer via second (same shared key pair) status=" << status << " valid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunSharedInstanceTest: PASSED key pair generated via one reference is visible/usable via another reference to the same shared instance" << std::endl;
+
+        CCryptoApi::ResetShared();
+
+        CCryptoApi& afterReset = CCryptoApi::GetShared(PROVIDER_MICROSOFT, SIGNATURE_ECDSA_P256_SHA256);
+        if (afterReset.GetSignatureSize() != 0)
+        {
+            std::cout << "RunSharedInstanceTest: FAILED instance after ResetShared still has a key pair, GetSignatureSize=" << afterReset.GetSignatureSize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunSharedInstanceTest: PASSED ResetShared discards cached instances (fresh instance has no key pair)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try

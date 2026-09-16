@@ -19,6 +19,25 @@ class IAsymmetricCipher;
 class ISignatureEngine;
 class IKeyAgreementService;
 
+// Cache key uniquely identifying a CCryptoApi configuration -- the resolved value of all 7
+// algorithm-selecting fields a constructor can set (directly or via its own defaults), used by
+// CCryptoApi::GetShared() below. Two constructor calls that end up with the same 7-tuple (even via
+// different constructor overloads) are considered the same configuration.
+struct CCryptoApiConfig
+{
+    ProviderKind providerKind;
+    AeadAlgorithm aeadAlgorithm;
+    AsymmetricAlgorithm asymmetricAlgorithm;
+    LegacySymmetricAlgorithm legacyAlgorithm;
+    HashAlgorithm hashAlgorithm;
+    SignatureAlgorithm signatureAlgorithm;
+    KeyAgreementAlgorithm keyAgreementAlgorithm;
+
+    // Strict weak ordering over all 7 fields, needed only so CCryptoApiConfig can be a std::map key
+    // (see GetShared's implementation) -- the ordering itself has no other meaning.
+    bool operator<(const CCryptoApiConfig& other) const;
+};
+
 class CCryptoApi
 {
 public:
@@ -65,6 +84,71 @@ public:
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm);
              CCryptoApi(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm, const KeyAgreementAlgorithm keyAgreementAlgorithm);
+
+    // ============================================================================================
+    // Shared/cached instances -- deliberately NOT a classic global Singleton (Plan.md section 4
+    // rules that out by design: multiple independently-configured CCryptoApi instances must be able
+    // to coexist in the same process). This is a per-CONFIGURATION cache instead (sometimes called
+    // a Multiton): GetShared() called twice with the SAME arguments returns a reference to the SAME
+    // instance; called with DIFFERENT arguments (even via a different overload -- see
+    // CCryptoApiConfig above) it returns a DIFFERENT instance. Every constructor above is completely
+    // unaffected and keeps creating a fresh, independent, uncached instance -- GetShared() is a
+    // purely additive convenience for callers who want to avoid re-constructing (and, once a key
+    // pair has been generated on it, re-generating) "the same" configuration repeatedly.
+    //
+    // SECURITY-RELEVANT: the returned CCryptoApi& is SHARED STATE. If one caller calls
+    // GenerateSignatureKeyPair()/GenerateAsymmetricKeyPair()/GenerateKeyAgreementKeyPair() on it,
+    // every OTHER caller requesting the same configuration observes the SAME key pair, not a fresh
+    // one -- that sharing is the entire point (avoiding redundant, expensive key generation), but it
+    // means GetShared() is only appropriate when callers genuinely intend to share one key/config
+    // app-wide (e.g. "the process's one default signing key"). When independent, unrelated key
+    // pairs are required, use a plain constructor (above) instead -- never GetShared().
+    //
+    // THREAD-SAFETY: lookup/creation in the shared cache is mutex-protected, so calling GetShared()
+    // concurrently from multiple threads (for any mix of arguments) is safe by itself. The returned
+    // CCryptoApi instance's OWN methods are NOT independently made thread-safe by this cache --
+    // concurrent calls into the same shared instance (e.g. one thread's GenerateSignatureKeyPair()
+    // racing another thread's SignBuffer()) are the caller's own responsibility to serialize, same
+    // as for any object shared across threads.
+    // ============================================================================================
+
+    static CCryptoApi& GetShared(void);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const SignatureAlgorithm signatureAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const KeyAgreementAlgorithm keyAgreementAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm);
+    static CCryptoApi& GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm, const KeyAgreementAlgorithm keyAgreementAlgorithm);
+
+    // Destroys every cached shared instance (their destructors run, releasing any generated key
+    // material). Any reference previously returned by GetShared() becomes dangling immediately --
+    // callers must not keep using a GetShared() reference across a ResetShared() call. Intended for
+    // test teardown/process shutdown, not a normal-operation API.
+    static void ResetShared(void);
+
+    // ============================================================================================
+    // DO NOT USE THIS. Kept only for callers/checklists that specifically expect a classic
+    // Instance()-style global singleton accessor to exist; it is intentionally the LEAST flexible
+    // option in this file and contradicts Plan.md section 4's explicit design decision ("Global
+    // Singleton kullanılmayacak" -- no global singleton, because multiple independently-configured
+    // CCryptoApi instances must be able to coexist in the same process). Unlike GetShared() above
+    // (a per-CONFIGURATION cache -- many independent shared instances, one per distinct argument
+    // combination), Instance() collapses the ENTIRE PROCESS onto exactly one fixed configuration
+    // (the no-argument constructor's defaults: PROVIDER_MICROSOFT / AEAD_AES_256_GCM /
+    // ASYMMETRIC_RSA_2048 / LEGACY_AES_256_CBC / HASH_SHA256 / SIGNATURE_ECDSA_P256_SHA256 /
+    // KEYAGREEMENT_ECDH_P256) -- there is no way to ever get a second one, no way to pick a
+    // different provider or algorithm anywhere in the process, and every one of this class's other
+    // constructors becomes effectively unreachable for any code that starts depending on this
+    // accessor. Prefer a plain constructor for an independent instance, or GetShared() for a shared
+    // instance that still lets different call sites choose different configurations.
+    // ============================================================================================
+
+    static CCryptoApi& Instance(void);
 
     const char* GetVersion(void) const;
 
@@ -358,6 +442,14 @@ private:
                      int* outputBufferSize,
                      ProgressCallback onProgress,
                      void* progressUserData);
+
+    // Shared implementation behind every GetShared() overload above: each overload first resolves
+    // its own defaults into a complete 7-field CCryptoApiConfig (mirroring the defaults its
+    // equivalent plain constructor above would use), then calls this. Looks up config in the
+    // process-wide cache under a mutex; on a miss, constructs the new instance via the 7-argument
+    // constructor (equivalent to any single-purpose constructor once defaults are resolved -- see
+    // CCryptoApiConfig's own comment), caches it, and returns it.
+    static CCryptoApi& getSharedImpl(const CCryptoApiConfig& config);
 
     // Provider/algorithm this instance uses for every Encrypt*/Decrypt* call; fixed for the
     // instance's lifetime (see CCryptoApi(const ProviderKind, const AeadAlgorithm)).

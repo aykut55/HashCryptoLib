@@ -234,6 +234,16 @@ public:
     // directly from each C*Provider.cpp's own AeadAlgorithmName/LegacyAlgorithmName switch.
     int RunAESTests(void);
 
+    // Exercises CCryptoApi::GetShared()'s Multiton cache: same-config calls must return the exact
+    // same instance (identity, not just equal state), different-config calls must return different
+    // instances, and a key pair generated through one reference must be visible through another
+    // reference obtained by a separate GetShared() call for the same config (proving they really
+    // are the same shared object, not just equivalent ones). Also exercises ResetShared() -- after
+    // it, a fresh GetShared() call for a previously-used config must come back with no key pair
+    // (GetSignatureSize()==0), proving the old cached instance was actually destroyed and a new one
+    // built, not silently reused.
+    int RunSharedInstanceTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

@@ -16,8 +16,11 @@
 #endif
 #include <climits>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #define CRYPTOAPI_STRINGIFY_IMPL(value) #value
@@ -2329,6 +2332,165 @@ int CCryptoApi::DeriveSharedSecret(const unsigned char* peerPublicKeyBuffer, con
 
         return UNEXPECTED_ERROR;
     }
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
+// CCryptoApiConfig / GetShared -- see the section comment on GetShared's declarations in CryptoApi.h
+// for the Multiton-not-Singleton design rationale, the security-relevant key-sharing consequence,
+// and the thread-safety scope. Kept in its own section at the very end of the file, after every
+// instance method, since this is purely a static caching layer on top of everything above it.
+// ================================================================================================
+
+bool CCryptoApiConfig::operator<(const CCryptoApiConfig& other) const
+{
+    return std::tie(providerKind, aeadAlgorithm, asymmetricAlgorithm, legacyAlgorithm, hashAlgorithm, signatureAlgorithm, keyAgreementAlgorithm) <
+           std::tie(other.providerKind, other.aeadAlgorithm, other.asymmetricAlgorithm, other.legacyAlgorithm, other.hashAlgorithm, other.signatureAlgorithm, other.keyAgreementAlgorithm);
+}
+// -----------------------------------------------------------------------------
+
+namespace
+{
+    // Function-local statics (Meyer's idiom) instead of file-scope globals -- guarantees the map
+    // and its mutex are constructed on first use, not subject to static-initialization-order risk
+    // relative to any other translation unit's globals.
+    std::map<CCryptoApiConfig, std::unique_ptr<CCryptoApi> >& SharedInstancesMap()
+    {
+        static std::map<CCryptoApiConfig, std::unique_ptr<CCryptoApi> > instances;
+        return instances;
+    }
+    // -------------------------------------------------------------------------
+
+    std::mutex& SharedInstancesMutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
+    // -------------------------------------------------------------------------
+}
+
+CCryptoApi& CCryptoApi::getSharedImpl(const CCryptoApiConfig& config)
+{
+    std::lock_guard<std::mutex> lock(SharedInstancesMutex());
+
+    std::map<CCryptoApiConfig, std::unique_ptr<CCryptoApi> >& instances = SharedInstancesMap();
+    std::map<CCryptoApiConfig, std::unique_ptr<CCryptoApi> >::iterator it = instances.find(config);
+    if (it == instances.end())
+    {
+        // The 7-argument constructor is equivalent to any single-purpose constructor once its
+        // defaults are already resolved into config -- see CCryptoApiConfig's doc comment.
+        std::unique_ptr<CCryptoApi> newInstance(new CCryptoApi( config.providerKind, config.aeadAlgorithm,
+                                                                config.asymmetricAlgorithm, config.legacyAlgorithm,
+                                                                config.hashAlgorithm, config.signatureAlgorithm,
+                                                                config.keyAgreementAlgorithm));
+        it = instances.insert(std::make_pair(config, std::move(newInstance))).first;
+    }
+
+    return *(it->second);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(void)
+{
+    const CCryptoApiConfig config = { PROVIDER_MICROSOFT, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, aeadAlgorithm, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const HashAlgorithm hashAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, hashAlgorithm, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const AsymmetricAlgorithm asymmetricAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, AEAD_AES_256_GCM, asymmetricAlgorithm, LEGACY_AES_256_CBC, HASH_SHA256, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const LegacySymmetricAlgorithm legacyAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, legacyAlgorithm, HASH_SHA256, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const SignatureAlgorithm signatureAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256, signatureAlgorithm, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const KeyAgreementAlgorithm keyAgreementAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256, SIGNATURE_ECDSA_P256_SHA256, keyAgreementAlgorithm };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, aeadAlgorithm, asymmetricAlgorithm, LEGACY_AES_256_CBC, HASH_SHA256, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, aeadAlgorithm, asymmetricAlgorithm, legacyAlgorithm, HASH_SHA256, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, aeadAlgorithm, asymmetricAlgorithm, legacyAlgorithm, hashAlgorithm, SIGNATURE_ECDSA_P256_SHA256, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, aeadAlgorithm, asymmetricAlgorithm, legacyAlgorithm, hashAlgorithm, signatureAlgorithm, KEYAGREEMENT_ECDH_P256 };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+CCryptoApi& CCryptoApi::GetShared(const ProviderKind providerKind, const AeadAlgorithm aeadAlgorithm, const AsymmetricAlgorithm asymmetricAlgorithm, const LegacySymmetricAlgorithm legacyAlgorithm, const HashAlgorithm hashAlgorithm, const SignatureAlgorithm signatureAlgorithm, const KeyAgreementAlgorithm keyAgreementAlgorithm)
+{
+    const CCryptoApiConfig config = { providerKind, aeadAlgorithm, asymmetricAlgorithm, legacyAlgorithm, hashAlgorithm, signatureAlgorithm, keyAgreementAlgorithm };
+    return getSharedImpl(config);
+}
+// -----------------------------------------------------------------------------
+
+void CCryptoApi::ResetShared(void)
+{
+    std::lock_guard<std::mutex> lock(SharedInstancesMutex());
+    SharedInstancesMap().clear();
+}
+// -----------------------------------------------------------------------------
+
+// DO NOT USE THIS -- see the "DO NOT USE THIS" section comment on Instance()'s declaration in
+// CryptoApi.h for why (contradicts Plan.md section 4's no-global-singleton decision; collapses the
+// whole process onto one fixed configuration). Kept only for callers that specifically expect a
+// classic Instance() accessor to exist. A function-local static (Meyer's idiom) is C++11-guaranteed
+// thread-safe to initialize exactly once, so this is at least not itself a race condition -- the
+// problem is architectural (one instance, one fixed configuration, forever), not a thread-safety bug.
+CCryptoApi& CCryptoApi::Instance(void)
+{
+    static CCryptoApi instance;
+    return instance;
 }
 // -----------------------------------------------------------------------------
 
