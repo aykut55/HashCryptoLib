@@ -133,10 +133,30 @@ namespace
             return "PSS(SHA-256)";
         case SIGNATURE_ECDSA_P256_SHA256:
             return "SHA-256";
+        case SIGNATURE_ECDSA_P384_SHA384:
+            return "SHA-384";
+        case SIGNATURE_ECDSA_P521_SHA512:
+            return "SHA-512";
+        case SIGNATURE_DSA_SHA256_2048:
+        case SIGNATURE_DSA_SHA256_3072:
+            return "SHA-256"; // same EMSA1(hash) message encoding Botan's DL signature schemes share
         case SIGNATURE_ED25519:
             return "Pure";
         default:
             return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // 0 for non-DSA algorithms. L (2048/3072); N (subgroup order bits) is always pinned to 256 at
+    // GenerateKeyPair time so the raw r||s signature size (64 bytes) matches at both L.
+    unsigned int SignatureDsaParamBits(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case SIGNATURE_DSA_SHA256_2048: return 2048;
+        case SIGNATURE_DSA_SHA256_3072: return 3072;
+        default:                        return 0;
         }
     }
     // -----------------------------------------------------------------------------
@@ -698,6 +718,29 @@ bool CBotanProvider::GenerateKeyPair(void)
                     const Botan::EC_Group group = Botan::EC_Group::from_name("secp256r1");
                     impl_->signatureKey.reset(new Botan::ECDSA_PrivateKey(rng, group));
                     impl_->signatureSize = 64;
+                    break;
+                }
+                case SIGNATURE_ECDSA_P384_SHA384:
+                {
+                    const Botan::EC_Group group = Botan::EC_Group::from_name("secp384r1");
+                    impl_->signatureKey.reset(new Botan::ECDSA_PrivateKey(rng, group));
+                    impl_->signatureSize = 96;
+                    break;
+                }
+                case SIGNATURE_ECDSA_P521_SHA512:
+                {
+                    const Botan::EC_Group group = Botan::EC_Group::from_name("secp521r1");
+                    impl_->signatureKey.reset(new Botan::ECDSA_PrivateKey(rng, group));
+                    impl_->signatureSize = 132; // 66-byte component (ceil(521/8)) x 2, not 65 x 2
+                    break;
+                }
+                case SIGNATURE_DSA_SHA256_2048:
+                case SIGNATURE_DSA_SHA256_3072:
+                {
+                    const unsigned int paramBits = SignatureDsaParamBits(impl_->signatureAlgorithm);
+                    const Botan::DL_Group group(rng, Botan::DL_Group::DSA_Kosherizer, paramBits, 256);
+                    impl_->signatureKey.reset(new Botan::DSA_PrivateKey(rng, group));
+                    impl_->signatureSize = 64; // fixed: N=256 bits -> 32-byte r + 32-byte s
                     break;
                 }
                 case SIGNATURE_ED25519:

@@ -6250,7 +6250,11 @@ int CCryptoApiTester::RunSignatureAlgorithmsTest(void)
             { SIGNATURE_RSA_PSS_SHA256_3072, "RSA_PSS_SHA256_3072" },
             { SIGNATURE_RSA_PSS_SHA256_4096, "RSA_PSS_SHA256_4096" },
             { SIGNATURE_ECDSA_P256_SHA256,   "ECDSA_P256_SHA256" },
-            { SIGNATURE_ED25519,             "Ed25519" }
+            { SIGNATURE_ED25519,             "Ed25519" },
+            { SIGNATURE_ECDSA_P384_SHA384,   "ECDSA_P384_SHA384" },
+            { SIGNATURE_ECDSA_P521_SHA512,   "ECDSA_P521_SHA512" },
+            { SIGNATURE_DSA_SHA256_2048,     "DSA_SHA256_2048" },
+            { SIGNATURE_DSA_SHA256_3072,     "DSA_SHA256_3072" }
         };
 
         const unsigned char testData[] = { 'C', 'r', 'y', 'p', 't', 'o', 'A', 'P', 'I', ' ', 's', 'i', 'g', 'n' };

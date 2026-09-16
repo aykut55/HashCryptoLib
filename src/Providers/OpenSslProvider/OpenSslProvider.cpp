@@ -2,6 +2,7 @@
 
 #include "openssl/bn.h"
 #include "openssl/core_names.h"
+#include "openssl/dsa.h"
 #include "openssl/ec.h"
 #include "openssl/evp.h"
 #include "openssl/hmac.h"
@@ -140,6 +141,60 @@ namespace
         case SIGNATURE_RSA_PSS_SHA256_3072: return 3072;
         case SIGNATURE_RSA_PSS_SHA256_4096: return 4096;
         default:                            return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // OpenSSL EVP group name for EVP_PKEY_CTX_set_group_name(); nullptr for non-ECDSA algorithms.
+    const char* SignatureEcdsaGroupName(const SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case SIGNATURE_ECDSA_P256_SHA256: return "P-256";
+        case SIGNATURE_ECDSA_P384_SHA384: return "P-384";
+        case SIGNATURE_ECDSA_P521_SHA512: return "P-521";
+        default:                          return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // Raw r/s component width in bytes (r||s signature size is always 2x this). P-521's 521-bit
+    // field rounds UP to 66 bytes (ceil(521/8)), not down to 65.
+    unsigned int SignatureEcdsaComponentBytes(const SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case SIGNATURE_ECDSA_P256_SHA256: return 32;
+        case SIGNATURE_ECDSA_P384_SHA384: return 48;
+        case SIGNATURE_ECDSA_P521_SHA512: return 66;
+        default:                          return 0;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // EVP digest name for EVP_DigestSignInit_ex/EVP_DigestVerifyInit_ex. RSA-PSS and P-256 both use
+    // SHA-256 (the default case covers both); P-384/P-521 use the NIST-conventional stronger digest
+    // matching their curve strength.
+    const char* SignatureDigestName(const SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case SIGNATURE_ECDSA_P384_SHA384: return "SHA384";
+        case SIGNATURE_ECDSA_P521_SHA512: return "SHA512";
+        default:                          return "SHA256";
+        }
+    }
+    // -----------------------------------------------------------------------------
+
+    // 0 for non-DSA algorithms. DSA's L (param bits, 2048/3072) is a two-step OpenSSL EVP
+    // paramgen+keygen, unlike RSA/EC's single-step EVP_PKEY_generate -- see GenerateKeyPair.
+    unsigned int SignatureDsaParamBits(const SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case SIGNATURE_DSA_SHA256_2048: return 2048;
+        case SIGNATURE_DSA_SHA256_3072: return 3072;
+        default:                        return 0;
         }
     }
     // -----------------------------------------------------------------------------
@@ -801,6 +856,70 @@ bool COpenSslProvider::GenerateKeyPair(void)
 
         if (impl_->asymmetricModeIsSignature)
         {
+            const unsigned int dsaParamBits = SignatureDsaParamBits(impl_->signatureAlgorithm);
+            if (dsaParamBits != 0)
+            {
+                // DSA needs a two-step EVP paramgen + keygen (unlike RSA/EC/Ed25519's single
+                // EVP_PKEY_generate call) -- domain parameters (p, q, g) are generated first, then
+                // the actual key pair is generated against those parameters. q is pinned to 256
+                // bits explicitly so the raw r||s signature size (2*32=64 bytes) is the same at
+                // both L=2048 and L=3072, matching this SDK's fixed-per-algorithm size promise.
+                EVP_PKEY_CTX* paramCtx = EVP_PKEY_CTX_new_from_name(nullptr, "DSA", nullptr);
+                if (paramCtx == nullptr)
+                {
+                    return false;
+                }
+
+                if (EVP_PKEY_paramgen_init(paramCtx) != 1 ||
+                    EVP_PKEY_CTX_set_dsa_paramgen_bits(paramCtx, static_cast<int>(dsaParamBits)) != 1 ||
+                    EVP_PKEY_CTX_set_dsa_paramgen_q_bits(paramCtx, 256) != 1)
+                {
+                    EVP_PKEY_CTX_free(paramCtx);
+                    return false;
+                }
+
+                EVP_PKEY* params = nullptr;
+                if (EVP_PKEY_paramgen(paramCtx, &params) != 1)
+                {
+                    EVP_PKEY_CTX_free(paramCtx);
+                    return false;
+                }
+
+                EVP_PKEY_CTX_free(paramCtx);
+
+                EVP_PKEY_CTX* keyCtx = EVP_PKEY_CTX_new_from_pkey(nullptr, params, nullptr);
+                EVP_PKEY_free(params);
+                if (keyCtx == nullptr)
+                {
+                    return false;
+                }
+
+                if (EVP_PKEY_keygen_init(keyCtx) != 1)
+                {
+                    EVP_PKEY_CTX_free(keyCtx);
+                    return false;
+                }
+
+                EVP_PKEY* newKey = nullptr;
+                if (EVP_PKEY_generate(keyCtx, &newKey) != 1)
+                {
+                    EVP_PKEY_CTX_free(keyCtx);
+                    return false;
+                }
+
+                EVP_PKEY_CTX_free(keyCtx);
+
+                if (impl_->signatureKey != nullptr)
+                {
+                    EVP_PKEY_free(impl_->signatureKey);
+                }
+
+                impl_->signatureKey = newKey;
+                impl_->signatureSize = 64; // fixed: N=256 bits -> 32-byte r + 32-byte s
+                impl_->signatureKeyGenerated = true;
+                return true;
+            }
+
             const char* keyType = nullptr;
             unsigned int rsaBits = 0;
 
@@ -813,6 +932,8 @@ bool COpenSslProvider::GenerateKeyPair(void)
                     rsaBits = SignatureRsaKeyBits(impl_->signatureAlgorithm);
                     break;
                 case SIGNATURE_ECDSA_P256_SHA256:
+                case SIGNATURE_ECDSA_P384_SHA384:
+                case SIGNATURE_ECDSA_P521_SHA512:
                     keyType = "EC";
                     break;
                 case SIGNATURE_ED25519:
@@ -842,9 +963,9 @@ bool COpenSslProvider::GenerateKeyPair(void)
                     return false;
                 }
             }
-            else if (impl_->signatureAlgorithm == SIGNATURE_ECDSA_P256_SHA256)
+            else if (SignatureEcdsaGroupName(impl_->signatureAlgorithm) != nullptr)
             {
-                if (EVP_PKEY_CTX_set_group_name(genCtx, "P-256") != 1)
+                if (EVP_PKEY_CTX_set_group_name(genCtx, SignatureEcdsaGroupName(impl_->signatureAlgorithm)) != 1)
                 {
                     EVP_PKEY_CTX_free(genCtx);
                     return false;
@@ -866,7 +987,18 @@ bool COpenSslProvider::GenerateKeyPair(void)
             }
 
             impl_->signatureKey = newKey;
-            impl_->signatureSize = rsaBits != 0 ? (rsaBits / 8) : 64; // RSA: modulus bytes; ECDSA/Ed25519: 64
+            if (rsaBits != 0)
+            {
+                impl_->signatureSize = rsaBits / 8; // RSA: modulus bytes
+            }
+            else if (impl_->signatureAlgorithm == SIGNATURE_ED25519)
+            {
+                impl_->signatureSize = 64;
+            }
+            else
+            {
+                impl_->signatureSize = 2u * SignatureEcdsaComponentBytes(impl_->signatureAlgorithm); // ECDSA: raw r||s
+            }
             impl_->signatureKeyGenerated = true;
             return true;
         }
@@ -1228,6 +1360,10 @@ bool COpenSslProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
             case SIGNATURE_RSA_PSS_SHA256_3072:
             case SIGNATURE_RSA_PSS_SHA256_4096:
             case SIGNATURE_ECDSA_P256_SHA256:
+            case SIGNATURE_ECDSA_P384_SHA384:
+            case SIGNATURE_ECDSA_P521_SHA512:
+            case SIGNATURE_DSA_SHA256_2048:
+            case SIGNATURE_DSA_SHA256_3072:
             case SIGNATURE_ED25519:
                 break;
             default:
@@ -1271,7 +1407,7 @@ bool COpenSslProvider::Sign(const unsigned char* data, const unsigned int dataSi
 
         const bool isEd25519 = (impl_->signatureAlgorithm == SIGNATURE_ED25519);
         const bool isRsaPss = SignatureRsaKeyBits(impl_->signatureAlgorithm) != 0;
-        const bool isEcdsa = (impl_->signatureAlgorithm == SIGNATURE_ECDSA_P256_SHA256);
+        const bool isEcdsa = SignatureEcdsaGroupName(impl_->signatureAlgorithm) != nullptr;
 
         EVP_MD_CTX* mdCtx = EVP_MD_CTX_new();
         if (mdCtx == nullptr)
@@ -1280,7 +1416,7 @@ bool COpenSslProvider::Sign(const unsigned char* data, const unsigned int dataSi
         }
 
         EVP_PKEY_CTX* pctx = nullptr;
-        if (EVP_DigestSignInit_ex(mdCtx, &pctx, isEd25519 ? nullptr : "SHA256", nullptr, nullptr, impl_->signatureKey, nullptr) != 1)
+        if (EVP_DigestSignInit_ex(mdCtx, &pctx, isEd25519 ? nullptr : SignatureDigestName(impl_->signatureAlgorithm), nullptr, nullptr, impl_->signatureKey, nullptr) != 1)
         {
             EVP_MD_CTX_free(mdCtx);
             return false;
@@ -1299,10 +1435,13 @@ bool COpenSslProvider::Sign(const unsigned char* data, const unsigned int dataSi
         if (isEcdsa)
         {
             // OpenSSL's native EVP output for an EC key is DER-encoded ECDSA_SIG; convert to the
-            // fixed 64-byte raw r||s this SDK uses for every provider (see SignatureAlgorithm's
-            // doc comment in ProviderTypes.h). 80 bytes comfortably covers P-256's DER encoding
-            // (2 BIGNUMs of up to 33 bytes each plus SEQUENCE/INTEGER tag-length overhead).
-            unsigned char derSignature[80];
+            // fixed raw r||s this SDK uses for every provider (see SignatureAlgorithm's doc comment
+            // in ProviderTypes.h). 200 bytes comfortably covers even P-521's DER encoding (2
+            // BIGNUMs of up to 67 bytes each -- 66-byte component plus a possible leading 0x00 sign
+            // byte -- plus SEQUENCE/INTEGER tag-length overhead).
+            const unsigned int componentBytes = SignatureEcdsaComponentBytes(impl_->signatureAlgorithm);
+
+            unsigned char derSignature[200];
             size_t derSize = sizeof(derSignature);
             const int signStatus = EVP_DigestSign(mdCtx, derSignature, &derSize, data, dataSize);
             EVP_MD_CTX_free(mdCtx);
@@ -1322,8 +1461,38 @@ bool COpenSslProvider::Sign(const unsigned char* data, const unsigned int dataSi
             const BIGNUM* s = nullptr;
             ECDSA_SIG_get0(sig, &r, &s);
 
-            const bool ok = BN_bn2binpad(r, signature, 32) == 32 && BN_bn2binpad(s, signature + 32, 32) == 32;
+            const bool ok = BN_bn2binpad(r, signature, static_cast<int>(componentBytes)) == static_cast<int>(componentBytes) &&
+                            BN_bn2binpad(s, signature + componentBytes, static_cast<int>(componentBytes)) == static_cast<int>(componentBytes);
             ECDSA_SIG_free(sig);
+            return ok;
+        }
+
+        if (SignatureDsaParamBits(impl_->signatureAlgorithm) != 0)
+        {
+            // Same DER->raw conversion as the ECDSA branch above, but DSA's r/s are always 32
+            // bytes each (N pinned to 256 bits at GenerateKeyPair time regardless of L).
+            unsigned char derSignature[80];
+            size_t derSize = sizeof(derSignature);
+            const int signStatus = EVP_DigestSign(mdCtx, derSignature, &derSize, data, dataSize);
+            EVP_MD_CTX_free(mdCtx);
+            if (signStatus != 1)
+            {
+                return false;
+            }
+
+            const unsigned char* derPtr = derSignature;
+            DSA_SIG* sig = d2i_DSA_SIG(nullptr, &derPtr, static_cast<long>(derSize));
+            if (sig == nullptr)
+            {
+                return false;
+            }
+
+            const BIGNUM* r = nullptr;
+            const BIGNUM* s = nullptr;
+            DSA_SIG_get0(sig, &r, &s);
+
+            const bool ok = BN_bn2binpad(r, signature, 32) == 32 && BN_bn2binpad(s, signature + 32, 32) == 32;
+            DSA_SIG_free(sig);
             return ok;
         }
 
@@ -1351,7 +1520,7 @@ bool COpenSslProvider::Verify(const unsigned char* data, const unsigned int data
 
         const bool isEd25519 = (impl_->signatureAlgorithm == SIGNATURE_ED25519);
         const bool isRsaPss = SignatureRsaKeyBits(impl_->signatureAlgorithm) != 0;
-        const bool isEcdsa = (impl_->signatureAlgorithm == SIGNATURE_ECDSA_P256_SHA256);
+        const bool isEcdsa = SignatureEcdsaGroupName(impl_->signatureAlgorithm) != nullptr;
 
         EVP_MD_CTX* mdCtx = EVP_MD_CTX_new();
         if (mdCtx == nullptr)
@@ -1360,7 +1529,7 @@ bool COpenSslProvider::Verify(const unsigned char* data, const unsigned int data
         }
 
         EVP_PKEY_CTX* pctx = nullptr;
-        if (EVP_DigestVerifyInit_ex(mdCtx, &pctx, isEd25519 ? nullptr : "SHA256", nullptr, nullptr, impl_->signatureKey, nullptr) != 1)
+        if (EVP_DigestVerifyInit_ex(mdCtx, &pctx, isEd25519 ? nullptr : SignatureDigestName(impl_->signatureAlgorithm), nullptr, nullptr, impl_->signatureKey, nullptr) != 1)
         {
             EVP_MD_CTX_free(mdCtx);
             return false;
@@ -1378,10 +1547,12 @@ bool COpenSslProvider::Verify(const unsigned char* data, const unsigned int data
 
         if (isEcdsa)
         {
-            // Reverse of the Sign()-side conversion: raw 64-byte r||s -> DER-encoded ECDSA_SIG,
-            // since that is what OpenSSL's EVP_DigestVerify expects for an EC key.
-            BIGNUM* r = BN_bin2bn(signature, 32, nullptr);
-            BIGNUM* s = BN_bin2bn(signature + 32, 32, nullptr);
+            // Reverse of the Sign()-side conversion: raw r||s -> DER-encoded ECDSA_SIG, since that
+            // is what OpenSSL's EVP_DigestVerify expects for an EC key.
+            const unsigned int componentBytes = SignatureEcdsaComponentBytes(impl_->signatureAlgorithm);
+
+            BIGNUM* r = BN_bin2bn(signature, static_cast<int>(componentBytes), nullptr);
+            BIGNUM* s = BN_bin2bn(signature + componentBytes, static_cast<int>(componentBytes), nullptr);
             ECDSA_SIG* sig = ECDSA_SIG_new();
             if (r == nullptr || s == nullptr || sig == nullptr || ECDSA_SIG_set0(sig, r, s) != 1)
             {
@@ -1390,10 +1561,39 @@ bool COpenSslProvider::Verify(const unsigned char* data, const unsigned int data
                 return false;
             }
 
-            unsigned char derSignature[80];
+            unsigned char derSignature[200];
             unsigned char* derPtr = derSignature;
             const int derLength = i2d_ECDSA_SIG(sig, &derPtr);
             ECDSA_SIG_free(sig); // also frees r/s, which ECDSA_SIG_set0 took ownership of
+
+            if (derLength <= 0)
+            {
+                EVP_MD_CTX_free(mdCtx);
+                return false;
+            }
+
+            const int verifyStatus = EVP_DigestVerify(mdCtx, derSignature, static_cast<size_t>(derLength), data, dataSize);
+            EVP_MD_CTX_free(mdCtx);
+            return verifyStatus == 1;
+        }
+
+        if (SignatureDsaParamBits(impl_->signatureAlgorithm) != 0)
+        {
+            // Reverse of the Sign()-side conversion: raw 32+32-byte r||s -> DER-encoded DSA_SIG.
+            BIGNUM* r = BN_bin2bn(signature, 32, nullptr);
+            BIGNUM* s = BN_bin2bn(signature + 32, 32, nullptr);
+            DSA_SIG* sig = DSA_SIG_new();
+            if (r == nullptr || s == nullptr || sig == nullptr || DSA_SIG_set0(sig, r, s) != 1)
+            {
+                if (sig != nullptr) { DSA_SIG_free(sig); } else { BN_free(r); BN_free(s); }
+                EVP_MD_CTX_free(mdCtx);
+                return false;
+            }
+
+            unsigned char derSignature[80];
+            unsigned char* derPtr = derSignature;
+            const int derLength = i2d_DSA_SIG(sig, &derPtr);
+            DSA_SIG_free(sig); // also frees r/s, which DSA_SIG_set0 took ownership of
 
             if (derLength <= 0)
             {

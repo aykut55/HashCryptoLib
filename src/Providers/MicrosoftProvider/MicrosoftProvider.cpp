@@ -281,6 +281,16 @@ namespace
     // for a given SignatureAlgorithm across all 4 providers, using CNG's curve-parameterized ECDSA
     // here would silently produce signatures CryptoPP/Botan/OpenSSL could never verify. Honest
     // unsupported is correct until CNG ships real Ed25519.
+    //
+    // SIGNATURE_DSA_SHA256_2048/3072 also correctly return nullptr = unsupported, for a different
+    // reason: BCRYPT_DSA_ALGORITHM's FIPS 186-3 key sizes (>1024 bit) require building and setting
+    // a BCRYPT_DSA_PARAMETER_HEADER2 (with an explicit hash-algorithm field) via BCryptSetProperty
+    // BEFORE BCryptGenerateKeyPair/BCryptFinalizeKeyPair -- a materially different, more invasive
+    // flow than every other algorithm this provider wires (RSA/ECDSA/ECDH all key-generate via a
+    // single BCryptGenerateKeyPair call). Given DSA signature generation is itself deprecated by
+    // FIPS 186-5 (see SignatureAlgorithm's own doc comment) and the other 3 providers already cover
+    // it, this SDK does not special-case CNG's DSA parameter-header flow for a legacy-interop-only
+    // algorithm -- same "honest unsupported over silent complexity" judgment as Ed25519 above.
     const wchar_t* SignatureAlgorithmName(SignatureAlgorithm algorithm)
     {
         switch (algorithm)
@@ -291,6 +301,10 @@ namespace
                 return BCRYPT_RSA_ALGORITHM;
             case SIGNATURE_ECDSA_P256_SHA256:
                 return BCRYPT_ECDSA_P256_ALGORITHM;
+            case SIGNATURE_ECDSA_P384_SHA384:
+                return BCRYPT_ECDSA_P384_ALGORITHM;
+            case SIGNATURE_ECDSA_P521_SHA512:
+                return BCRYPT_ECDSA_P521_ALGORITHM;
             default:
                 return nullptr;
         }
@@ -305,6 +319,62 @@ namespace
             case SIGNATURE_RSA_PSS_SHA256_3072: return 3072;
             case SIGNATURE_RSA_PSS_SHA256_4096: return 4096;
             default:                            return 0;
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    // ECDSA field size in bits, passed as BCryptGenerateKeyPair's dwLength for the curve's own
+    // named algorithm handle (CNG convention: dwLength = field width for a fixed-curve ECDSA
+    // algorithm, not a caller-chosen key size the way RSA's is). 0 for non-ECDSA algorithms.
+    unsigned int SignatureEcdsaFieldBits(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_ECDSA_P256_SHA256: return 256;
+            case SIGNATURE_ECDSA_P384_SHA384: return 384;
+            case SIGNATURE_ECDSA_P521_SHA512: return 521;
+            default:                          return 0;
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    // Raw r/s component width in bytes (r||s signature size is always 2x this). P-521's 521-bit
+    // field rounds UP to 66 bytes (ceil(521/8)), not down to 65 -- a common off-by-one.
+    unsigned int SignatureEcdsaComponentBytes(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_ECDSA_P256_SHA256: return 32;
+            case SIGNATURE_ECDSA_P384_SHA384: return 48;
+            case SIGNATURE_ECDSA_P521_SHA512: return 66;
+            default:                          return 0;
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    // Digest algorithm CNG hashes the message with before Sign/Verify (CNG always signs a
+    // pre-hashed digest, see CMicrosoftProvider::Sign's own comment). RSA-PSS and P-256 both use
+    // SHA-256 (the default case covers both, matching their fixed pairing in the enum); P-384/P-521
+    // use the NIST-conventional stronger digest matching their curve strength.
+    const wchar_t* SignatureDigestAlgorithm(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_ECDSA_P384_SHA384: return BCRYPT_SHA384_ALGORITHM;
+            case SIGNATURE_ECDSA_P521_SHA512: return BCRYPT_SHA512_ALGORITHM;
+            default:                          return BCRYPT_SHA256_ALGORITHM;
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    // Byte size matching SignatureDigestAlgorithm() above (32/48/64 for SHA-256/384/512).
+    unsigned int SignatureDigestSize(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_ECDSA_P384_SHA384: return 48;
+            case SIGNATURE_ECDSA_P521_SHA512: return 64;
+            default:                          return 32;
         }
     }
     // -------------------------------------------------------------------------
@@ -1041,7 +1111,7 @@ bool CMicrosoftProvider::GenerateKeyPair(void)
             }
 
             const unsigned int rsaBits = SignatureRsaKeyBits(signatureAlgorithm_);
-            const unsigned int keyBits = rsaBits != 0 ? rsaBits : 256; // ECDSA-P256: field size, not RSA modulus
+            const unsigned int keyBits = rsaBits != 0 ? rsaBits : SignatureEcdsaFieldBits(signatureAlgorithm_); // ECDSA: field size, not RSA modulus
 
             BCRYPT_KEY_HANDLE keyHandle = nullptr;
             if (BCryptGenerateKeyPair(static_cast<BCRYPT_ALG_HANDLE>(signatureAlgorithmHandle_),
@@ -1062,7 +1132,7 @@ bool CMicrosoftProvider::GenerateKeyPair(void)
             }
 
             signatureKeyHandle_ = keyHandle;
-            signatureSize_ = rsaBits != 0 ? (rsaBits / 8) : 64; // RSA: modulus bytes; ECDSA-P256: raw r||s (32+32)
+            signatureSize_ = rsaBits != 0 ? (rsaBits / 8) : (2u * SignatureEcdsaComponentBytes(signatureAlgorithm_)); // RSA: modulus bytes; ECDSA: raw r||s
             return true;
         }
 
@@ -1460,15 +1530,18 @@ bool CMicrosoftProvider::Sign(const unsigned char* data, const unsigned int data
             return false;
         }
 
-        unsigned char digest[32];
+        const wchar_t* digestAlgorithmName = SignatureDigestAlgorithm(signatureAlgorithm_);
+        const unsigned int digestSize = SignatureDigestSize(signatureAlgorithm_);
+
+        unsigned char digest[64];
         BCRYPT_ALG_HANDLE hashAlgorithm = nullptr;
-        if (BCryptOpenAlgorithmProvider(&hashAlgorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        if (BCryptOpenAlgorithmProvider(&hashAlgorithm, digestAlgorithmName, nullptr, 0) < 0)
         {
             return false;
         }
 
         const NTSTATUS hashStatus = BCryptHash(hashAlgorithm, nullptr, 0,
-                                               const_cast<PUCHAR>(data), dataSize, digest, sizeof(digest));
+                                               const_cast<PUCHAR>(data), dataSize, digest, digestSize);
         BCryptCloseAlgorithmProvider(hashAlgorithm, 0);
         if (hashStatus < 0)
         {
@@ -1480,11 +1553,11 @@ bool CMicrosoftProvider::Sign(const unsigned char* data, const unsigned int data
         if (SignatureRsaKeyBits(signatureAlgorithm_) != 0)
         {
             BCRYPT_PSS_PADDING_INFO paddingInfo;
-            paddingInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM;
-            paddingInfo.cbSalt = sizeof(digest);
+            paddingInfo.pszAlgId = digestAlgorithmName;
+            paddingInfo.cbSalt = digestSize;
 
             if (BCryptSignHash(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), &paddingInfo,
-                               digest, sizeof(digest), signature, signatureSize, &actualSize, BCRYPT_PAD_PSS) < 0)
+                               digest, digestSize, signature, signatureSize, &actualSize, BCRYPT_PAD_PSS) < 0)
             {
                 return false;
             }
@@ -1492,7 +1565,7 @@ bool CMicrosoftProvider::Sign(const unsigned char* data, const unsigned int data
         else
         {
             if (BCryptSignHash(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), nullptr,
-                               digest, sizeof(digest), signature, signatureSize, &actualSize, 0) < 0)
+                               digest, digestSize, signature, signatureSize, &actualSize, 0) < 0)
             {
                 return false;
             }
@@ -1517,15 +1590,18 @@ bool CMicrosoftProvider::Verify(const unsigned char* data, const unsigned int da
             return false;
         }
 
-        unsigned char digest[32];
+        const wchar_t* digestAlgorithmName = SignatureDigestAlgorithm(signatureAlgorithm_);
+        const unsigned int digestSize = SignatureDigestSize(signatureAlgorithm_);
+
+        unsigned char digest[64];
         BCRYPT_ALG_HANDLE hashAlgorithm = nullptr;
-        if (BCryptOpenAlgorithmProvider(&hashAlgorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        if (BCryptOpenAlgorithmProvider(&hashAlgorithm, digestAlgorithmName, nullptr, 0) < 0)
         {
             return false;
         }
 
         const NTSTATUS hashStatus = BCryptHash(hashAlgorithm, nullptr, 0,
-                                               const_cast<PUCHAR>(data), dataSize, digest, sizeof(digest));
+                                               const_cast<PUCHAR>(data), dataSize, digest, digestSize);
         BCryptCloseAlgorithmProvider(hashAlgorithm, 0);
         if (hashStatus < 0)
         {
@@ -1535,16 +1611,16 @@ bool CMicrosoftProvider::Verify(const unsigned char* data, const unsigned int da
         if (SignatureRsaKeyBits(signatureAlgorithm_) != 0)
         {
             BCRYPT_PSS_PADDING_INFO paddingInfo;
-            paddingInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM;
-            paddingInfo.cbSalt = sizeof(digest);
+            paddingInfo.pszAlgId = digestAlgorithmName;
+            paddingInfo.cbSalt = digestSize;
 
             return BCryptVerifySignature(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), &paddingInfo,
-                                         digest, sizeof(digest),
+                                         digest, digestSize,
                                          const_cast<PUCHAR>(signature), signatureSize, BCRYPT_PAD_PSS) >= 0;
         }
 
         return BCryptVerifySignature(static_cast<BCRYPT_KEY_HANDLE>(signatureKeyHandle_), nullptr,
-                                     digest, sizeof(digest),
+                                     digest, digestSize,
                                      const_cast<PUCHAR>(signature), signatureSize, 0) >= 0;
     }
     catch (...)

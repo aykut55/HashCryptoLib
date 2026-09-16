@@ -25,7 +25,7 @@ Visual Studio Developer Command Prompt / PowerShell'de (yani `cl.exe` PATH'te),
 ```bat
 :: x64
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem,ecdh,x25519,asn1,numbertheory ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,pcurves_secp384r1,pcurves_secp521r1,ed25519,emsa_pssr,mgf1,pem,ecdh,x25519,asn1,numbertheory,dsa,dl_group,dl_algo ^
   --cpu=x86_64
 move /Y botan_all.h x64\botan_all.h
 move /Y botan_all.cpp x64\botan_all.cpp
@@ -33,7 +33,7 @@ del botan_all.obj
 
 :: Win32
 python configure.py --amalgamation --minimized-build --disable-shared ^
-  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,ed25519,emsa_pssr,mgf1,pem,ecdh,x25519,asn1,numbertheory ^
+  --enable-modules=aes,camellia,serpent,twofish,gcm,ccm,eax,siv,gcm_siv,chacha20poly1305,cbc,cfb,ofb,ctr,pbkdf2,hmac,sha2_32,sha2_32_x86,sha2_32_simd,sha2_32_avx2,system_rng,auto_rng,mode_pad,rsa,eme_oaep,md5,sha1,sha2_64,sha3,blake2,blake2s,rmd160,ecdsa,ec_group,ecc_key,pcurves_secp256r1,pcurves_secp384r1,pcurves_secp521r1,ed25519,emsa_pssr,mgf1,pem,ecdh,x25519,asn1,numbertheory,dsa,dl_group,dl_algo ^
   --cpu=x86_32
 move /Y botan_all.h Win32\botan_all.h
 move /Y botan_all.cpp Win32\botan_all.cpp
@@ -89,6 +89,24 @@ listesi boş (yalnız kendi dizini yeterli). Paylaşılan sır türetmesi Botan'
 sınıfının `"Raw"` KDF adıyla yapılıyor -- bu, `kdf.h` içinde ayrı bir modül gerektirmeden
 built-in olarak ele alınan özel bir isim (gerçek bir KDF değil, ham ECDH/X25519 çıktısını
 olduğu gibi döndürür), o yüzden `--enable-modules`'e ayrı bir kdf modülü eklenmesi gerekmedi.
+
+## ECDSA-P384/P521 modülleri (2026-09-16)
+
+`CBotanProvider`'ın `SIGNATURE_ECDSA_P384_SHA384`/`SIGNATURE_ECDSA_P521_SHA512` desteği için
+`pcurves_secp384r1,pcurves_secp521r1` eklendi. `ecdsa`/`ec_group`/`ecc_key` zaten P-256 için
+ekliydi ve bu iki eğriye de otomatik uygulanıyor -- yalnız somut eğri modüllerinin eklenmesi
+yeterliydi, aynı `pcurves_secp256r1` deseni (bkz. yukarıdaki "Signature (imza) modülleri" notu:
+"pcurves'in kendisi --enable-modules'e doğrudan eklenemiyor, sadece somut eğri modülünü eklemek
+yeterli").
+
+## DSA modülleri (2026-09-16)
+
+`CBotanProvider`'ın `SIGNATURE_DSA_SHA256_2048`/`SIGNATURE_DSA_SHA256_3072` desteği için
+`dsa,dl_group,dl_algo` eklendi (`dsa`'nın kendi `<requires>` listesi: `dl_algo,dl_group,keypair,
+numbertheory,sha2_32` -- `keypair`/`numbertheory`/`sha2_32` zaten `rsa`/`ecdh` üzerinden ekliydi ve
+otomatik çözülüyordu, yalnız `dl_group`/`dl_algo` elle eklendi). Botan'ın kendi modül metadata'sı
+DSA'yı `lifecycle -> "Deprecated"` olarak işaretliyor -- derlemeyi engellemiyor, yalnızca
+configure.py çıktısında bir uyarı, `md5` modülündeki "Deprecated" uyarısıyla aynı kategori.
 
 ## Modül listesini genişletirken
 

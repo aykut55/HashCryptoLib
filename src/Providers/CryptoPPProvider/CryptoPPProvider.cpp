@@ -1,10 +1,13 @@
 #include "CryptoPPProvider.h"
 
 #include "cryptopp890/aes.h"
+#include "cryptopp890/algparam.h"
+#include "cryptopp890/argnames.h"
 #include "cryptopp890/blake2.h"
 #include "cryptopp890/camellia.h"
 #include "cryptopp890/ccm.h"
 #include "cryptopp890/chachapoly.h"
+#include "cryptopp890/dsa.h"
 #include "cryptopp890/eax.h"
 #include "cryptopp890/eccrypto.h"
 #include "cryptopp890/filters.h"
@@ -76,6 +79,19 @@ namespace
             case KEYAGREEMENT_ECDH_P256: return 32u;
             case KEYAGREEMENT_X25519:    return 32u;
             default:                     return 0;
+        }
+    }
+
+    // 0 for non-DSA algorithms. L (2048/3072); N (subgroup order bits) is always pinned to 256 via
+    // Name::SubgroupOrderSize() at GenerateKeyPair time, so the raw r||s signature size (CryptoPP's
+    // native P1363 format, 2*qBytes) is 64 bytes at both L.
+    unsigned int SignatureDsaParamBits(SignatureAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+            case SIGNATURE_DSA_SHA256_2048: return 2048;
+            case SIGNATURE_DSA_SHA256_3072: return 3072;
+            default:                        return 0;
         }
     }
 
@@ -456,6 +472,12 @@ struct CCryptoPPProvider::Impl
     CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PublicKey ecdsaPublicKey;
     std::unique_ptr<CryptoPP::ed25519Signer> ed25519SignerPtr;
     std::unique_ptr<CryptoPP::ed25519Verifier> ed25519VerifierPtr;
+    // DL_Keys_DSA::PrivateKey/PublicKey (what DSA2<H>::PrivateKey/PublicKey actually resolve to)
+    // are hash-erased just like ECDSA<EC,H>::PrivateKey/PublicKey above -- one member pair covers
+    // both SIGNATURE_DSA_SHA256_2048/3072, only L (the modulus size) differs at GenerateKeyPair
+    // time via NameValuePairs, not the C++ type.
+    CryptoPP::DSA2<CryptoPP::SHA256>::PrivateKey dsaPrivateKey;
+    CryptoPP::DSA2<CryptoPP::SHA256>::PublicKey dsaPublicKey;
 
     // IKeyAgreementService state -- separate key material from rsaPrivateKey/sigRsaPrivateKey/
     // ecdsaPrivateKey above (all distinct key pairs, never in use simultaneously for the same
@@ -875,11 +897,49 @@ bool CCryptoPPProvider::GenerateKeyPair(void)
                 }
                 case SIGNATURE_ECDSA_P256_SHA256:
                 {
+                    // ECDSA<ECP,SHA256>::PrivateKey/PublicKey are the same C++ TYPE regardless of
+                    // the hash template parameter (DL_Keys_ECDSA<EC>'s key typedefs ignore H
+                    // entirely -- only Signer/Verifier depend on it, see Sign()/Verify() below), so
+                    // this one member pair is reused for P-384/P-521 too, just re-Initialize()d
+                    // with a different curve OID each time.
                     CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PrivateKey privateKey;
                     privateKey.Initialize(rng, CryptoPP::ASN1::secp256r1());
                     impl_->ecdsaPrivateKey = privateKey;
                     privateKey.MakePublicKey(impl_->ecdsaPublicKey);
                     impl_->signatureSize = 64;
+                    break;
+                }
+                case SIGNATURE_ECDSA_P384_SHA384:
+                {
+                    CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PrivateKey privateKey;
+                    privateKey.Initialize(rng, CryptoPP::ASN1::secp384r1());
+                    impl_->ecdsaPrivateKey = privateKey;
+                    privateKey.MakePublicKey(impl_->ecdsaPublicKey);
+                    impl_->signatureSize = 96;
+                    break;
+                }
+                case SIGNATURE_ECDSA_P521_SHA512:
+                {
+                    CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::PrivateKey privateKey;
+                    privateKey.Initialize(rng, CryptoPP::ASN1::secp521r1());
+                    impl_->ecdsaPrivateKey = privateKey;
+                    privateKey.MakePublicKey(impl_->ecdsaPublicKey);
+                    impl_->signatureSize = 132; // 66-byte component (ceil(521/8)) x 2, not 65 x 2
+                    break;
+                }
+                case SIGNATURE_DSA_SHA256_2048:
+                case SIGNATURE_DSA_SHA256_3072:
+                {
+                    const unsigned int paramBits = SignatureDsaParamBits(impl_->signatureAlgorithm);
+                    CryptoPP::AlgorithmParameters params = CryptoPP::MakeParameters
+                        (CryptoPP::Name::ModulusSize(), static_cast<int>(paramBits))
+                        (CryptoPP::Name::SubgroupOrderSize(), 256);
+
+                    CryptoPP::DSA2<CryptoPP::SHA256>::PrivateKey privateKey;
+                    privateKey.GenerateRandom(rng, params);
+                    impl_->dsaPrivateKey = privateKey;
+                    privateKey.MakePublicKey(impl_->dsaPublicKey);
+                    impl_->signatureSize = 64; // fixed: N=256 bits -> 32-byte r + 32-byte s (P1363 format)
                     break;
                 }
                 case SIGNATURE_ED25519:
@@ -1199,6 +1259,10 @@ bool CCryptoPPProvider::SelectAlgorithm(const SignatureAlgorithm algorithm)
             case SIGNATURE_RSA_PSS_SHA256_3072:
             case SIGNATURE_RSA_PSS_SHA256_4096:
             case SIGNATURE_ECDSA_P256_SHA256:
+            case SIGNATURE_ECDSA_P384_SHA384:
+            case SIGNATURE_ECDSA_P521_SHA512:
+            case SIGNATURE_DSA_SHA256_2048:
+            case SIGNATURE_DSA_SHA256_3072:
             case SIGNATURE_ED25519:
                 break;
             default:
@@ -1254,6 +1318,32 @@ bool CCryptoPPProvider::Sign(const unsigned char* data, const unsigned int dataS
                 actualLength = signer.SignMessage(rng, data, dataSize, signature);
                 break;
             }
+            case SIGNATURE_ECDSA_P384_SHA384:
+            {
+                // impl_->ecdsaPrivateKey's TYPE is fixed to ECDSA<ECP,SHA256>::PrivateKey (see the
+                // GenerateKeyPair comment), but its VALUE was Initialize()d against secp384r1 for
+                // this algorithm -- constructing a SHA384-hashing Signer from it is what actually
+                // makes this a P-384/SHA-384 signature, the key type's own H parameter is unrelated.
+                CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA384>::Signer signer(impl_->ecdsaPrivateKey);
+                actualLength = signer.SignMessage(rng, data, dataSize, signature);
+                break;
+            }
+            case SIGNATURE_ECDSA_P521_SHA512:
+            {
+                CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA512>::Signer signer(impl_->ecdsaPrivateKey);
+                actualLength = signer.SignMessage(rng, data, dataSize, signature);
+                break;
+            }
+            case SIGNATURE_DSA_SHA256_2048:
+            case SIGNATURE_DSA_SHA256_3072:
+            {
+                // CryptoPP's native SignMessage() output for DSA is already P1363 raw r||s (see
+                // DSASignatureFormat's doc comment in dsa.h) -- no DER conversion needed, same as
+                // ECDSA above.
+                CryptoPP::DSA2<CryptoPP::SHA256>::Signer signer(impl_->dsaPrivateKey);
+                actualLength = signer.SignMessage(rng, data, dataSize, signature);
+                break;
+            }
             case SIGNATURE_ED25519:
             {
                 if (!impl_->ed25519SignerPtr)
@@ -1298,6 +1388,22 @@ bool CCryptoPPProvider::Verify(const unsigned char* data, const unsigned int dat
             case SIGNATURE_ECDSA_P256_SHA256:
             {
                 CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA256>::Verifier verifier(impl_->ecdsaPublicKey);
+                return verifier.VerifyMessage(data, dataSize, signature, signatureSize);
+            }
+            case SIGNATURE_ECDSA_P384_SHA384:
+            {
+                CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA384>::Verifier verifier(impl_->ecdsaPublicKey);
+                return verifier.VerifyMessage(data, dataSize, signature, signatureSize);
+            }
+            case SIGNATURE_ECDSA_P521_SHA512:
+            {
+                CryptoPP::ECDSA<CryptoPP::ECP, CryptoPP::SHA512>::Verifier verifier(impl_->ecdsaPublicKey);
+                return verifier.VerifyMessage(data, dataSize, signature, signatureSize);
+            }
+            case SIGNATURE_DSA_SHA256_2048:
+            case SIGNATURE_DSA_SHA256_3072:
+            {
+                CryptoPP::DSA2<CryptoPP::SHA256>::Verifier verifier(impl_->dsaPublicKey);
                 return verifier.VerifyMessage(data, dataSize, signature, signatureSize);
             }
             case SIGNATURE_ED25519:

@@ -121,15 +121,30 @@ enum HashAlgorithm
 // SIGNATURE_ECDSA_P256_SHA256 always produces the raw 64-byte r||s concatenation (32-byte r +
 // 32-byte s, both big-endian, zero-padded), never variable-length ASN.1 DER -- providers whose
 // native API produces DER (or vice versa) convert internally so every provider agrees on this one
-// wire format. Not every ProviderKind supports every value here; query
-// ICryptoProviderFactory::SupportsSignatureAlgorithm() before CreateSignatureEngine().
+// wire format. SIGNATURE_ECDSA_P384_SHA384/P521_SHA512 follow the same raw-r||s convention at
+// their own component width: P-384 is 48+48=96 bytes, P-521 is 66+66=132 bytes (66 = ceil(521/8),
+// the field-element byte width, not 521/8 rounded down). The paired hash (SHA-384/SHA-512) follows
+// NIST SP 800-186's conventional curve/hash strength matching, not a free choice -- unlike
+// SIGNATURE_RSA_PSS_SHA256_*, which stays SHA-256 at every RSA key size. SIGNATURE_DSA_SHA256_*
+// (classic, non-elliptic-curve DSA, FIPS 186-4/186-5 with L=2048/3072, N=256) follows the same
+// raw-r||s convention too, always 64 bytes (32+32) at either L, since N (the subgroup order size,
+// which is what actually determines r/s width) is fixed at 256 bits for both -- included for
+// completeness alongside RSA/ECDSA/EdDSA despite FIPS 186-5 deprecating DSA *signature generation*
+// for new systems (kept here as a legacy-interop/completeness algorithm, not a recommended
+// default -- see ISignatureEngine's own callers for guidance on algorithm choice). Not every
+// ProviderKind supports every value here; query ICryptoProviderFactory::SupportsSignatureAlgorithm()
+// before CreateSignatureEngine().
 enum SignatureAlgorithm
 {
     SIGNATURE_RSA_PSS_SHA256_2048 = 0,
     SIGNATURE_RSA_PSS_SHA256_3072 = 1,
     SIGNATURE_RSA_PSS_SHA256_4096 = 2,
     SIGNATURE_ECDSA_P256_SHA256   = 3,
-    SIGNATURE_ED25519             = 4
+    SIGNATURE_ED25519             = 4,
+    SIGNATURE_ECDSA_P384_SHA384   = 5,
+    SIGNATURE_ECDSA_P521_SHA512   = 6,
+    SIGNATURE_DSA_SHA256_2048     = 7,
+    SIGNATURE_DSA_SHA256_3072     = 8
 };
 
 // Key agreement (Diffie-Hellman style) algorithm/curve combinations. Like SignatureAlgorithm,
