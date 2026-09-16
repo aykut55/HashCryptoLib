@@ -93,6 +93,39 @@ std::unique_ptr<IRandomSource> COpenSslProviderFactory::CreateRandomSource()
 }
 // -----------------------------------------------------------------------------
 
+bool COpenSslProviderFactory::SupportsRandomAlgorithm(const RandomAlgorithm algorithm) const
+{
+    try
+    {
+        COpenSslProvider provider;
+        return provider.Initialize() && provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IRandomSource> COpenSslProviderFactory::CreateRandomSource(const RandomAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<COpenSslProvider> provider(new COpenSslProvider());
+        if (!provider->Initialize() || !provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 std::unique_ptr<IKeyDerivation> COpenSslProviderFactory::CreateKeyDerivation()
 {
     try

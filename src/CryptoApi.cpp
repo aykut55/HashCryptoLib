@@ -2336,6 +2336,54 @@ int CCryptoApi::DeriveSharedSecret(const unsigned char* peerPublicKeyBuffer, con
 // -----------------------------------------------------------------------------
 
 // ================================================================================================
+// Random byte generation -- see the section comment on GenerateRandomBytes' declarations in
+// CryptoApi.h. Kept in its own section at the end of the file like Signature/KeyAgreement above,
+// even though (unlike those) it needs no cached engine and works on any instance regardless of
+// which constructor created it.
+// ================================================================================================
+
+int CCryptoApi::GenerateRandomBytes(unsigned char* outputBuffer, const int outputBufferSize)
+{
+    return GenerateRandomBytes(RANDOM_SYSTEM, outputBuffer, outputBufferSize);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApi::GenerateRandomBytes(const RandomAlgorithm randomAlgorithm, unsigned char* outputBuffer, const int outputBufferSize)
+{
+    try
+    {
+        if (outputBufferSize < 0 || (outputBufferSize > 0 && outputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::unique_ptr<ICryptoProviderFactory> providerFactory = CreateProviderFactory(providerKind_);
+        if (!providerFactory)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::unique_ptr<IRandomSource> randomSource = providerFactory->CreateRandomSource(randomAlgorithm);
+        if (!randomSource)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (!randomSource->GenerateRandomBytes(outputBuffer, static_cast<unsigned int>(outputBufferSize)))
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
 // CCryptoApiConfig / GetShared -- see the section comment on GetShared's declarations in CryptoApi.h
 // for the Multiton-not-Singleton design rationale, the security-relevant key-sharing consequence,
 // and the thread-safety scope. Kept in its own section at the very end of the file, after every

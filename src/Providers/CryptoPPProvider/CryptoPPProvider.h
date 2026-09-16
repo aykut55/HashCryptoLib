@@ -70,6 +70,7 @@ public:
                                     unsigned char* derivedKey, const unsigned int derivedKeySize);
 
     // IRandomSource
+    virtual bool SelectAlgorithm(const RandomAlgorithm algorithm);
     virtual bool GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize);
 
     // IAsymmetricCipher. GenerateKeyPair() is also ISignatureEngine's method (identical signature

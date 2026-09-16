@@ -93,6 +93,39 @@ std::unique_ptr<IRandomSource> CBotanProviderFactory::CreateRandomSource()
 }
 // -----------------------------------------------------------------------------
 
+bool CBotanProviderFactory::SupportsRandomAlgorithm(const RandomAlgorithm algorithm) const
+{
+    try
+    {
+        CBotanProvider provider;
+        return provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IRandomSource> CBotanProviderFactory::CreateRandomSource(const RandomAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CBotanProvider> provider(new CBotanProvider());
+        if (!provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 std::unique_ptr<IKeyDerivation> CBotanProviderFactory::CreateKeyDerivation()
 {
     try

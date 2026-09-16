@@ -217,5 +217,9 @@ int main()
     cryptoApiTester.RunSharedInstanceTest();
 #endif
 
+#if 0
+    cryptoApiTester.RunRandomAlgorithmsTest();
+#endif
+
     return 0;
 }

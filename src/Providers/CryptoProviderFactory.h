@@ -33,9 +33,19 @@ public:
     virtual bool SupportsLegacyAlgorithm(const LegacySymmetricAlgorithm algorithm) const = 0;
     virtual std::unique_ptr<ILegacyCipher> CreateLegacyCipher(const LegacySymmetricAlgorithm algorithm) = 0;
 
-    // Random sources are algorithm-independent (no SelectAlgorithm needed), used e.g. to supply
-    // fresh per-chunk nonces to IAeadCipher::EncryptChunked.
+    // Random sources are algorithm-independent for this call specifically (always RANDOM_SYSTEM,
+    // no SelectAlgorithm needed) -- used internally e.g. to supply fresh per-chunk nonces to
+    // IAeadCipher::EncryptChunked. Unaffected by RandomAlgorithm/SupportsRandomAlgorithm/the
+    // algorithm-selecting CreateRandomSource(RandomAlgorithm) overload below, added later for
+    // callers who want an explicit NIST SP 800-90A DRBG instead of the implicit system default.
     virtual std::unique_ptr<IRandomSource> CreateRandomSource() = 0;
+
+    // Not every provider implements every explicit RandomAlgorithm (see RandomAlgorithm in
+    // ProviderTypes.h); providers must have SupportsRandomAlgorithm() return false and
+    // CreateRandomSource(algorithm) return nullptr for unsupported values, rather than omitting
+    // them. RANDOM_SYSTEM is supported by every provider (see CreateRandomSource() above).
+    virtual bool SupportsRandomAlgorithm(const RandomAlgorithm algorithm) const = 0;
+    virtual std::unique_ptr<IRandomSource> CreateRandomSource(const RandomAlgorithm algorithm) = 0;
 
     // Key derivation is algorithm-independent (no SelectAlgorithm needed), used to turn a
     // caller-supplied password into a key suitable for IAeadCipher::SetKey.

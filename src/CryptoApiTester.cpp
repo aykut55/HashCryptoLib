@@ -9804,6 +9804,130 @@ int CCryptoApiTester::RunSharedInstanceTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunRandomAlgorithmsTest(void)
+{
+    try
+    {
+        struct ProviderCase
+        {
+            ProviderKind kind;
+            const char* name;
+        };
+
+        const ProviderCase providerCases[] =
+        {
+            { PROVIDER_MICROSOFT, "Microsoft" },
+            { PROVIDER_CRYPTOPP,  "CryptoPP" },
+            { PROVIDER_BOTAN,     "Botan" },
+            { PROVIDER_OPENSSL,   "OpenSSL" }
+        };
+
+        struct RandomCase
+        {
+            RandomAlgorithm algorithm;
+            const char* name;
+        };
+
+        const RandomCase randomCases[] =
+        {
+            { RANDOM_SYSTEM,    "SYSTEM" },
+            { RANDOM_HASH_DRBG, "HASH_DRBG" },
+            { RANDOM_HMAC_DRBG, "HMAC_DRBG" },
+            { RANDOM_CTR_DRBG,  "CTR_DRBG" }
+        };
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t providerIndex = 0; providerIndex < sizeof(providerCases) / sizeof(providerCases[0]); ++providerIndex)
+        {
+            const ProviderKind kind = providerCases[providerIndex].kind;
+            const char* providerName = providerCases[providerIndex].name;
+
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(kind);
+            if (!factory)
+            {
+                std::cout << "RunRandomAlgorithmsTest: FAILED [" << providerName << "] CreateProviderFactory" << std::endl;
+                ++failures;
+                continue;
+            }
+
+            for (std::size_t algIndex = 0; algIndex < sizeof(randomCases) / sizeof(randomCases[0]); ++algIndex)
+            {
+                const RandomAlgorithm algorithm = randomCases[algIndex].algorithm;
+                const char* algorithmName = randomCases[algIndex].name;
+                const bool supported = factory->SupportsRandomAlgorithm(algorithm);
+
+                CCryptoApi cryptoApi(kind, AEAD_AES_256_GCM);
+
+                std::vector<unsigned char> output1(32);
+                int status = cryptoApi.GenerateRandomBytes(algorithm, &output1[0], static_cast<int>(output1.size()));
+
+                if (!supported)
+                {
+                    if (status == NO_ERROR)
+                    {
+                        std::cout << "RunRandomAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                                  << "] expected unsupported but GenerateRandomBytes succeeded" << std::endl;
+                        ++failures;
+                    }
+                    else
+                    {
+                        std::cout << "RunRandomAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                                  << "] correctly unsupported" << std::endl;
+                    }
+                    continue;
+                }
+
+                ++supportedCount;
+
+                if (status != NO_ERROR)
+                {
+                    std::cout << "RunRandomAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] GenerateRandomBytes status=" << status << " for a supported algorithm" << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::vector<unsigned char> output2(32);
+                status = cryptoApi.GenerateRandomBytes(algorithm, &output2[0], static_cast<int>(output2.size()));
+                if (status != NO_ERROR)
+                {
+                    std::cout << "RunRandomAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] second GenerateRandomBytes status=" << status << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                if (output1 == output2)
+                {
+                    std::cout << "RunRandomAlgorithmsTest: FAILED [" << providerName << "/" << algorithmName
+                              << "] two independent calls produced identical output" << std::endl;
+                    ++failures;
+                    continue;
+                }
+
+                std::cout << "RunRandomAlgorithmsTest: PASSED [" << providerName << "/" << algorithmName
+                          << "] two independent calls produced different output (32 bytes each)" << std::endl;
+            }
+        }
+
+        if (failures == 0)
+        {
+            std::cout << "RunRandomAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and generated distinct output)" << std::endl;
+            return NO_ERROR;
+        }
+
+        std::cout << "RunRandomAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunEncryptStringMultilingualTest(void)
 {
     try

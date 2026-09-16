@@ -7,6 +7,7 @@
 #include "cryptopp890/camellia.h"
 #include "cryptopp890/ccm.h"
 #include "cryptopp890/chachapoly.h"
+#include "cryptopp890/drbg.h"
 #include "cryptopp890/dsa.h"
 #include "cryptopp890/eax.h"
 #include "cryptopp890/eccrypto.h"
@@ -479,6 +480,11 @@ struct CCryptoPPProvider::Impl
     CryptoPP::DSA2<CryptoPP::SHA256>::PrivateKey dsaPrivateKey;
     CryptoPP::DSA2<CryptoPP::SHA256>::PublicKey dsaPublicKey;
 
+    // IRandomSource state -- which explicit algorithm GenerateRandomBytes() below uses.
+    // RANDOM_SYSTEM (the default, never requiring SelectAlgorithm() to be called) matches every
+    // pre-existing caller's expectation exactly (CryptoPP::OS_GenerateRandomBlock, unchanged).
+    RandomAlgorithm randomAlgorithm = RANDOM_SYSTEM;
+
     // IKeyAgreementService state -- separate key material from rsaPrivateKey/sigRsaPrivateKey/
     // ecdsaPrivateKey above (all distinct key pairs, never in use simultaneously for the same
     // instance). CryptoPP::SimpleKeyAgreementDomain is the common abstract base for both
@@ -779,6 +785,29 @@ bool CCryptoPPProvider::DerivePasswordKey(const char* password, const unsigned i
 }
 // -----------------------------------------------------------------------------
 
+bool CCryptoPPProvider::SelectAlgorithm(const RandomAlgorithm algorithm)
+{
+    try
+    {
+        switch (algorithm)
+        {
+            case RANDOM_SYSTEM:
+            case RANDOM_HASH_DRBG:
+            case RANDOM_HMAC_DRBG:
+                impl_->randomAlgorithm = algorithm;
+                return true;
+            default:
+                // RANDOM_CTR_DRBG: CryptoPP 8.9.0 has no CTR_DRBG class (only Hash_DRBG/HMAC_DRBG).
+                return false;
+        }
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool CCryptoPPProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize)
 {
     try
@@ -793,7 +822,31 @@ bool CCryptoPPProvider::GenerateRandomBytes(unsigned char* buffer, const unsigne
             return true;
         }
 
-        CryptoPP::OS_GenerateRandomBlock(true, reinterpret_cast<CryptoPP::byte*>(buffer), bufferSize);
+        if (impl_->randomAlgorithm == RANDOM_SYSTEM)
+        {
+            CryptoPP::OS_GenerateRandomBlock(true, reinterpret_cast<CryptoPP::byte*>(buffer), bufferSize);
+            return true;
+        }
+
+        // RANDOM_HASH_DRBG / RANDOM_HMAC_DRBG: seed a NIST SP 800-90A DRBG from real OS entropy
+        // (32 bytes -- comfortably above STRENGTH=128/8=16's minimum), then draw the requested
+        // output from it. A fresh DRBG per call is deliberate (matches this codebase's existing
+        // stateless-per-call pattern for AEAD/Legacy) rather than keeping one growing DRBG instance
+        // alive across calls.
+        CryptoPP::SecByteBlock entropy(32);
+        CryptoPP::OS_GenerateRandomBlock(true, entropy.data(), entropy.size());
+
+        if (impl_->randomAlgorithm == RANDOM_HASH_DRBG)
+        {
+            CryptoPP::Hash_DRBG<CryptoPP::SHA256> drbg(entropy.data(), entropy.size());
+            drbg.GenerateBlock(reinterpret_cast<CryptoPP::byte*>(buffer), bufferSize);
+        }
+        else
+        {
+            CryptoPP::HMAC_DRBG<CryptoPP::SHA256> drbg(entropy.data(), entropy.size());
+            drbg.GenerateBlock(reinterpret_cast<CryptoPP::byte*>(buffer), bufferSize);
+        }
+
         return true;
     }
     catch (...)

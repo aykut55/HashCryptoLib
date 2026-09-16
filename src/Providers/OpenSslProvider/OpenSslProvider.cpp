@@ -199,6 +199,22 @@ namespace
     }
     // -----------------------------------------------------------------------------
 
+    // --- Random (IRandomSource) ---------------------------------------------------------------
+
+    // EVP_RAND algorithm name for EVP_RAND_fetch(); nullptr for RANDOM_SYSTEM (handled separately
+    // via plain RAND_bytes, not EVP_RAND at all).
+    const char* RandomAlgorithmFetchName(const RandomAlgorithm algorithm)
+    {
+        switch (algorithm)
+        {
+        case RANDOM_HASH_DRBG: return "HASH-DRBG";
+        case RANDOM_HMAC_DRBG: return "HMAC-DRBG";
+        case RANDOM_CTR_DRBG:  return "CTR-DRBG";
+        default:               return nullptr;
+        }
+    }
+    // -----------------------------------------------------------------------------
+
     // --- Key agreement (IKeyAgreementService) -----------------------------------------------------
 
     const char* KeyAgreementKeyType(const KeyAgreementAlgorithm algorithm)
@@ -284,6 +300,11 @@ struct COpenSslProvider::Impl
     unsigned int keyAgreementSharedSecretSize;
     EVP_PKEY* keyAgreementKey;
 
+    // IRandomSource state -- which explicit algorithm GenerateRandomBytes() below uses.
+    // RANDOM_SYSTEM (the default, never requiring SelectAlgorithm() to be called) matches every
+    // pre-existing caller's expectation exactly (RAND_bytes, unchanged).
+    RandomAlgorithm randomAlgorithm;
+
     Impl()
         : cipher(nullptr), encryptCtx(EVP_CIPHER_CTX_new()), decryptCtx(EVP_CIPHER_CTX_new()),
           legacySelected(false), isCcm(false), isPadded(false), keySize(0), ivOrNonceSize(0),
@@ -293,7 +314,8 @@ struct COpenSslProvider::Impl
           signatureKeyGenerated(false), signatureSize(0), signatureKey(nullptr),
           asymmetricModeIsKeyAgreement(false), keyAgreementAlgorithm(KEYAGREEMENT_ECDH_P256),
           keyAgreementKeyGenerated(false), keyAgreementPublicKeySize(0),
-          keyAgreementSharedSecretSize(0), keyAgreementKey(nullptr)
+          keyAgreementSharedSecretSize(0), keyAgreementKey(nullptr),
+          randomAlgorithm(RANDOM_SYSTEM)
     {
     }
     // -----------------------------------------------------------------------------
@@ -744,11 +766,39 @@ bool COpenSslProvider::DerivePasswordKey(const char* password, const unsigned in
 }
 // -----------------------------------------------------------------------------
 
+bool COpenSslProvider::SelectAlgorithm(const RandomAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return false;
+        }
+
+        switch (algorithm)
+        {
+            case RANDOM_SYSTEM:
+            case RANDOM_HASH_DRBG:
+            case RANDOM_HMAC_DRBG:
+            case RANDOM_CTR_DRBG:
+                impl_->randomAlgorithm = algorithm;
+                return true;
+            default:
+                return false;
+        }
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool COpenSslProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize)
 {
     try
     {
-        if (buffer == nullptr && bufferSize > 0)
+        if (!impl_ || (buffer == nullptr && bufferSize > 0))
         {
             return false;
         }
@@ -758,7 +808,57 @@ bool COpenSslProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned
             return true;
         }
 
-        return RAND_bytes(buffer, static_cast<int>(bufferSize)) == 1;
+        if (impl_->randomAlgorithm == RANDOM_SYSTEM)
+        {
+            return RAND_bytes(buffer, static_cast<int>(bufferSize)) == 1;
+        }
+
+        // RANDOM_HASH_DRBG / RANDOM_HMAC_DRBG / RANDOM_CTR_DRBG: an explicit NIST SP 800-90A DRBG,
+        // fetched fresh per call (matches this codebase's stateless-per-call pattern elsewhere). A
+        // NULL parent context means the DRBG seeds itself from the default provider's own internal
+        // entropy source -- exactly the pattern OpenSSL's own test/drbgtest.c uses (new_drbg(NULL)).
+        const char* fetchName = RandomAlgorithmFetchName(impl_->randomAlgorithm);
+        if (fetchName == nullptr)
+        {
+            return false;
+        }
+
+        EVP_RAND* randAlg = EVP_RAND_fetch(nullptr, fetchName, nullptr);
+        if (randAlg == nullptr)
+        {
+            return false;
+        }
+
+        EVP_RAND_CTX* ctx = EVP_RAND_CTX_new(randAlg, nullptr);
+        EVP_RAND_free(randAlg);
+        if (ctx == nullptr)
+        {
+            return false;
+        }
+
+        OSSL_PARAM params[2];
+        if (impl_->randomAlgorithm == RANDOM_CTR_DRBG)
+        {
+            params[0] = OSSL_PARAM_construct_utf8_string(OSSL_DRBG_PARAM_CIPHER, const_cast<char*>("AES-256-CTR"), 0);
+        }
+        else
+        {
+            params[0] = OSSL_PARAM_construct_utf8_string(OSSL_DRBG_PARAM_DIGEST, const_cast<char*>("SHA256"), 0);
+        }
+        params[1] = OSSL_PARAM_construct_end();
+
+        if (EVP_RAND_CTX_set_params(ctx, params) != 1 ||
+            EVP_RAND_instantiate(ctx, 0, 0, nullptr, 0, nullptr) != 1)
+        {
+            EVP_RAND_CTX_free(ctx);
+            return false;
+        }
+
+        const int generateStatus = EVP_RAND_generate(ctx, buffer, bufferSize, 0, 0, nullptr, 0);
+        EVP_RAND_uninstantiate(ctx);
+        EVP_RAND_CTX_free(ctx);
+
+        return generateStatus == 1;
     }
     catch (...)
     {

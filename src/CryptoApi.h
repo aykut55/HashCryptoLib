@@ -388,6 +388,28 @@ public:
                            unsigned char* outputBuffer,
                            int* outputBufferSize);
 
+    // ============================================================================================
+    // Random byte generation -- see RandomAlgorithm in ProviderTypes.h. Unlike every other section
+    // above, this is NOT tied to any constructor argument or cached engine: it works on any
+    // CCryptoApi instance regardless of which constructor created it (using only this instance's
+    // fixed providerKind_), takes no password/key, and every call is fully independent (no state
+    // persists between calls, matching RANDOM_SYSTEM's own already-stateless nature and this SDK's
+    // Hash section's same "stateless per call" reasoning). Output size is always exactly
+    // outputBufferSize (no encoding/tag overhead to size for), so neither overload uses the
+    // BUFFER_TOO_SMALL capacity-query convention the rest of this class uses -- there is nothing to
+    // query.
+    // ============================================================================================
+
+    // Equivalent to GenerateRandomBytes(RANDOM_SYSTEM, outputBuffer, outputBufferSize) below.
+    int GenerateRandomBytes(unsigned char* outputBuffer, const int outputBufferSize);
+
+    // Uses an explicit NIST SP 800-90A DRBG (RANDOM_HASH_DRBG/HMAC_DRBG/CTR_DRBG) instead of this
+    // instance's provider's implicit system RNG; returns UNEXPECTED_ERROR if providerKind_ doesn't
+    // support the requested randomAlgorithm (query ICryptoProviderFactory::SupportsRandomAlgorithm
+    // first if that distinction matters to the caller).
+    int GenerateRandomBytes( const RandomAlgorithm randomAlgorithm,
+                            unsigned char* outputBuffer, const int outputBufferSize);
+
 protected:
 
 private:

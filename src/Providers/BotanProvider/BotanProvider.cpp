@@ -233,6 +233,11 @@ struct CBotanProvider::Impl
     unsigned int keyAgreementPublicKeySize = 0;
     unsigned int keyAgreementSharedSecretSize = 0;
     std::unique_ptr<Botan::PK_Key_Agreement_Key> keyAgreementKey;
+
+    // IRandomSource state -- which explicit algorithm GenerateRandomBytes() below uses.
+    // RANDOM_SYSTEM (the default, never requiring SelectAlgorithm() to be called) matches every
+    // pre-existing caller's expectation exactly (Botan::System_RNG, unchanged).
+    RandomAlgorithm randomAlgorithm = RANDOM_SYSTEM;
 };
 
 CBotanProvider::~CBotanProvider()
@@ -613,6 +618,29 @@ bool CBotanProvider::DerivePasswordKey(const char* password, const unsigned int 
 }
 // -----------------------------------------------------------------------------
 
+bool CBotanProvider::SelectAlgorithm(const RandomAlgorithm algorithm)
+{
+    try
+    {
+        switch (algorithm)
+        {
+            case RANDOM_SYSTEM:
+            case RANDOM_HMAC_DRBG:
+                impl_->randomAlgorithm = algorithm;
+                return true;
+            default:
+                // RANDOM_HASH_DRBG / RANDOM_CTR_DRBG: Botan 3.13 has neither a Hash_DRBG nor a
+                // CTR_DRBG class (only HMAC_DRBG, see hmac_drbg module).
+                return false;
+        }
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 bool CBotanProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize)
 {
     try
@@ -627,8 +655,20 @@ bool CBotanProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned i
             return true;
         }
 
-        Botan::System_RNG rng;
-        rng.randomize(buffer, bufferSize);
+        if (impl_->randomAlgorithm == RANDOM_SYSTEM)
+        {
+            Botan::System_RNG rng;
+            rng.randomize(buffer, bufferSize);
+            return true;
+        }
+
+        // RANDOM_HMAC_DRBG: a fresh HMAC_DRBG per call (matches this codebase's existing
+        // stateless-per-call pattern for AEAD/Legacy), reseeded from the OS-backed System_RNG for
+        // its actual entropy -- the DRBG's own "automatic reseeding" constructor overload needs
+        // exactly this underlying-RNG argument (see hmac_drbg.h).
+        Botan::System_RNG systemRng;
+        Botan::HMAC_DRBG drbg(Botan::MessageAuthenticationCode::create("HMAC(SHA-256)"), systemRng);
+        drbg.randomize(buffer, bufferSize);
         return true;
     }
     catch (...)

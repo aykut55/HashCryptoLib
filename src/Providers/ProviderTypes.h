@@ -161,6 +161,25 @@ enum KeyAgreementAlgorithm
     KEYAGREEMENT_X25519    = 1
 };
 
+// Random byte generation algorithms. RANDOM_SYSTEM is each provider's OS-preferred CSPRNG -- what
+// IRandomSource::GenerateRandomBytes() already used unconditionally before this enum existed, and
+// still the default when SelectAlgorithm() is never called (fully backward compatible: every
+// existing internal nonce/IV/salt generation call site in this SDK is unaffected). The other 3
+// values are NIST SP 800-90A's own named DRBG mechanisms (Hash_DRBG, HMAC_DRBG, CTR_DRBG),
+// available where a provider ships an explicit, separately-selectable implementation of that exact
+// mechanism -- not every provider does (Windows CNG's system RNG is internally CTR_DRBG-based per
+// Microsoft's own documentation, but that is not exposed as a separately selectable algorithm
+// through any stable public API, so RANDOM_CTR_DRBG is unsupported on PROVIDER_MICROSOFT rather
+// than silently aliasing it to RANDOM_SYSTEM). Not every ProviderKind supports every value here;
+// query ICryptoProviderFactory::SupportsRandomAlgorithm() before CreateRandomSource(algorithm).
+enum RandomAlgorithm
+{
+    RANDOM_SYSTEM    = 0,
+    RANDOM_HASH_DRBG = 1,
+    RANDOM_HMAC_DRBG = 2,
+    RANDOM_CTR_DRBG  = 3
+};
+
 } // namespace CryptoApiNS
 
 #endif

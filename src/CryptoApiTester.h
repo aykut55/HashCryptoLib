@@ -244,6 +244,15 @@ public:
     // built, not silently reused.
     int RunSharedInstanceTest(void);
 
+    // Loops every ProviderKind x every RandomAlgorithm value (4x4=16 combinations) via
+    // CCryptoApi::GenerateRandomBytes(algorithm, ...), cross-checked against
+    // ICryptoProviderFactory::SupportsRandomAlgorithm() as ground truth -- supported combinations
+    // must succeed AND produce different output across two independent calls (a same-output check
+    // would silently pass a broken RNG returning all-zeros or a fixed buffer), unsupported ones
+    // (e.g. RANDOM_CTR_DRBG on Microsoft/CryptoPP/Botan, RANDOM_HASH_DRBG on Microsoft/Botan) must
+    // be cleanly rejected.
+    int RunRandomAlgorithmsTest(void);
+
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
     int RunEncryptStringMultilingualTest(void);

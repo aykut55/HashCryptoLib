@@ -93,6 +93,39 @@ std::unique_ptr<IRandomSource> CMicrosoftProviderFactory::CreateRandomSource()
 }
 // -----------------------------------------------------------------------------
 
+bool CMicrosoftProviderFactory::SupportsRandomAlgorithm(const RandomAlgorithm algorithm) const
+{
+    try
+    {
+        CMicrosoftProvider provider;
+        return provider.SelectAlgorithm(algorithm);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::unique_ptr<IRandomSource> CMicrosoftProviderFactory::CreateRandomSource(const RandomAlgorithm algorithm)
+{
+    try
+    {
+        std::unique_ptr<CMicrosoftProvider> provider(new CMicrosoftProvider());
+        if (!provider->SelectAlgorithm(algorithm))
+        {
+            return nullptr;
+        }
+
+        return provider;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
 std::unique_ptr<IKeyDerivation> CMicrosoftProviderFactory::CreateKeyDerivation()
 {
     try

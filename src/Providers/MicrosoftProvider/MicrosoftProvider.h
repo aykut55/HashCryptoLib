@@ -69,7 +69,10 @@ public:
                                     const unsigned int iterationCount,
                                     unsigned char* derivedKey, const unsigned int derivedKeySize);
 
-    // IRandomSource
+    // IRandomSource. Only RANDOM_SYSTEM is supported -- CNG's system-preferred RNG is internally
+    // CTR_DRBG-based, but that is not separately selectable through any stable public CNG API, so
+    // RANDOM_HASH_DRBG/HMAC_DRBG/CTR_DRBG all correctly report unsupported here.
+    virtual bool SelectAlgorithm(const RandomAlgorithm algorithm);
     virtual bool GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize);
 
     // IAsymmetricCipher. GenerateKeyPair() is also ISignatureEngine's method (identical signature

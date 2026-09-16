@@ -1010,6 +1010,12 @@ bool CMicrosoftProvider::DerivePasswordKey(const char* password, const unsigned 
 }
 // -----------------------------------------------------------------------------
 
+bool CMicrosoftProvider::SelectAlgorithm(const RandomAlgorithm algorithm)
+{
+    return algorithm == RANDOM_SYSTEM;
+}
+// -----------------------------------------------------------------------------
+
 bool CMicrosoftProvider::GenerateRandomBytes(unsigned char* buffer, const unsigned int bufferSize)
 {
     try
