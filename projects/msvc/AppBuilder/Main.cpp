@@ -175,7 +175,7 @@ int main()
     cryptoApiTester.RunHashFileHexBase64CompositionTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunHashFileTestNonBlocking();
 
     cryptoApiTester.RunHashStringTestNonBlocking();
@@ -219,6 +219,20 @@ int main()
 
 #if 0
     cryptoApiTester.RunRandomAlgorithmsTest();
+#endif
+
+#if 1
+    cryptoApiTester.RunPgpKeyGenerationTest();
+
+    cryptoApiTester.RunPgpEncryptDecryptTest();
+
+    cryptoApiTester.RunPgpSignVerifyTest();
+
+    cryptoApiTester.RunPgpClearSignTest();
+
+    cryptoApiTester.RunPgpArmorTest();
+
+    cryptoApiTester.RunPgpAliceBobTest();
 #endif
 
     return 0;

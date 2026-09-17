@@ -190,6 +190,7 @@
     <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.h" />
     <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -214,6 +215,7 @@
     <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.cpp" />
     <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp" />
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
          e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
          $(Platform) picks the right one. -->

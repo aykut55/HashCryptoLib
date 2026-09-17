@@ -355,6 +355,49 @@ public:
 
     int RunHashBytesTestNonBlocking(void);
 
+    // Generates an identity via CPgpEngine::GenerateKeyPair, checks GetKeyId reports a 16-hex-char
+    // Key ID, and round-trips ExportPublicKeyArmored/ExportSecretKeyArmored through the
+    // capacity=0 BUFFER_TOO_SMALL query convention before checking both exports carry the
+    // expected "-----BEGIN PGP ... KEY BLOCK-----" armor framing.
+    int RunPgpKeyGenerationTest(void);
+
+    // Two CPgpEngine identities (alice/bob) exchange public keys via ExportPublicKeyArmored/
+    // ImportPeerPublicKey, then round-trip a binary buffer through EncryptBuffer/DecryptBuffer
+    // and a UTF-8 string through EncryptStringArmored/DecryptStringArmored, both byte-exact.
+    int RunPgpEncryptDecryptTest(void);
+
+    // alice signs a buffer with SignBuffer; bob (having imported alice's public key) verifies it
+    // with VerifyBuffer. A bit-flipped signature is confirmed to verify as *isValid=false (not a
+    // technical error), matching CCryptoApi::VerifyBuffer's own convention.
+    int RunPgpSignVerifyTest(void);
+
+    // alice produces a clear-signed block via ClearSignString; bob verifies it via
+    // VerifyClearSignedString. Tampering with the clear-signed body text is confirmed to flip
+    // *isValid to false.
+    int RunPgpClearSignTest(void);
+
+    // Round-trips EncryptStringArmored/DecryptStringArmored (exercising the ASCII armor + CRC24
+    // path end to end), then flips one base64 character in the armored message and confirms
+    // DecryptStringArmored fails closed (INVALID_DATA) instead of returning corrupted plaintext.
+    int RunPgpArmorTest(void);
+
+    // End-to-end scenario test with four independent identities (Bob, Alice, Carol, Dave), each
+    // generating its own PGP key pair (GenerateKeyPair) and exporting its public key
+    // (ExportPublicKeyArmored). The test document is a real file on disk, written then read back
+    // (same WriteTesterFile/ReadTesterFile + std::remove pattern as RunEncryptDecryptFileTest) to
+    // exercise real file I/O, not just an in-memory literal. Bob signs that document once
+    // (SignBuffer) and separately encrypts the signature-plus-document to each of Alice/Carol/
+    // Dave's public keys in turn (ImportPeerPublicKey + EncryptBuffer per recipient -- this
+    // engine has no multi-recipient PKESK support, so "sending to 3 people" means 3 independent
+    // ciphertexts of the same signed payload, not one shared ciphertext). The signature and
+    // document are framed together as a 4-byte big-endian signature length prefix followed by
+    // the signature packet and then the document bytes, so each recipient can split them back
+    // apart after decrypting. Each of Alice/Carol/Dave independently decrypts its own ciphertext
+    // (DecryptBuffer) and verifies the signature against Bob's public key (VerifyBuffer),
+    // confirming both the recovered document bytes and the signature's validity; Dave's copy is
+    // additionally tampered with to confirm a corrupted signature is correctly rejected.
+    int RunPgpAliceBobTest(void);
+
 protected:
 
 private:

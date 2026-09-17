@@ -40,6 +40,9 @@
     <Filter Include="3rdParty">
       <UniqueIdentifier>{5C8E2A4D-6F1B-4D3C-8A7E-9F2C4B6D8E0A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Pgp">
+      <UniqueIdentifier>{7A1C3E5F-2B4D-4A6C-8E9F-3D5B7C9E1A02}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
@@ -110,6 +113,9 @@
     </ClCompile>
     <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp">
       <Filter>3rdParty</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp">
+      <Filter>src\Pgp</Filter>
     </ClCompile>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
@@ -190,6 +196,9 @@
     </ClInclude>
     <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.h">
       <Filter>src\Providers\OpenSslProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h">
+      <Filter>src\Pgp</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

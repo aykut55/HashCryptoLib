@@ -2,6 +2,7 @@
 
 #include "CryptoApi.h"
 #include "Definitions/Definitions.h"
+#include "Pgp/PgpEngine.h"
 #include "Providers/CryptoProviderRegistry.h"
 #include "Utils/Utils.h"
 
@@ -11548,6 +11549,834 @@ int CCryptoApiTester::RunHashBufferTestNonBlocking(void)
 int CCryptoApiTester::RunHashBytesTestNonBlocking(void)
 {
     return runNonBlocking("RunHashBytesTest", &CCryptoApiTester::RunHashBytesTest);
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpKeyGenerationTest(void)
+{
+    try
+    {
+        CPgpEngine pgp;
+        const char* userId = "Alice <alice@example.com>";
+        const char* password = "correct horse battery staple";
+
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        status = pgp.GetKeyId(keyId, 17);
+        if (status != NO_ERROR || std::strlen(keyId) != 16)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED GetKeyId status=" << status << " keyId=" << keyId << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int requiredSize = 0;
+        status = pgp.ExportPublicKeyArmored(0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize <= 0)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED ExportPublicKeyArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> publicKeyArmored(static_cast<std::size_t>(requiredSize));
+        int actualPublicKeySize = 0;
+        status = pgp.ExportPublicKeyArmored(requiredSize, &publicKeyArmored[0], &actualPublicKeySize);
+        if (status != NO_ERROR || actualPublicKeySize != requiredSize)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED ExportPublicKeyArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string publicKeyText(publicKeyArmored.begin(), publicKeyArmored.end());
+        if (publicKeyText.find("-----BEGIN PGP PUBLIC KEY BLOCK-----") == std::string::npos ||
+            publicKeyText.find("-----END PGP PUBLIC KEY BLOCK-----") == std::string::npos)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED public key armor framing missing" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        requiredSize = 0;
+        status = pgp.ExportSecretKeyArmored(0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize <= 0)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED ExportSecretKeyArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> secretKeyArmored(static_cast<std::size_t>(requiredSize));
+        int actualSecretKeySize = 0;
+        status = pgp.ExportSecretKeyArmored(requiredSize, &secretKeyArmored[0], &actualSecretKeySize);
+        if (status != NO_ERROR || actualSecretKeySize != requiredSize)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED ExportSecretKeyArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string secretKeyText(secretKeyArmored.begin(), secretKeyArmored.end());
+        if (secretKeyText.find("-----BEGIN PGP PRIVATE KEY BLOCK-----") == std::string::npos ||
+            secretKeyText.find("-----END PGP PRIVATE KEY BLOCK-----") == std::string::npos)
+        {
+            std::cout << "RunPgpKeyGenerationTest: FAILED secret key armor framing missing" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpKeyGenerationTest: PASSED keyId=" << keyId << " publicKeyArmoredSize=" << actualPublicKeySize
+                  << " secretKeyArmoredSize=" << actualSecretKeySize << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpEncryptDecryptTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* alicePassword = "alice-password-1";
+        const char* bobPassword = "bob-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> plaintext = { 'H', 'e', 'l', 'l', 'o', ',', ' ', 'B', 'o', 'b', '!', 0x00, 0x01, 0xFF };
+
+        int cipherSize = 0;
+        status = alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &cipherSize);
+        if (status != BUFFER_TOO_SMALL || cipherSize <= 0)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED EncryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> ciphertext(static_cast<std::size_t>(cipherSize));
+        int actualCipherSize = 0;
+        status = alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), cipherSize, &ciphertext[0], &actualCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int plainSize = 0;
+        status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &ciphertext[0], actualCipherSize, 0, nullptr, &plainSize);
+        if (status != BUFFER_TOO_SMALL || plainSize != static_cast<int>(plaintext.size()))
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED DecryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> decrypted(static_cast<std::size_t>(plainSize));
+        int actualPlainSize = 0;
+        status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &ciphertext[0], actualCipherSize, plainSize, &decrypted[0], &actualPlainSize);
+        if (status != NO_ERROR || decrypted != plaintext)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* textMessage = "Merhaba Bob, bu gizli bir mesaj.";
+        int armoredSize = 0;
+        status = bob.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), 0, nullptr, &armoredSize);
+        if (status != BUFFER_TOO_SMALL || armoredSize <= 0)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED EncryptStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize));
+        int actualArmoredSize = 0;
+        status = bob.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), armoredSize, &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        int decodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), &armored[0], actualArmoredSize, 0, nullptr, &decodedSize);
+        if (status != BUFFER_TOO_SMALL || decodedSize != static_cast<int>(std::strlen(textMessage)))
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED DecryptStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> decodedText(static_cast<std::size_t>(decodedSize));
+        int actualDecodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), &armored[0], actualArmoredSize, decodedSize, &decodedText[0], &actualDecodedSize);
+        if (status != NO_ERROR || std::string(decodedText.begin(), decodedText.end()) != textMessage)
+        {
+            std::cout << "RunPgpEncryptDecryptTest: FAILED DecryptStringArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptDecryptTest: PASSED buffer(" << actualCipherSize << " bytes) and armored string(" << actualArmoredSize
+                  << " bytes) round trips" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpSignVerifyTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* alicePassword = "alice-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSignVerifyTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSignVerifyTest: FAILED bob ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> document = { 'C', 'o', 'n', 't', 'r', 'a', 'c', 't', ' ', 'v', '1' };
+
+        int sigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        if (status != BUFFER_TOO_SMALL || sigSize <= 0)
+        {
+            std::cout << "RunPgpSignVerifyTest: FAILED SignBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), sigSize, &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSignVerifyTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = bob.VerifyBuffer(&document[0], static_cast<int>(document.size()), &signature[0], actualSigSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpSignVerifyTest: FAILED VerifyBuffer status=" << status << " isValid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedSignature(signature.begin(), signature.begin() + actualSigSize);
+        tamperedSignature[tamperedSignature.size() - 1] = static_cast<unsigned char>(tamperedSignature[tamperedSignature.size() - 1] ^ 0xFF);
+        bool tamperedIsValid = true;
+        status = bob.VerifyBuffer(&document[0], static_cast<int>(document.size()), &tamperedSignature[0], actualSigSize, &tamperedIsValid);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpSignVerifyTest: FAILED tampered signature reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpSignVerifyTest: PASSED signature(" << actualSigSize << " bytes) verified, tampered signature correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpClearSignTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* alicePassword = "alice-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpClearSignTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpClearSignTest: FAILED bob ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const char* message = "Line one.\nLine two.\n-Line starting with a dash.\nLine four.";
+
+        int outSize = 0;
+        status = alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), message, static_cast<int>(std::strlen(message)), 0, nullptr, &outSize);
+        if (status != BUFFER_TOO_SMALL || outSize <= 0)
+        {
+            std::cout << "RunPgpClearSignTest: FAILED ClearSignString capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> clearSigned(static_cast<std::size_t>(outSize));
+        int actualOutSize = 0;
+        status = alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), message, static_cast<int>(std::strlen(message)), outSize, &clearSigned[0], &actualOutSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpClearSignTest: FAILED ClearSignString status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = bob.VerifyClearSignedString(&clearSigned[0], actualOutSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpClearSignTest: FAILED VerifyClearSignedString status=" << status << " isValid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string tampered(clearSigned.begin(), clearSigned.begin() + actualOutSize);
+        const std::size_t tamperPos = tampered.find("Line two.");
+        if (tamperPos == std::string::npos)
+        {
+            std::cout << "RunPgpClearSignTest: FAILED could not locate body text to tamper" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        tampered[tamperPos] = 'X';
+        bool tamperedIsValid = true;
+        status = bob.VerifyClearSignedString(tampered.c_str(), static_cast<int>(tampered.size()), &tamperedIsValid);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpClearSignTest: FAILED tampered clear-signed text reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpClearSignTest: PASSED clear-sign(" << actualOutSize << " bytes) verified, tampered text correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpArmorTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* alicePassword = "alice-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpArmorTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpArmorTest: FAILED bob ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const char* message = "Armor round-trip payload.";
+        int armoredSize = 0;
+        status = bob.EncryptStringArmored(message, static_cast<int>(std::strlen(message)), 0, nullptr, &armoredSize);
+        if (status != BUFFER_TOO_SMALL || armoredSize <= 0)
+        {
+            std::cout << "RunPgpArmorTest: FAILED EncryptStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize));
+        int actualArmoredSize = 0;
+        status = bob.EncryptStringArmored(message, static_cast<int>(std::strlen(message)), armoredSize, &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpArmorTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        const std::string armoredText(armored.begin(), armored.begin() + actualArmoredSize);
+        if (armoredText.find("-----BEGIN PGP MESSAGE-----") == std::string::npos ||
+            armoredText.find("-----END PGP MESSAGE-----") == std::string::npos)
+        {
+            std::cout << "RunPgpArmorTest: FAILED armor framing missing" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int decodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), &armored[0], actualArmoredSize, 0, nullptr, &decodedSize);
+        if (status != BUFFER_TOO_SMALL || decodedSize != static_cast<int>(std::strlen(message)))
+        {
+            std::cout << "RunPgpArmorTest: FAILED DecryptStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> decoded(static_cast<std::size_t>(decodedSize));
+        int actualDecodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), &armored[0], actualArmoredSize, decodedSize, &decoded[0], &actualDecodedSize);
+        if (status != NO_ERROR || std::string(decoded.begin(), decoded.end()) != message)
+        {
+            std::cout << "RunPgpArmorTest: FAILED DecryptStringArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string corrupted(armored.begin(), armored.begin() + actualArmoredSize);
+        const std::size_t blankLine = corrupted.find("\r\n\r\n");
+        if (blankLine == std::string::npos || blankLine + 10 >= corrupted.size())
+        {
+            std::cout << "RunPgpArmorTest: FAILED could not locate armor data to corrupt" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        char& victim = corrupted[blankLine + 8];
+        victim = (victim == 'A') ? 'B' : 'A';
+
+        int corruptedDecodedSize = 0;
+        const int corruptedStatus = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), corrupted.c_str(),
+                                                                static_cast<int>(corrupted.size()), 0, nullptr, &corruptedDecodedSize);
+        if (corruptedStatus == NO_ERROR || corruptedStatus == BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunPgpArmorTest: FAILED corrupted armor was not rejected, status=" << corruptedStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpArmorTest: PASSED armor round trip (" << actualArmoredSize << " bytes), corrupted armor correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpAliceBobTest(void)
+{
+    try
+    {
+        const char* documentPath = "cryptoapi_pgp_alicebob_document.bin";
+        const char* documentText =
+            "Quarterly Report - CONFIDENTIAL\r\n"
+            "Revenue: $1,250,000\r\n"
+            "Expenses: $980,000\r\n"
+            "Net Profit: $270,000\r\n"
+            "Prepared by: Bob\r\n";
+        const std::vector<unsigned char> documentBytesToWrite(documentText, documentText + std::strlen(documentText));
+
+        if (!WriteTesterFile(documentPath, documentBytesToWrite))
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED to write document file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> document;
+        if (!ReadTesterFile(documentPath, document))
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED to read document file" << std::endl;
+            std::remove(documentPath);
+            return FILE_IO_ERROR;
+        }
+        std::remove(documentPath);
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        CPgpEngine carol;
+        CPgpEngine dave;
+
+        const char* bobUserId   = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* carolUserId = "Carol <carol@example.com>";
+        const char* daveUserId  = "Dave <dave@example.com>";
+        const char* bobPassword   = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+        const char* carolPassword = "carol-password-1";
+        const char* davePassword  = "dave-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = carol.GenerateKeyPair(carolUserId, static_cast<int>(std::strlen(carolUserId)), carolPassword, static_cast<int>(std::strlen(carolPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED carol GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = dave.GenerateKeyPair(daveUserId, static_cast<int>(std::strlen(daveUserId)), davePassword, static_cast<int>(std::strlen(davePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED dave GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        // Each public key is exported to a real .asc file and read back from it (same
+        // write-then-read-then-remove pattern as the document above) before being handed to
+        // ImportPeerPublicKey -- a real PGP public key exchange is a file, not just a buffer
+        // living in the sender's own memory.
+        const char* bobPubKeyPath   = "cryptoapi_pgp_alicebob_bob_pub.asc";
+        const char* alicePubKeyPath = "cryptoapi_pgp_alicebob_alice_pub.asc";
+        const char* carolPubKeyPath = "cryptoapi_pgp_alicebob_carol_pub.asc";
+        const char* davePubKeyPath  = "cryptoapi_pgp_alicebob_dave_pub.asc";
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKeyOut(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKeyOut[0], &bobActualKeySize);
+        if (!WriteTesterFile(bobPubKeyPath, std::vector<unsigned char>(bobPublicKeyOut.begin(), bobPublicKeyOut.begin() + bobActualKeySize)))
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED to write bob public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKeyOut(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKeyOut[0], &aliceActualKeySize);
+        if (!WriteTesterFile(alicePubKeyPath, std::vector<unsigned char>(alicePublicKeyOut.begin(), alicePublicKeyOut.begin() + aliceActualKeySize)))
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED to write alice public key file" << std::endl;
+            std::remove(bobPubKeyPath);
+            return FILE_IO_ERROR;
+        }
+
+        int carolKeySize = 0;
+        carol.ExportPublicKeyArmored(0, nullptr, &carolKeySize);
+        std::vector<char> carolPublicKeyOut(static_cast<std::size_t>(carolKeySize));
+        int carolActualKeySize = 0;
+        carol.ExportPublicKeyArmored(carolKeySize, &carolPublicKeyOut[0], &carolActualKeySize);
+        if (!WriteTesterFile(carolPubKeyPath, std::vector<unsigned char>(carolPublicKeyOut.begin(), carolPublicKeyOut.begin() + carolActualKeySize)))
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED to write carol public key file" << std::endl;
+            std::remove(bobPubKeyPath);
+            std::remove(alicePubKeyPath);
+            return FILE_IO_ERROR;
+        }
+
+        int daveKeySize = 0;
+        dave.ExportPublicKeyArmored(0, nullptr, &daveKeySize);
+        std::vector<char> davePublicKeyOut(static_cast<std::size_t>(daveKeySize));
+        int daveActualKeySize = 0;
+        dave.ExportPublicKeyArmored(daveKeySize, &davePublicKeyOut[0], &daveActualKeySize);
+        if (!WriteTesterFile(davePubKeyPath, std::vector<unsigned char>(davePublicKeyOut.begin(), davePublicKeyOut.begin() + daveActualKeySize)))
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED to write dave public key file" << std::endl;
+            std::remove(bobPubKeyPath);
+            std::remove(alicePubKeyPath);
+            std::remove(carolPubKeyPath);
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> bobPublicKey;
+        std::vector<unsigned char> alicePublicKey;
+        std::vector<unsigned char> carolPublicKey;
+        std::vector<unsigned char> davePublicKey;
+        const bool readAllPublicKeys = ReadTesterFile(bobPubKeyPath, bobPublicKey) && ReadTesterFile(alicePubKeyPath, alicePublicKey) &&
+                                        ReadTesterFile(carolPubKeyPath, carolPublicKey) && ReadTesterFile(davePubKeyPath, davePublicKey);
+        std::remove(bobPubKeyPath);
+        std::remove(alicePubKeyPath);
+        std::remove(carolPubKeyPath);
+        std::remove(davePubKeyPath);
+        if (!readAllPublicKeys)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED to read back one or more public key files" << std::endl;
+            return FILE_IO_ERROR;
+        }
+        const int bobActualKeySizeFromFile = static_cast<int>(bobPublicKey.size());
+        const int aliceActualKeySizeFromFile = static_cast<int>(alicePublicKey.size());
+        const int carolActualKeySizeFromFile = static_cast<int>(carolPublicKey.size());
+        const int daveActualKeySizeFromFile = static_cast<int>(davePublicKey.size());
+
+        // Each recipient needs Bob's public key to verify his signature later.
+        status = alice.ImportPeerPublicKey(&bobPublicKey[0], bobActualKeySizeFromFile);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+        status = carol.ImportPeerPublicKey(&bobPublicKey[0], bobActualKeySizeFromFile);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED carol ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+        status = dave.ImportPeerPublicKey(&bobPublicKey[0], bobActualKeySizeFromFile);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED dave ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        // Bob signs the document once; the same signature travels to every recipient.
+        int sigSize = 0;
+        bob.SignBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        if (sigSize <= 0)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob SignBuffer capacity query" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        status = bob.SignBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &document[0], static_cast<int>(document.size()), sigSize, &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        // Frame [4-byte big-endian signature length][signature][document] -- this engine has no
+        // built-in combined sign+encrypt call, so the two pieces travel together as one buffer.
+        std::vector<unsigned char> combined;
+        combined.push_back(static_cast<unsigned char>((actualSigSize >> 24) & 0xFF));
+        combined.push_back(static_cast<unsigned char>((actualSigSize >> 16) & 0xFF));
+        combined.push_back(static_cast<unsigned char>((actualSigSize >> 8) & 0xFF));
+        combined.push_back(static_cast<unsigned char>(actualSigSize & 0xFF));
+        combined.insert(combined.end(), signature.begin(), signature.begin() + actualSigSize);
+        combined.insert(combined.end(), document.begin(), document.end());
+
+        // Bob encrypts the same signed payload separately to each of Alice/Carol/Dave -- no
+        // multi-recipient PKESK support in this engine, so "sending to 3 people" means 3
+        // independent ciphertexts of the identical signed payload, not one shared ciphertext.
+        status = bob.ImportPeerPublicKey(&alicePublicKey[0], aliceActualKeySizeFromFile);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        int cipherForAliceSize = 0;
+        bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), 0, nullptr, &cipherForAliceSize);
+        std::vector<unsigned char> cipherForAlice(static_cast<std::size_t>(cipherForAliceSize));
+        int actualCipherForAliceSize = 0;
+        status = bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), cipherForAliceSize, &cipherForAlice[0], &actualCipherForAliceSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob EncryptBuffer(for alice) status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.ImportPeerPublicKey(&carolPublicKey[0], carolActualKeySizeFromFile);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob ImportPeerPublicKey(carol) status=" << status << std::endl;
+            return status;
+        }
+        int cipherForCarolSize = 0;
+        bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), 0, nullptr, &cipherForCarolSize);
+        std::vector<unsigned char> cipherForCarol(static_cast<std::size_t>(cipherForCarolSize));
+        int actualCipherForCarolSize = 0;
+        status = bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), cipherForCarolSize, &cipherForCarol[0], &actualCipherForCarolSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob EncryptBuffer(for carol) status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.ImportPeerPublicKey(&davePublicKey[0], daveActualKeySizeFromFile);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob ImportPeerPublicKey(dave) status=" << status << std::endl;
+            return status;
+        }
+        int cipherForDaveSize = 0;
+        bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), 0, nullptr, &cipherForDaveSize);
+        std::vector<unsigned char> cipherForDave(static_cast<std::size_t>(cipherForDaveSize));
+        int actualCipherForDaveSize = 0;
+        status = bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), cipherForDaveSize, &cipherForDave[0], &actualCipherForDaveSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED bob EncryptBuffer(for dave) status=" << status << std::endl;
+            return status;
+        }
+
+        // Alice decrypts her own copy and verifies Bob's signature.
+        int alicePlainSize = 0;
+        alice.DecryptBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &cipherForAlice[0], actualCipherForAliceSize, 0, nullptr, &alicePlainSize);
+        std::vector<unsigned char> alicePlain(static_cast<std::size_t>(alicePlainSize));
+        int aliceActualPlainSize = 0;
+        status = alice.DecryptBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &cipherForAlice[0], actualCipherForAliceSize, alicePlainSize, &alicePlain[0], &aliceActualPlainSize);
+        if (status != NO_ERROR || alicePlain.size() < 4)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED alice DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const int aliceSigLen = (alicePlain[0] << 24) | (alicePlain[1] << 16) | (alicePlain[2] << 8) | alicePlain[3];
+        if (static_cast<std::size_t>(4 + aliceSigLen) > alicePlain.size())
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED alice combined payload malformed" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::vector<unsigned char> aliceSignature(alicePlain.begin() + 4, alicePlain.begin() + 4 + aliceSigLen);
+        const std::vector<unsigned char> aliceDocument(alicePlain.begin() + 4 + aliceSigLen, alicePlain.end());
+        if (aliceDocument != document)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED alice recovered document does not match original" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        bool aliceIsValid = false;
+        status = alice.VerifyBuffer(&aliceDocument[0], static_cast<int>(aliceDocument.size()), &aliceSignature[0], static_cast<int>(aliceSignature.size()), &aliceIsValid);
+        if (status != NO_ERROR || !aliceIsValid)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED alice VerifyBuffer status=" << status << " isValid=" << aliceIsValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Carol decrypts her own copy and verifies Bob's signature.
+        int carolPlainSize = 0;
+        carol.DecryptBuffer(carolPassword, static_cast<int>(std::strlen(carolPassword)), &cipherForCarol[0], actualCipherForCarolSize, 0, nullptr, &carolPlainSize);
+        std::vector<unsigned char> carolPlain(static_cast<std::size_t>(carolPlainSize));
+        int carolActualPlainSize = 0;
+        status = carol.DecryptBuffer(carolPassword, static_cast<int>(std::strlen(carolPassword)), &cipherForCarol[0], actualCipherForCarolSize, carolPlainSize, &carolPlain[0], &carolActualPlainSize);
+        if (status != NO_ERROR || carolPlain.size() < 4)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED carol DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const int carolSigLen = (carolPlain[0] << 24) | (carolPlain[1] << 16) | (carolPlain[2] << 8) | carolPlain[3];
+        if (static_cast<std::size_t>(4 + carolSigLen) > carolPlain.size())
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED carol combined payload malformed" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::vector<unsigned char> carolSignature(carolPlain.begin() + 4, carolPlain.begin() + 4 + carolSigLen);
+        const std::vector<unsigned char> carolDocument(carolPlain.begin() + 4 + carolSigLen, carolPlain.end());
+        if (carolDocument != document)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED carol recovered document does not match original" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        bool carolIsValid = false;
+        status = carol.VerifyBuffer(&carolDocument[0], static_cast<int>(carolDocument.size()), &carolSignature[0], static_cast<int>(carolSignature.size()), &carolIsValid);
+        if (status != NO_ERROR || !carolIsValid)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED carol VerifyBuffer status=" << status << " isValid=" << carolIsValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Dave decrypts his own copy and verifies Bob's signature, then a tampered copy of that
+        // same signature is confirmed to be correctly rejected.
+        int davePlainSize = 0;
+        dave.DecryptBuffer(davePassword, static_cast<int>(std::strlen(davePassword)), &cipherForDave[0], actualCipherForDaveSize, 0, nullptr, &davePlainSize);
+        std::vector<unsigned char> davePlain(static_cast<std::size_t>(davePlainSize));
+        int daveActualPlainSize = 0;
+        status = dave.DecryptBuffer(davePassword, static_cast<int>(std::strlen(davePassword)), &cipherForDave[0], actualCipherForDaveSize, davePlainSize, &davePlain[0], &daveActualPlainSize);
+        if (status != NO_ERROR || davePlain.size() < 4)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED dave DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const int daveSigLen = (davePlain[0] << 24) | (davePlain[1] << 16) | (davePlain[2] << 8) | davePlain[3];
+        if (static_cast<std::size_t>(4 + daveSigLen) > davePlain.size())
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED dave combined payload malformed" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::vector<unsigned char> daveSignature(davePlain.begin() + 4, davePlain.begin() + 4 + daveSigLen);
+        const std::vector<unsigned char> daveDocument(davePlain.begin() + 4 + daveSigLen, davePlain.end());
+        if (daveDocument != document)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED dave recovered document does not match original" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        bool daveIsValid = false;
+        status = dave.VerifyBuffer(&daveDocument[0], static_cast<int>(daveDocument.size()), &daveSignature[0], static_cast<int>(daveSignature.size()), &daveIsValid);
+        if (status != NO_ERROR || !daveIsValid)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED dave VerifyBuffer status=" << status << " isValid=" << daveIsValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedDaveSignature(daveSignature);
+        tamperedDaveSignature[tamperedDaveSignature.size() - 1] = static_cast<unsigned char>(tamperedDaveSignature[tamperedDaveSignature.size() - 1] ^ 0xFF);
+        bool tamperedIsValid = true;
+        status = dave.VerifyBuffer(&daveDocument[0], static_cast<int>(daveDocument.size()), &tamperedDaveSignature[0], static_cast<int>(tamperedDaveSignature.size()), &tamperedIsValid);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpAliceBobTest: FAILED tampered signature reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpAliceBobTest: PASSED bob signed once (" << actualSigSize << " bytes) and encrypted separately to alice/carol/dave ("
+                  << actualCipherForAliceSize << "/" << actualCipherForCarolSize << "/" << actualCipherForDaveSize
+                  << " bytes); all 3 decrypted+verified the " << document.size() << "-byte document, tampered signature correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
 }
 // -----------------------------------------------------------------------------
 
