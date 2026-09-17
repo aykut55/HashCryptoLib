@@ -21,6 +21,7 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <future>
 #include <iomanip>
@@ -94,6 +95,56 @@ bool __cdecl CancelAfterThirdChunk(const unsigned long long currentByte, const u
     int* callCount = static_cast<int*>(userData);
     ++(*callCount);
     return *callCount < 3;
+}
+// -----------------------------------------------------------------------------
+
+// Returns the first existing gpg.exe among the common Gpg4win install locations, or an empty
+// string if none is found -- RunPgpGnuPgInteropTest treats that as "SKIPPED", not a failure,
+// since a real GnuPG install is an optional, machine-specific dependency, not something this
+// repo's own build provides.
+std::string FindGpgExecutable(void)
+{
+    static const char* candidates[] =
+    {
+        "C:\\Program Files\\GnuPG\\bin\\gpg.exe",
+        "C:\\Program Files (x86)\\GnuPG\\bin\\gpg.exe"
+    };
+    for (std::size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i)
+    {
+        std::ifstream probe(candidates[i], std::ios::binary);
+        if (probe.good())
+        {
+            return candidates[i];
+        }
+    }
+    return std::string();
+}
+// -----------------------------------------------------------------------------
+
+std::string QuoteShellPath(const std::string& path)
+{
+    return "\"" + path + "\"";
+}
+// -----------------------------------------------------------------------------
+
+// cmd.exe (which _popen shells out to) strips the command line's first/last quote unless it
+// contains exactly two quote characters -- our commands quote several paths at once, so the
+// whole thing is wrapped in one extra pair of quotes to survive that stripping (verified against
+// this exact failure mode while building this test).
+int RunShellCommand(const std::string& command, std::string& output)
+{
+    output.clear();
+    FILE* pipe = _popen(("\"" + command + " 2>&1\"").c_str(), "r");
+    if (!pipe)
+    {
+        return -1;
+    }
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        output += buffer;
+    }
+    return _pclose(pipe);
 }
 // -----------------------------------------------------------------------------
 
@@ -12371,6 +12422,449 @@ int CCryptoApiTester::RunPgpAliceBobTest(void)
         std::cout << "RunPgpAliceBobTest: PASSED bob signed once (" << actualSigSize << " bytes) and encrypted separately to alice/carol/dave ("
                   << actualCipherForAliceSize << "/" << actualCipherForCarolSize << "/" << actualCipherForDaveSize
                   << " bytes); all 3 decrypted+verified the " << document.size() << "-byte document, tampered signature correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpFileEncryptDecryptTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_file_encdec_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_file_encdec_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_file_encdec_out.bin";
+
+        std::vector<unsigned char> inputData(2 * 1048576 + 54321);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.EncryptFile(inputFilePath, encryptedFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED EncryptFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        status = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED DecryptFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED to read decrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        if (outputData.size() != inputData.size() ||
+            (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED content mismatch" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpFileEncryptDecryptTest: PASSED round trip (" << inputData.size() << " bytes)" << std::endl;
+
+        // Corrupt one ciphertext byte and confirm DecryptFile fails closed instead of producing
+        // silently-wrong output.
+        std::vector<unsigned char> encryptedData;
+        if (!ReadTesterFile(encryptedFilePath, encryptedData) || encryptedData.size() < 100)
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED to read encrypted file for corruption test" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+        std::remove(decryptedFilePath);
+        encryptedData[encryptedData.size() / 2] = static_cast<unsigned char>(encryptedData[encryptedData.size() / 2] ^ 0xFF);
+        if (!WriteTesterFile(encryptedFilePath, encryptedData))
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED to write corrupted encrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        const int corruptedStatus = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, nullptr, nullptr);
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+        if (corruptedStatus == NO_ERROR)
+        {
+            std::cout << "RunPgpFileEncryptDecryptTest: FAILED corrupted ciphertext file was not rejected" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpFileEncryptDecryptTest: PASSED corrupted ciphertext correctly rejected (status=" << corruptedStatus << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpFileSignVerifyTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_file_signverify_in.bin";
+        const char* signatureFilePath = "cryptoapi_pgp_file_signverify.sig";
+
+        std::vector<unsigned char> inputData(1 * 1048576 + 9876);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>((index * 2654435761u >> 24) ^ 0x5A);
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.SignFile(bobPassword, static_cast<int>(std::strlen(bobPassword)), inputFilePath, signatureFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED SignFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        bool isValid = false;
+        status = alice.VerifyFile(inputFilePath, signatureFilePath, &isValid, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED VerifyFile status=" << status << " isValid=" << isValid << std::endl;
+            std::remove(inputFilePath);
+            std::remove(signatureFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpFileSignVerifyTest: PASSED signature verified (" << inputData.size() << "-byte file)" << std::endl;
+
+        std::vector<unsigned char> signatureData;
+        if (!ReadTesterFile(signatureFilePath, signatureData) || signatureData.empty())
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED to read signature file for tamper test" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(signatureFilePath);
+            return FILE_IO_ERROR;
+        }
+        signatureData[signatureData.size() - 1] = static_cast<unsigned char>(signatureData[signatureData.size() - 1] ^ 0xFF);
+        if (!WriteTesterFile(signatureFilePath, signatureData))
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED to write tampered signature file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(signatureFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        bool tamperedIsValid = true;
+        status = alice.VerifyFile(inputFilePath, signatureFilePath, &tamperedIsValid, nullptr, nullptr);
+        std::remove(inputFilePath);
+        std::remove(signatureFilePath);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpFileSignVerifyTest: FAILED tampered signature reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpFileSignVerifyTest: PASSED tampered signature correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpGnuPgInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* homeDir = "cryptoapi_pgp_gnupg_home";
+        const char* pubKeyPath = "cryptoapi_pgp_gnupg_pub.asc";
+        const char* plainPath = "cryptoapi_pgp_gnupg_plain.txt";
+        const char* encryptedPath = "cryptoapi_pgp_gnupg_encrypted.asc";
+        const char* signDataPath = "cryptoapi_pgp_gnupg_signdata.bin";
+        const char* signaturePath = "cryptoapi_pgp_gnupg_signdata.sig";
+        const char* clearSignedPath = "cryptoapi_pgp_gnupg_clearsigned.asc";
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(homeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+
+        CPgpEngine pgp;
+        const char* userId = "GnuPG Interop Test <interop@example.com>";
+        const char* password = "InteropTest-1";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        // gpg creates its keyring/trustdb files on first use, but only if --homedir already
+        // exists as a directory -- it does not create the directory itself.
+        std::error_code mkdirError;
+        std::filesystem::create_directories(homeDir, mkdirError);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED gpg --import rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* plaintext = "Hello from GnuPG cross-check test!";
+        if (!WriteTesterFile(plainPath, std::vector<unsigned char>(plaintext, plaintext + std::strlen(plaintext))))
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED to write plaintext file" << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return FILE_IO_ERROR;
+        }
+        rc = RunShellCommand(gpgBase + "-r " + keyId + " --armor --output " + QuoteShellPath(encryptedPath) + " --encrypt " + QuoteShellPath(plainPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED gpg --encrypt rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedArmoredBytes;
+        if (!ReadTesterFile(encryptedPath, encryptedArmoredBytes))
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED to read gpg-encrypted file" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return FILE_IO_ERROR;
+        }
+        const std::string encryptedArmored(encryptedArmoredBytes.begin(), encryptedArmoredBytes.end());
+
+        int decSize = 0;
+        pgp.DecryptStringArmored(password, static_cast<int>(std::strlen(password)), encryptedArmored.c_str(), static_cast<int>(encryptedArmored.size()), 0, nullptr, &decSize);
+        std::vector<unsigned char> decrypted(static_cast<std::size_t>(decSize));
+        int decActualSize = 0;
+        status = pgp.DecryptStringArmored(password, static_cast<int>(std::strlen(password)), encryptedArmored.c_str(), static_cast<int>(encryptedArmored.size()), decSize, &decrypted[0], &decActualSize);
+        const std::string decryptedText(decrypted.begin(), decrypted.end());
+        if (status != NO_ERROR || decryptedText != plaintext)
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED gpg-encrypt -> our-decrypt status=" << status << " text=\"" << decryptedText << "\"" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgInteropTest: PASSED direction gpg-encrypt -> our-decrypt" << std::endl;
+
+        const std::vector<unsigned char> signData(plaintext, plaintext + std::strlen(plaintext));
+        if (!WriteTesterFile(signDataPath, signData))
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED to write sign-data file" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return FILE_IO_ERROR;
+        }
+        int sigSize = 0;
+        pgp.SignBuffer(password, static_cast<int>(std::strlen(password)), &signData[0], static_cast<int>(signData.size()), 0, nullptr, &sigSize);
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int sigActualSize = 0;
+        pgp.SignBuffer(password, static_cast<int>(std::strlen(password)), &signData[0], static_cast<int>(signData.size()), sigSize, &signature[0], &sigActualSize);
+        if (!WriteTesterFile(signaturePath, signature))
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED to write signature file" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::remove(signDataPath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return FILE_IO_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--verify " + QuoteShellPath(signaturePath) + " " + QuoteShellPath(signDataPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED gpg --verify (detached sig) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::remove(signDataPath);
+            std::remove(signaturePath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgInteropTest: PASSED direction our-sign -> gpg-verify" << std::endl;
+
+        const char* clearMessage = "Line one.\nLine two.\nLine three.";
+        int clearSize = 0;
+        pgp.ClearSignString(password, static_cast<int>(std::strlen(password)), clearMessage, static_cast<int>(std::strlen(clearMessage)), 0, nullptr, &clearSize);
+        std::vector<char> clearBuf(static_cast<std::size_t>(clearSize));
+        int clearActualSize = 0;
+        pgp.ClearSignString(password, static_cast<int>(std::strlen(password)), clearMessage, static_cast<int>(std::strlen(clearMessage)), clearSize, &clearBuf[0], &clearActualSize);
+        if (!WriteTesterFile(clearSignedPath, std::vector<unsigned char>(clearBuf.begin(), clearBuf.begin() + clearActualSize)))
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED to write clear-signed file" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::remove(signDataPath);
+            std::remove(signaturePath);
+            std::filesystem::remove_all(homeDir, mkdirError);
+            return FILE_IO_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--verify " + QuoteShellPath(clearSignedPath), cmdOutput);
+
+        std::remove(pubKeyPath);
+        std::remove(plainPath);
+        std::remove(encryptedPath);
+        std::remove(signDataPath);
+        std::remove(signaturePath);
+        std::remove(clearSignedPath);
+        std::filesystem::remove_all(homeDir, mkdirError);
+
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgInteropTest: FAILED gpg --verify (clear-sign) rc=" << rc << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgInteropTest: PASSED direction our-clearsign -> gpg-verify" << std::endl;
+
+        std::cout << "RunPgpGnuPgInteropTest: PASSED all directions against real GnuPG (" << gpgExe << ")" << std::endl;
         return NO_ERROR;
     }
     catch (...)

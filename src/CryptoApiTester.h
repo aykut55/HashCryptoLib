@@ -398,6 +398,32 @@ public:
     // additionally tampered with to confirm a corrupted signature is correctly rejected.
     int RunPgpAliceBobTest(void);
 
+    // Streaming (chunked) CPgpEngine::EncryptFile/DecryptFile round-trip over a real, several-
+    // megabyte file (large enough to exercise multiple PGP_FILE_CHUNK_SIZE chunks, not just a
+    // single one), reusing WriteTesterFile/ReadTesterFile/PrintFileProgress the same way
+    // RunEncryptDecryptFileTest does. Also re-encrypts, flips one ciphertext byte, and confirms
+    // DecryptFile fails closed (the MDC check catches it) instead of producing corrupted output.
+    int RunPgpFileEncryptDecryptTest(void);
+
+    // Streaming (chunked) CPgpEngine::SignFile/VerifyFile over a real file, same size/generation
+    // pattern as RunPgpFileEncryptDecryptTest. Also flips one byte in the detached signature file
+    // and confirms VerifyFile reports it as invalid rather than erroring out.
+    int RunPgpFileSignVerifyTest(void);
+
+    // Cross-checks CPgpEngine against a real, installed GnuPG (Gpg4win) binary -- SKIPPED (not
+    // FAILED, returns NO_ERROR) when gpg.exe isn't found at one of the common install paths,
+    // since a real GnuPG install is an optional, machine-specific dependency the repo's own build
+    // doesn't provide. Uses an isolated --homedir under the current working directory (never the
+    // real user keyring) for: importing our exported public key into gpg, gpg encrypting a
+    // message to that key and this engine decrypting it (DecryptStringArmored), this engine
+    // signing a buffer and clear-signing a string and gpg verifying both (SignBuffer/
+    // ClearSignString + "gpg --verify"). The reverse direction (an ephemeral gpg-generated key
+    // signs, this engine verifies) is deliberately not included: gpg-agent's key generation
+    // reliably fails when spawned through a piped/non-console child process on Windows
+    // (confirmed while building this test), a test-harness limitation unrelated to CPgpEngine's
+    // own correctness -- the other 4 directions already exercise the same sign/verify code path.
+    int RunPgpGnuPgInteropTest(void);
+
 protected:
 
 private:

@@ -1,6 +1,8 @@
 #ifndef AYCRYPTO_PGP_ENGINE_H
 #define AYCRYPTO_PGP_ENGINE_H
 
+#include "Definitions/Definitions.h"
+
 #include <memory>
 
 namespace CryptoApiNS
@@ -123,6 +125,44 @@ public:
     // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
     // VerifyBuffer above.
     int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid);
+
+    // ============================================================================================
+    // File-based streaming variants -- unlike EncryptBuffer/SignBuffer above (which hold the
+    // whole input in memory in one shot), these process the file in fixed-size chunks so memory
+    // use stays roughly constant regardless of file size, and report progress the same way
+    // CCryptoApi::EncryptFile/DecryptFile do (onProgress may be nullptr; returning false aborts
+    // with OPERATION_CANCELLED at the next chunk boundary). EncryptFile skips ZIP compression
+    // (unlike EncryptBuffer) so every packet length is exactly known from the input file's size
+    // before writing a single byte -- still valid, uncompressed OpenPGP, just not compressed.
+    // DecryptFile writes to a temporary file first and only replaces outputFilePath with it if
+    // the trailing MDC check passes: SEIP's MDC sits at the very end of the stream, so unlike
+    // DecryptBuffer's one-shot version there is no way to verify integrity before starting to
+    // write plaintext -- this mirrors GnuPG's own inherent limitation for streamed decryption,
+    // not something specific to this engine.
+    // ============================================================================================
+
+    // ImportPeerPublicKey() must have succeeded first.
+    int EncryptFile( const char* inputFilePath, const char* outputFilePath,
+                    ProgressCallback onProgress, void* progressUserData);
+
+    // GenerateKeyPair() must have succeeded first; password must match the one it was called
+    // with. Decompresses a ZIP/ZLIB-compressed inner packet if present (e.g. from EncryptBuffer
+    // or GnuPG), otherwise reads the uncompressed literal packet EncryptFile itself produces.
+    int DecryptFile( const char* password, const int passwordSize,
+                    const char* inputFilePath, const char* outputFilePath,
+                    ProgressCallback onProgress, void* progressUserData);
+
+    // GenerateKeyPair() must have succeeded first; password must match the one it was called
+    // with. signatureFilePath receives the raw (non-armored) detached signature packet, same
+    // format SignBuffer produces.
+    int SignFile( const char* password, const int passwordSize,
+                 const char* inputFilePath, const char* signatureFilePath,
+                 ProgressCallback onProgress, void* progressUserData);
+
+    // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
+    // VerifyBuffer above.
+    int VerifyFile( const char* inputFilePath, const char* signatureFilePath,
+                   bool* isValid, ProgressCallback onProgress, void* progressUserData);
 
 protected:
 

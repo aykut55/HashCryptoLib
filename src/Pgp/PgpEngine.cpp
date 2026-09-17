@@ -1,6 +1,17 @@
 #include "PgpEngine.h"
 #include "Definitions/Definitions.h"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#ifdef EncryptFile
+#undef EncryptFile
+#endif
+#ifdef DecryptFile
+#undef DecryptFile
+#endif
+
 #include "cryptopp890/aes.h"
 #include "cryptopp890/filters.h"
 #include "cryptopp890/integer.h"
@@ -16,15 +27,16 @@
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace CryptoApiNS
 {
 
-// RFC 4880 packet tags this engine reads/writes. Only new-format packet headers are produced or
-// accepted (see readPacketHeader/writePacket below) -- sufficient for v4 keys/signatures, which is
-// this engine's entire scope.
+// RFC 4880 packet tags this engine reads/writes. Packet headers can be either RFC 4880 format
+// (produced by writePacket below) or old format (only accepted, never produced -- see
+// readPacketHeader's own comment for why real-world producers like GnuPG still use it).
 namespace
 {
     const unsigned char PGP_TAG_PKESK           = 1;
@@ -70,6 +82,93 @@ struct CPgpEngine::Impl
 
 namespace
 {
+
+// ================================================================================================
+// UTF-8 file path + raw Win32 file I/O plumbing for the streaming EncryptFile/DecryptFile/
+// SignFile/VerifyFile methods below -- same conventions CryptoApi.cpp's own EncryptFile/
+// DecryptFile use (UTF-8 path, chunked ReadFile/WriteFile, best-effort cleanup on failure).
+// ================================================================================================
+
+// 1 MiB streaming chunk size for the File-based methods below -- chosen independently of
+// CryptoApi.cpp's own (differently-named) FILE_CHUNK_SIZE constant, not shared with it.
+const std::size_t PGP_FILE_CHUNK_SIZE = 1048576;
+
+bool convertUtf8PathToWide(const char* utf8Path, std::wstring& widePath)
+{
+    try
+    {
+        if (utf8Path == nullptr)
+        {
+            return false;
+        }
+
+        const int widePathSize = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8Path, -1, nullptr, 0);
+        if (widePathSize <= 0)
+        {
+            return false;
+        }
+
+        std::vector<wchar_t> widePathBuffer(static_cast<std::size_t>(widePathSize));
+        if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8Path, -1, &widePathBuffer[0], widePathSize) <= 0)
+        {
+            return false;
+        }
+
+        widePath.assign(&widePathBuffer[0]);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool readFileExact(HANDLE fileHandle, unsigned char* buffer, const DWORD size)
+{
+    try
+    {
+        DWORD bytesReadTotal = 0;
+        while (bytesReadTotal < size)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(fileHandle, buffer + bytesReadTotal, size - bytesReadTotal, &bytesRead, nullptr) || bytesRead == 0)
+            {
+                return false;
+            }
+            bytesReadTotal += bytesRead;
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool writeFileExact(HANDLE fileHandle, const unsigned char* buffer, const DWORD size)
+{
+    try
+    {
+        DWORD bytesWrittenTotal = 0;
+        while (bytesWrittenTotal < size)
+        {
+            DWORD bytesWritten = 0;
+            if (!WriteFile(fileHandle, buffer + bytesWrittenTotal, size - bytesWrittenTotal, &bytesWritten, nullptr) || bytesWritten == 0)
+            {
+                return false;
+            }
+            bytesWrittenTotal += bytesWritten;
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
 
 // ================================================================================================
 // Byte/integer plumbing -- big-endian fields, RFC 4880 MPI encoding (section 3.2), new-format
@@ -1347,6 +1446,690 @@ bool parseAndDecryptMessage(const CryptoPP::RSA::PrivateKey& recipientPrivateKey
 }
 // -----------------------------------------------------------------------------
 
+// ================================================================================================
+// Streaming (chunked, O(chunk size) memory) file-based variants of the buffer-based helpers
+// above -- see PgpEngine.h's own comment on EncryptFile/DecryptFile/SignFile/VerifyFile for the
+// design tradeoffs (no compression on the encrypt side so every packet length is exactly known
+// upfront; DecryptFile writes to a temp file and only keeps it if the trailing MDC check passes).
+// ================================================================================================
+
+int encryptFileStreaming(const CryptoPP::RSA::PublicKey& recipientKey, const unsigned char recipientKeyId[8], HANDLE inputFileHandle, const unsigned long long fileSize, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        CryptoPP::AutoSeededRandomPool rng;
+
+        unsigned char sessionKey[32];
+        rng.GenerateBlock(sessionKey, 32);
+        unsigned char sessionKeyPlain[35];
+        sessionKeyPlain[0] = 9;
+        std::memcpy(sessionKeyPlain + 1, sessionKey, 32);
+        {
+            unsigned int checksum = 0;
+            for (int i = 0; i < 32; ++i)
+            {
+                checksum += sessionKey[i];
+            }
+            sessionKeyPlain[33] = static_cast<unsigned char>((checksum >> 8) & 0xFF);
+            sessionKeyPlain[34] = static_cast<unsigned char>(checksum & 0xFF);
+        }
+
+        CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor encryptor(recipientKey);
+        std::vector<unsigned char> pkcsCipher(encryptor.FixedCiphertextLength());
+        encryptor.Encrypt(rng, sessionKeyPlain, 35, pkcsCipher.data());
+        const CryptoPP::Integer cipherInt(pkcsCipher.data(), pkcsCipher.size());
+        const std::vector<unsigned char> cipherMpi = encodeMpi(cipherInt);
+
+        std::vector<unsigned char> pkeskBody;
+        pkeskBody.push_back(3);
+        pkeskBody.insert(pkeskBody.end(), recipientKeyId, recipientKeyId + 8);
+        pkeskBody.push_back(1);
+        appendAll(pkeskBody, cipherMpi);
+        const std::vector<unsigned char> pkeskPacket = writePacket(PGP_TAG_PKESK, pkeskBody);
+        if (!writeFileExact(outputFileHandle, pkeskPacket.data(), static_cast<DWORD>(pkeskPacket.size())))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        // Literal Data (tag 11) header: no compression on this path, so this length is exactly
+        // computable from fileSize before any content byte is written or read.
+        const std::size_t literalBodyLength = 6 + static_cast<std::size_t>(fileSize);
+        std::vector<unsigned char> literalHeader;
+        literalHeader.push_back(static_cast<unsigned char>(0xC0 | PGP_TAG_LITERAL_DATA));
+        appendNewFormatLength(literalHeader, literalBodyLength);
+
+        std::vector<unsigned char> literalPrefix;
+        literalPrefix.push_back('b');
+        literalPrefix.push_back(0);
+        appendBigEndian32(literalPrefix, 0);
+
+        const std::size_t innerContentLength = literalHeader.size() + literalBodyLength;
+        const std::size_t plainForCfbLength = 18 + innerContentLength + 2 + 20;
+        const std::size_t seipBodyLength = 1 + plainForCfbLength;
+
+        std::vector<unsigned char> seipHeader;
+        seipHeader.push_back(static_cast<unsigned char>(0xC0 | PGP_TAG_SEIP));
+        appendNewFormatLength(seipHeader, seipBodyLength);
+        if (!writeFileExact(outputFileHandle, seipHeader.data(), static_cast<DWORD>(seipHeader.size())))
+        {
+            return FILE_IO_ERROR;
+        }
+        const unsigned char seipVersion = 1;
+        if (!writeFileExact(outputFileHandle, &seipVersion, 1))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        unsigned char zeroIv[16];
+        std::memset(zeroIv, 0, 16);
+        CryptoPP::CFB_Mode<CryptoPP::AES>::Encryption cfb;
+        cfb.SetKeyWithIV(sessionKey, 32, zeroIv, 16);
+        CryptoPP::SHA1 mdc;
+
+        unsigned char prefix[18];
+        rng.GenerateBlock(prefix, 16);
+        prefix[16] = prefix[14];
+        prefix[17] = prefix[15];
+
+        unsigned char prefixCipher[18];
+        mdc.Update(prefix, 18);
+        cfb.ProcessData(prefixCipher, prefix, 18);
+        if (!writeFileExact(outputFileHandle, prefixCipher, 18))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> literalHeaderCipher(literalHeader.size());
+        mdc.Update(literalHeader.data(), literalHeader.size());
+        cfb.ProcessData(literalHeaderCipher.data(), literalHeader.data(), literalHeader.size());
+        if (!writeFileExact(outputFileHandle, literalHeaderCipher.data(), static_cast<DWORD>(literalHeaderCipher.size())))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> literalPrefixCipher(literalPrefix.size());
+        mdc.Update(literalPrefix.data(), literalPrefix.size());
+        cfb.ProcessData(literalPrefixCipher.data(), literalPrefix.data(), literalPrefix.size());
+        if (!writeFileExact(outputFileHandle, literalPrefixCipher.data(), static_cast<DWORD>(literalPrefixCipher.size())))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> plainChunk(PGP_FILE_CHUNK_SIZE);
+        std::vector<unsigned char> cipherChunk(PGP_FILE_CHUNK_SIZE);
+        unsigned long long processedBytes = 0;
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(inputFileHandle, plainChunk.data(), static_cast<DWORD>(plainChunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            mdc.Update(plainChunk.data(), bytesRead);
+            cfb.ProcessData(cipherChunk.data(), plainChunk.data(), bytesRead);
+            if (!writeFileExact(outputFileHandle, cipherChunk.data(), bytesRead))
+            {
+                return FILE_IO_ERROR;
+            }
+
+            processedBytes += bytesRead;
+            if (onProgress)
+            {
+                const double percentage = fileSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(fileSize)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, fileSize, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+
+        unsigned char trailerPlain[22];
+        trailerPlain[0] = 0xD3;
+        trailerPlain[1] = 0x14;
+        mdc.Update(trailerPlain, 2);
+        unsigned char mdcDigest[20];
+        mdc.Final(mdcDigest);
+        std::memcpy(trailerPlain + 2, mdcDigest, 20);
+
+        unsigned char trailerCipher[22];
+        cfb.ProcessData(trailerCipher, trailerPlain, 22);
+        if (!writeFileExact(outputFileHandle, trailerCipher, 22))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int signFileStreaming(const CryptoPP::RSA::PrivateKey& signingKey, HANDLE inputFileHandle, const unsigned long long fileSize, const unsigned char issuerKeyId[8], ProgressCallback onProgress, void* progressUserData, std::vector<unsigned char>& outSignaturePacket)
+{
+    try
+    {
+        const std::uint32_t now = static_cast<std::uint32_t>(std::time(nullptr));
+        const unsigned char signatureType = 0x00;
+
+        std::vector<unsigned char> hashedSubpackets;
+        {
+            std::vector<unsigned char> timeBody;
+            appendBigEndian32(timeBody, now);
+            appendSubpacket(hashedSubpackets, 2, timeBody);
+        }
+        std::vector<unsigned char> unhashedSubpackets;
+        {
+            std::vector<unsigned char> issuerBody(issuerKeyId, issuerKeyId + 8);
+            appendSubpacket(unhashedSubpackets, 16, issuerBody);
+        }
+
+        // version,sigType,pkAlgo,hashAlgo,hashedSubpacketsLen,hashedSubpackets,trailer(6) -- the
+        // part of "toBeHashed" that comes AFTER the (streamed, never fully buffered) document
+        // data; see buildSignaturePacket's own comment for the buffer-based equivalent.
+        std::vector<unsigned char> trailerSuffix;
+        trailerSuffix.push_back(4);
+        trailerSuffix.push_back(signatureType);
+        trailerSuffix.push_back(1);
+        trailerSuffix.push_back(8);
+        appendBigEndian16(trailerSuffix, static_cast<std::uint16_t>(hashedSubpackets.size()));
+        appendAll(trailerSuffix, hashedSubpackets);
+        const std::size_t hashedPortionLength = 6 + hashedSubpackets.size();
+        trailerSuffix.push_back(4);
+        trailerSuffix.push_back(0xFF);
+        appendBigEndian32(trailerSuffix, static_cast<std::uint32_t>(hashedPortionLength));
+
+        CryptoPP::AutoSeededRandomPool rng;
+        CryptoPP::RSASS<CryptoPP::PKCS1v15, CryptoPP::SHA256>::Signer signer(signingKey);
+        std::unique_ptr<CryptoPP::PK_MessageAccumulator> accumulator(signer.NewSignatureAccumulator(rng));
+        // A second, independent SHA-256 run purely to recover the signature packet's own "left
+        // 16 bits of hash" quick-check field -- the RSA signer's accumulator above does not
+        // expose its internal digest, only the final signature, so this is computed in parallel
+        // over the exact same streamed bytes rather than re-reading the file a second time.
+        CryptoPP::SHA256 leftHashDigest;
+
+        std::vector<unsigned char> chunk(PGP_FILE_CHUNK_SIZE);
+        unsigned long long processedBytes = 0;
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(inputFileHandle, chunk.data(), static_cast<DWORD>(chunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            accumulator->Update(chunk.data(), bytesRead);
+            leftHashDigest.Update(chunk.data(), bytesRead);
+
+            processedBytes += bytesRead;
+            if (onProgress)
+            {
+                const double percentage = fileSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(fileSize)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, fileSize, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+        accumulator->Update(trailerSuffix.data(), trailerSuffix.size());
+        leftHashDigest.Update(trailerSuffix.data(), trailerSuffix.size());
+
+        unsigned char leftHash[32];
+        leftHashDigest.Final(leftHash);
+
+        std::vector<unsigned char> rawSignature(signer.SignatureLength());
+        signer.Sign(rng, accumulator.release(), rawSignature.data());
+        const CryptoPP::Integer sigInt(rawSignature.data(), rawSignature.size());
+        const std::vector<unsigned char> sigMpi = encodeMpi(sigInt);
+
+        std::vector<unsigned char> body;
+        body.push_back(4);
+        body.push_back(signatureType);
+        body.push_back(1);
+        body.push_back(8);
+        appendBigEndian16(body, static_cast<std::uint16_t>(hashedSubpackets.size()));
+        appendAll(body, hashedSubpackets);
+        appendBigEndian16(body, static_cast<std::uint16_t>(unhashedSubpackets.size()));
+        appendAll(body, unhashedSubpackets);
+        body.push_back(leftHash[0]);
+        body.push_back(leftHash[1]);
+        appendAll(body, sigMpi);
+
+        outSignaturePacket = writePacket(PGP_TAG_SIGNATURE, body);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int verifyFileStreaming(const CryptoPP::RSA::PublicKey& verifyingKey, HANDLE inputFileHandle, const unsigned long long fileSize, const std::vector<unsigned char>& signaturePacketBytes, bool* isValid, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        std::size_t pos = 0;
+        unsigned char tag = 0;
+        std::size_t bodyLength = 0;
+        if (!readPacketHeader(signaturePacketBytes, pos, tag, bodyLength) || tag != PGP_TAG_SIGNATURE || pos + bodyLength > signaturePacketBytes.size())
+        {
+            return INVALID_DATA;
+        }
+        const std::vector<unsigned char> body(signaturePacketBytes.begin() + pos, signaturePacketBytes.begin() + pos + bodyLength);
+        const ParsedSignature parsed = parseSignaturePacketBody(body);
+        if (!parsed.valid)
+        {
+            return INVALID_DATA;
+        }
+
+        std::vector<unsigned char> trailerSuffix;
+        trailerSuffix.push_back(4);
+        trailerSuffix.push_back(parsed.signatureType);
+        trailerSuffix.push_back(1);
+        trailerSuffix.push_back(8);
+        appendBigEndian16(trailerSuffix, static_cast<std::uint16_t>(parsed.hashedSubpackets.size()));
+        appendAll(trailerSuffix, parsed.hashedSubpackets);
+        const std::size_t hashedPortionLength = 6 + parsed.hashedSubpackets.size();
+        trailerSuffix.push_back(4);
+        trailerSuffix.push_back(0xFF);
+        appendBigEndian32(trailerSuffix, static_cast<std::uint32_t>(hashedPortionLength));
+
+        const std::size_t fixedLength = rsaModulusByteLength(verifyingKey.GetModulus());
+        std::vector<unsigned char> fixedSignature(fixedLength, 0);
+        const CryptoPP::Integer sigInt(parsed.signatureMpiValue.data(), parsed.signatureMpiValue.size());
+        sigInt.Encode(fixedSignature.data(), fixedLength);
+
+        CryptoPP::RSASS<CryptoPP::PKCS1v15, CryptoPP::SHA256>::Verifier verifier(verifyingKey);
+        std::unique_ptr<CryptoPP::PK_MessageAccumulator> accumulator(verifier.NewVerificationAccumulator());
+        verifier.InputSignature(*accumulator, fixedSignature.data(), fixedSignature.size());
+
+        std::vector<unsigned char> chunk(PGP_FILE_CHUNK_SIZE);
+        unsigned long long processedBytes = 0;
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(inputFileHandle, chunk.data(), static_cast<DWORD>(chunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            accumulator->Update(chunk.data(), bytesRead);
+
+            processedBytes += bytesRead;
+            if (onProgress)
+            {
+                const double percentage = fileSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(fileSize)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, fileSize, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+        accumulator->Update(trailerSuffix.data(), trailerSuffix.size());
+
+        *isValid = verifier.Verify(accumulator.release());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+struct DecryptFileHeader
+{
+    bool ok;
+    std::vector<unsigned char> sessionKey;
+    std::size_t encLength;
+    std::vector<unsigned char> leftoverCipher;
+
+    DecryptFileHeader() : ok(false), encLength(0) {}
+};
+// -----------------------------------------------------------------------------
+
+// Reads just enough of the file (a small, bounded prefix -- PKESK plus the SEIP header are at
+// most ~550 bytes even for RSA-4096) to recover the session key and the SEIP body's exact
+// length. Any ciphertext bytes read past the SEIP header in that same prefix are returned in
+// leftoverCipher so decryptSeipBodyStreaming can consume them before reading more from the file.
+DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const CryptoPP::RSA::PrivateKey& recipientPrivateKey)
+{
+    DecryptFileHeader result;
+    try
+    {
+        std::vector<unsigned char> buf(8192);
+        DWORD bytesRead = 0;
+        if (!ReadFile(inputFileHandle, buf.data(), static_cast<DWORD>(buf.size()), &bytesRead, nullptr))
+        {
+            return result;
+        }
+        buf.resize(bytesRead);
+
+        std::size_t pos = 0;
+        unsigned char tag = 0;
+        std::size_t bodyLength = 0;
+        if (!readPacketHeader(buf, pos, tag, bodyLength) || tag != PGP_TAG_PKESK || pos + bodyLength > buf.size())
+        {
+            return result;
+        }
+        const std::size_t pkeskEnd = pos + bodyLength;
+
+        std::size_t p = pos;
+        if (buf[p] != 3)
+        {
+            return result;
+        }
+        p += 1;
+        p += 8;
+        if (buf[p] != 1)
+        {
+            return result;
+        }
+        p += 1;
+        if (p + 2 > pkeskEnd)
+        {
+            return result;
+        }
+        const std::size_t bitLength = readBigEndian16(buf, p);
+        p += 2;
+        const std::size_t byteLength = (bitLength + 7) / 8;
+        if (p + byteLength > pkeskEnd)
+        {
+            return result;
+        }
+        const CryptoPP::Integer cipherInt(&buf[p], byteLength);
+        pos = pkeskEnd;
+
+        const std::size_t modulusLength = rsaModulusByteLength(recipientPrivateKey.GetModulus());
+        std::vector<unsigned char> fixedCipher(modulusLength, 0);
+        cipherInt.Encode(fixedCipher.data(), modulusLength);
+
+        CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor decryptor(recipientPrivateKey);
+        std::vector<unsigned char> sessionPlain(decryptor.FixedMaxPlaintextLength());
+        CryptoPP::AutoSeededRandomPool rng;
+        const CryptoPP::DecodingResult decResult = decryptor.Decrypt(rng, fixedCipher.data(), fixedCipher.size(), sessionPlain.data());
+        if (!decResult.isValidCoding)
+        {
+            return result;
+        }
+        sessionPlain.resize(decResult.messageLength);
+        if (sessionPlain.empty())
+        {
+            return result;
+        }
+
+        std::size_t sessionKeyLength = 0;
+        switch (sessionPlain[0])
+        {
+            case 7: sessionKeyLength = 16; break;
+            case 8: sessionKeyLength = 24; break;
+            case 9: sessionKeyLength = 32; break;
+            default: return result;
+        }
+        if (sessionPlain.size() != 1 + sessionKeyLength + 2)
+        {
+            return result;
+        }
+        std::vector<unsigned char> sessionKey(sessionKeyLength);
+        std::memcpy(sessionKey.data(), &sessionPlain[1], sessionKeyLength);
+        unsigned int checksum = 0;
+        for (std::size_t i = 0; i < sessionKeyLength; ++i)
+        {
+            checksum += sessionKey[i];
+        }
+        const unsigned int storedChecksum = (static_cast<unsigned int>(sessionPlain[1 + sessionKeyLength]) << 8) | sessionPlain[1 + sessionKeyLength + 1];
+        if ((checksum & 0xFFFF) != storedChecksum)
+        {
+            return result;
+        }
+
+        unsigned char seipTag = 0;
+        std::size_t seipBodyLength = 0;
+        if (!readPacketHeader(buf, pos, seipTag, seipBodyLength) || seipTag != PGP_TAG_SEIP)
+        {
+            return result;
+        }
+        if (pos >= buf.size() || buf[pos] != 1)
+        {
+            return result;
+        }
+        pos += 1;
+
+        result.sessionKey = sessionKey;
+        result.encLength = seipBodyLength - 1;
+        result.leftoverCipher.assign(buf.begin() + pos, buf.end());
+        if (result.leftoverCipher.size() > result.encLength)
+        {
+            result.leftoverCipher.resize(result.encLength);
+        }
+        result.ok = true;
+        return result;
+    }
+    catch (...)
+    {
+        result.ok = false;
+        return result;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Streams the SEIP body (CFB-decrypt + running MDC) into outputFileHandle. v1 scope: the inner
+// packet must be an uncompressed Literal Data packet (tag 11) -- a compressed (tag 8) inner
+// packet, as EncryptBuffer/GnuPG would produce, is not yet supported for this streaming path
+// (returns NOT_IMPLEMENTED; see the pgp-engine-todo-streaming memory note for why: decompression
+// would need its own nested streaming header-parsing pass, deferred).
+int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned char>& leftoverCipher, const std::size_t encLength, const unsigned char* sessionKey, const std::size_t sessionKeyLength, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (encLength < 18 + 6 + 22 || leftoverCipher.size() > encLength)
+        {
+            return INVALID_DATA;
+        }
+
+        unsigned char zeroIv[16];
+        std::memset(zeroIv, 0, 16);
+        CryptoPP::CFB_Mode<CryptoPP::AES>::Decryption cfb;
+        cfb.SetKeyWithIV(sessionKey, sessionKeyLength, zeroIv, 16);
+        CryptoPP::SHA1 mdc;
+
+        const std::size_t mdcHashOffset = encLength - 20;
+        std::size_t cipherRemaining = encLength - leftoverCipher.size();
+        std::size_t streamPos = 0;
+
+        std::vector<unsigned char> pending(leftoverCipher.size());
+        if (!leftoverCipher.empty())
+        {
+            cfb.ProcessData(pending.data(), leftoverCipher.data(), leftoverCipher.size());
+        }
+        std::size_t pendingPos = 0;
+
+        std::vector<unsigned char> cipherReadBuf(PGP_FILE_CHUNK_SIZE);
+
+        // Decrypts more ciphertext from the file (tracked by cipherRemaining) into `pending`
+        // until at least minBytes unconsumed decrypted bytes are available, or the SEIP body
+        // runs out first (a malformed/truncated file).
+        auto ensurePending = [&](std::size_t minBytes) -> bool
+        {
+            while (pending.size() - pendingPos < minBytes)
+            {
+                if (cipherRemaining == 0)
+                {
+                    return false;
+                }
+                const DWORD toRead = static_cast<DWORD>((cipherRemaining < cipherReadBuf.size()) ? cipherRemaining : cipherReadBuf.size());
+                DWORD bytesRead = 0;
+                if (!ReadFile(inputFileHandle, cipherReadBuf.data(), toRead, &bytesRead, nullptr) || bytesRead == 0)
+                {
+                    return false;
+                }
+                cipherRemaining -= bytesRead;
+                const std::size_t oldSize = pending.size();
+                pending.resize(oldSize + bytesRead);
+                cfb.ProcessData(&pending[oldSize], cipherReadBuf.data(), bytesRead);
+            }
+            return true;
+        };
+
+        // Feeds exactly `count` bytes starting at pending[pendingPos] into the running MDC
+        // accumulator -- only the portion before mdcHashOffset actually counts (RFC 4880 5.13's
+        // trailing 20-byte hash value is itself excluded from what it hashes) -- then advances
+        // streamPos/pendingPos. Does not write anything anywhere; callers that also need these
+        // bytes as content copy them out first.
+        auto consumeForHash = [&](std::size_t count)
+        {
+            if (streamPos < mdcHashOffset)
+            {
+                const std::size_t hashEnd = (streamPos + count < mdcHashOffset) ? (streamPos + count) : mdcHashOffset;
+                mdc.Update(&pending[pendingPos], hashEnd - streamPos);
+            }
+            streamPos += count;
+            pendingPos += count;
+        };
+
+        if (!ensurePending(18))
+        {
+            return INVALID_DATA;
+        }
+        consumeForHash(18);
+
+        std::size_t innerHeaderLength = 0;
+        unsigned char innerTag = 0;
+        std::size_t innerBodyLength = 0;
+        bool innerHeaderParsed = false;
+        for (std::size_t probeSize = 8; probeSize <= 512 && !innerHeaderParsed; probeSize += 8)
+        {
+            if (!ensurePending(probeSize))
+            {
+                break;
+            }
+            const std::vector<unsigned char> probeBuf(pending.begin() + pendingPos, pending.begin() + pendingPos + probeSize);
+            std::size_t probePos = 0;
+            if (readPacketHeader(probeBuf, probePos, innerTag, innerBodyLength))
+            {
+                innerHeaderLength = probePos;
+                innerHeaderParsed = true;
+            }
+        }
+        if (!innerHeaderParsed)
+        {
+            return INVALID_DATA;
+        }
+        if (innerTag != PGP_TAG_LITERAL_DATA)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        consumeForHash(innerHeaderLength);
+
+        if (!ensurePending(2))
+        {
+            return INVALID_DATA;
+        }
+        const unsigned char filenameLength = pending[pendingPos + 1];
+        consumeForHash(2);
+        if (filenameLength > 0)
+        {
+            if (!ensurePending(filenameLength))
+            {
+                return INVALID_DATA;
+            }
+            consumeForHash(filenameLength);
+        }
+        if (!ensurePending(4))
+        {
+            return INVALID_DATA;
+        }
+        consumeForHash(4);
+
+        const std::size_t literalHeaderTotal = 2 + static_cast<std::size_t>(filenameLength) + 4;
+        if (innerBodyLength < literalHeaderTotal)
+        {
+            return INVALID_DATA;
+        }
+        std::size_t contentRemaining = innerBodyLength - literalHeaderTotal;
+        const unsigned long long totalContentBytes = static_cast<unsigned long long>(contentRemaining);
+        unsigned long long processedBytes = 0;
+
+        while (contentRemaining > 0)
+        {
+            if (!ensurePending(1))
+            {
+                return INVALID_DATA;
+            }
+            const std::size_t available = pending.size() - pendingPos;
+            const std::size_t wantBytes = (contentRemaining < PGP_FILE_CHUNK_SIZE) ? contentRemaining : PGP_FILE_CHUNK_SIZE;
+            const std::size_t takeNow = (available < wantBytes) ? available : wantBytes;
+
+            if (!writeFileExact(outputFileHandle, &pending[pendingPos], static_cast<DWORD>(takeNow)))
+            {
+                return FILE_IO_ERROR;
+            }
+            consumeForHash(takeNow);
+            contentRemaining -= takeNow;
+            processedBytes += takeNow;
+
+            if (onProgress)
+            {
+                const double percentage = totalContentBytes > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(totalContentBytes)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, totalContentBytes, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+
+            if (pendingPos > PGP_FILE_CHUNK_SIZE)
+            {
+                pending.erase(pending.begin(), pending.begin() + pendingPos);
+                pendingPos = 0;
+            }
+        }
+
+        if (!ensurePending(22))
+        {
+            return INVALID_DATA;
+        }
+        const unsigned char marker0 = pending[pendingPos];
+        const unsigned char marker1 = pending[pendingPos + 1];
+        unsigned char storedMdc[20];
+        std::memcpy(storedMdc, &pending[pendingPos + 2], 20);
+        consumeForHash(22);
+
+        if (marker0 != 0xD3 || marker1 != 0x14)
+        {
+            return INVALID_DATA;
+        }
+        unsigned char computedMdc[20];
+        mdc.Final(computedMdc);
+        if (std::memcmp(computedMdc, storedMdc, 20) != 0)
+        {
+            return INVALID_DATA;
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // anonymous namespace
 
 // ================================================================================================
@@ -2091,6 +2874,250 @@ int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int
 
         *isValid = verified;
         return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::EncryptFile(const char* inputFilePath, const char* outputFilePath, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (!impl_ || !impl_->peerKeyImported || inputFilePath == nullptr || outputFilePath == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::wstring wideInputPath;
+        std::wstring wideOutputPath;
+        if (!convertUtf8PathToWide(inputFilePath, wideInputPath) || !convertUtf8PathToWide(outputFilePath, wideOutputPath))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const HANDLE rawInputHandle = CreateFileW(wideInputPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawInputHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
+
+        LARGE_INTEGER inputFileSize;
+        inputFileSize.QuadPart = 0;
+        if (!GetFileSizeEx(rawInputHandle, &inputFileSize) || inputFileSize.QuadPart < 0)
+        {
+            return FILE_IO_ERROR;
+        }
+        const unsigned long long fileSize = static_cast<unsigned long long>(inputFileSize.QuadPart);
+
+        const HANDLE rawOutputHandle = CreateFileW(wideOutputPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawOutputHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> outputHandle(rawOutputHandle, &CloseHandle);
+
+        const int status = encryptFileStreaming(impl_->peerSubkeyPublicKey, impl_->peerSubkeyKeyId, rawInputHandle, fileSize, rawOutputHandle, onProgress, progressUserData);
+        if (status != NO_ERROR)
+        {
+            outputHandle.reset();
+            DeleteFileW(wideOutputPath.c_str());
+        }
+        return status;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::DecryptFile(const char* password, const int passwordSize, const char* inputFilePath, const char* outputFilePath, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0 || inputFilePath == nullptr || outputFilePath == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::wstring wideInputPath;
+        std::wstring wideOutputPath;
+        if (!convertUtf8PathToWide(inputFilePath, wideInputPath) || !convertUtf8PathToWide(outputFilePath, wideOutputPath))
+        {
+            return INVALID_ARGUMENT;
+        }
+        const std::wstring wideTempPath = wideOutputPath + L".pgptmp";
+
+        const HANDLE rawInputHandle = CreateFileW(wideInputPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawInputHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
+
+        const DecryptFileHeader header = parseEncryptedFileHeader(rawInputHandle, impl_->ownSubkeyPrivateKey);
+        if (!header.ok)
+        {
+            return INVALID_DATA;
+        }
+
+        const HANDLE rawTempHandle = CreateFileW(wideTempPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawTempHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> tempHandle(rawTempHandle, &CloseHandle);
+
+        const int status = decryptSeipBodyStreaming(rawInputHandle, header.leftoverCipher, header.encLength,
+                                                     header.sessionKey.data(), header.sessionKey.size(),
+                                                     rawTempHandle, onProgress, progressUserData);
+        tempHandle.reset();
+        if (status != NO_ERROR)
+        {
+            DeleteFileW(wideTempPath.c_str());
+            return status;
+        }
+
+        DeleteFileW(wideOutputPath.c_str());
+        if (!MoveFileExW(wideTempPath.c_str(), wideOutputPath.c_str(), MOVEFILE_REPLACE_EXISTING))
+        {
+            DeleteFileW(wideTempPath.c_str());
+            return FILE_IO_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::SignFile(const char* password, const int passwordSize, const char* inputFilePath, const char* signatureFilePath, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0 || inputFilePath == nullptr || signatureFilePath == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::wstring wideInputPath;
+        std::wstring wideSignaturePath;
+        if (!convertUtf8PathToWide(inputFilePath, wideInputPath) || !convertUtf8PathToWide(signatureFilePath, wideSignaturePath))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const HANDLE rawInputHandle = CreateFileW(wideInputPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawInputHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
+
+        LARGE_INTEGER inputFileSize;
+        inputFileSize.QuadPart = 0;
+        if (!GetFileSizeEx(rawInputHandle, &inputFileSize) || inputFileSize.QuadPart < 0)
+        {
+            return FILE_IO_ERROR;
+        }
+        const unsigned long long fileSize = static_cast<unsigned long long>(inputFileSize.QuadPart);
+
+        std::vector<unsigned char> signaturePacket;
+        const int status = signFileStreaming(impl_->ownMasterPrivateKey, rawInputHandle, fileSize, impl_->ownMasterKeyId, onProgress, progressUserData, signaturePacket);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+
+        const HANDLE rawSigHandle = CreateFileW(wideSignaturePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawSigHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> sigHandle(rawSigHandle, &CloseHandle);
+        if (!writeFileExact(rawSigHandle, signaturePacket.data(), static_cast<DWORD>(signaturePacket.size())))
+        {
+            sigHandle.reset();
+            DeleteFileW(wideSignaturePath.c_str());
+            return FILE_IO_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::VerifyFile(const char* inputFilePath, const char* signatureFilePath, bool* isValid, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (!impl_ || !impl_->peerKeyImported || inputFilePath == nullptr || signatureFilePath == nullptr || isValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::wstring wideInputPath;
+        std::wstring wideSignaturePath;
+        if (!convertUtf8PathToWide(inputFilePath, wideInputPath) || !convertUtf8PathToWide(signatureFilePath, wideSignaturePath))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::vector<unsigned char> signaturePacketBytes;
+        {
+            const HANDLE rawSigHandle = CreateFileW(wideSignaturePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (rawSigHandle == INVALID_HANDLE_VALUE)
+            {
+                return FILE_IO_ERROR;
+            }
+            std::unique_ptr<void, decltype(&CloseHandle)> sigHandle(rawSigHandle, &CloseHandle);
+
+            LARGE_INTEGER sigSize;
+            sigSize.QuadPart = 0;
+            if (!GetFileSizeEx(rawSigHandle, &sigSize) || sigSize.QuadPart < 0 || sigSize.QuadPart > 65536)
+            {
+                return FILE_IO_ERROR;
+            }
+            signaturePacketBytes.resize(static_cast<std::size_t>(sigSize.QuadPart));
+            if (!signaturePacketBytes.empty() && !readFileExact(rawSigHandle, &signaturePacketBytes[0], static_cast<DWORD>(signaturePacketBytes.size())))
+            {
+                return FILE_IO_ERROR;
+            }
+        }
+
+        const HANDLE rawInputHandle = CreateFileW(wideInputPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawInputHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
+
+        LARGE_INTEGER inputFileSize;
+        inputFileSize.QuadPart = 0;
+        if (!GetFileSizeEx(rawInputHandle, &inputFileSize) || inputFileSize.QuadPart < 0)
+        {
+            return FILE_IO_ERROR;
+        }
+        const unsigned long long fileSize = static_cast<unsigned long long>(inputFileSize.QuadPart);
+
+        return verifyFileStreaming(impl_->peerMasterPublicKey, rawInputHandle, fileSize, signaturePacketBytes, isValid, onProgress, progressUserData);
     }
     catch (...)
     {

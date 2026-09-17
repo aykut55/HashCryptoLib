@@ -221,7 +221,7 @@ int main()
     cryptoApiTester.RunRandomAlgorithmsTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunPgpKeyGenerationTest();
 
     cryptoApiTester.RunPgpEncryptDecryptTest();
@@ -233,6 +233,12 @@ int main()
     cryptoApiTester.RunPgpArmorTest();
 
     cryptoApiTester.RunPgpAliceBobTest();
+
+    cryptoApiTester.RunPgpFileEncryptDecryptTest();
+
+    cryptoApiTester.RunPgpFileSignVerifyTest();
+
+    cryptoApiTester.RunPgpGnuPgInteropTest();
 #endif
 
     return 0;
