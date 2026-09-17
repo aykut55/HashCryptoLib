@@ -28,6 +28,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -12865,6 +12866,240 @@ int CCryptoApiTester::RunPgpGnuPgInteropTest(void)
         std::cout << "RunPgpGnuPgInteropTest: PASSED direction our-clearsign -> gpg-verify" << std::endl;
 
         std::cout << "RunPgpGnuPgInteropTest: PASSED all directions against real GnuPG (" << gpgExe << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpKeyExpirationTest(void)
+{
+    try
+    {
+        CPgpEngine neverExpires;
+        const char* userId1 = "Never Expires <never@example.com>";
+        const char* password1 = "never-password-1";
+        int status = neverExpires.GenerateKeyPair(userId1, static_cast<int>(std::strlen(userId1)), password1, static_cast<int>(std::strlen(password1)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpKeyExpirationTest: FAILED neverExpires GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        if (neverExpires.GetKeyExpirationSeconds() != 0)
+        {
+            std::cout << "RunPgpKeyExpirationTest: FAILED 4-argument GenerateKeyPair should report expiration 0, got " << neverExpires.GetKeyExpirationSeconds() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        CPgpEngine expires;
+        const char* userId2 = "Expires Soon <expires@example.com>";
+        const char* password2 = "expires-password-1";
+        const unsigned int expirationSeconds = 3600u * 24u * 30u;
+        status = expires.GenerateKeyPair(userId2, static_cast<int>(std::strlen(userId2)), password2, static_cast<int>(std::strlen(password2)), expirationSeconds);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpKeyExpirationTest: FAILED expires GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        if (expires.GetKeyExpirationSeconds() != expirationSeconds)
+        {
+            std::cout << "RunPgpKeyExpirationTest: FAILED expected expiration " << expirationSeconds << ", got " << expires.GetKeyExpirationSeconds() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpKeyExpirationTest: PASSED (never-expires=0, expires=" << expirationSeconds << " seconds)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpGnuPgRevocationInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* homeDir = "cryptoapi_pgp_gnupg_revoke_home";
+        const char* pubKeyPath = "cryptoapi_pgp_gnupg_revoke_pub.asc";
+        const char* revocationPath = "cryptoapi_pgp_gnupg_revoke_cert.asc";
+        // Absolute path -- observed gpg resolving --homedir inconsistently between the import
+        // that revokes a key and its own follow-up trustdb access when given a relative path.
+        const std::string absoluteHomeDir = std::filesystem::absolute(homeDir).string();
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(absoluteHomeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        CPgpEngine pgp;
+        const char* userId = "Revocation Test <revoke@example.com>";
+        const char* password = "RevokeTest-1";
+        const unsigned int expirationSeconds = 3600u * 24u * 30u;
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)), expirationSeconds);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+        // Priming call: makes gpg create trustdb.gpg up front. Without this, importing a
+        // standalone revocation certificate later (as opposed to a full key block) has been
+        // observed to fail with "Fatal: can't open trustdb.gpg" on a completely fresh --homedir,
+        // even though the identity's own key import a few lines below works fine either way.
+        std::string primeOutput;
+        RunShellCommand(gpgBase + "--check-trustdb", primeOutput);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED gpg --import rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string listOutput;
+        rc = RunShellCommand(gpgBase + "--with-colons --list-keys " + keyId, listOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED gpg --list-keys rc=" << rc << "\n" << listOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        bool expiryFieldNonEmpty = false;
+        {
+            std::istringstream iss(listOutput);
+            std::string line;
+            while (std::getline(iss, line))
+            {
+                if (line.rfind("pub:", 0) == 0)
+                {
+                    std::vector<std::string> fields;
+                    std::istringstream fss(line);
+                    std::string field;
+                    while (std::getline(fss, field, ':'))
+                    {
+                        fields.push_back(field);
+                    }
+                    if (fields.size() > 6 && !fields[6].empty())
+                    {
+                        expiryFieldNonEmpty = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!expiryFieldNonEmpty)
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED gpg did not parse a key expiration date\n" << listOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgRevocationInteropTest: PASSED gpg parsed our key expiration date" << std::endl;
+
+        int revSize = 0;
+        pgp.RevokeKeyArmored(password, static_cast<int>(std::strlen(password)), 0, nullptr, 0, 0, nullptr, &revSize);
+        std::vector<char> revocationCert(static_cast<std::size_t>(revSize));
+        int revActualSize = 0;
+        status = pgp.RevokeKeyArmored(password, static_cast<int>(std::strlen(password)), 0, nullptr, 0, revSize, &revocationCert[0], &revActualSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED RevokeKeyArmored status=" << status << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return status;
+        }
+        if (!WriteTesterFile(revocationPath, std::vector<unsigned char>(revocationCert.begin(), revocationCert.begin() + revActualSize)))
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED to write revocation certificate file" << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(revocationPath), cmdOutput);
+        // gpg has been observed to print "... revocation certificate imported" (the outcome we
+        // actually care about) and THEN fail with exit code 2 / "Fatal: can't open trustdb.gpg"
+        // while doing unrelated post-import trust bookkeeping -- a gpg-agent/trustdb
+        // auto-creation quirk specific to being spawned from a piped, non-console _popen child on
+        // Windows (the same class of environment issue as gpg --generate-key's own failure mode
+        // noted on RunPgpGnuPgInteropTest), not a rejection of our revocation certificate itself.
+        // Treat that specific message as success and let the list-keys check below be the real
+        // verdict; a rc!=0 WITHOUT that message is still a hard failure.
+        if (rc != 0 && cmdOutput.find("revocation certificate imported") == std::string::npos)
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED gpg --import (revocation) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(revocationPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string listOutput2;
+        RunShellCommand(gpgBase + "--with-colons --list-keys " + keyId, listOutput2);
+
+        std::remove(pubKeyPath);
+        std::remove(revocationPath);
+        std::filesystem::remove_all(homeDir, fsError);
+
+        bool revoked = false;
+        {
+            std::istringstream iss(listOutput2);
+            std::string line;
+            while (std::getline(iss, line))
+            {
+                if (line.rfind("pub:", 0) == 0)
+                {
+                    std::vector<std::string> fields;
+                    std::istringstream fss(line);
+                    std::string field;
+                    while (std::getline(fss, field, ':'))
+                    {
+                        fields.push_back(field);
+                    }
+                    if (fields.size() > 1 && fields[1] == "r")
+                    {
+                        revoked = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!revoked)
+        {
+            std::cout << "RunPgpGnuPgRevocationInteropTest: FAILED gpg did not mark the key as revoked\n" << listOutput2 << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGnuPgRevocationInteropTest: PASSED gpg marked the key as revoked after importing RevokeKeyArmored's certificate" << std::endl;
         return NO_ERROR;
     }
     catch (...)

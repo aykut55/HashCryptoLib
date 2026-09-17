@@ -63,6 +63,8 @@ struct CPgpEngine::Impl
     unsigned char passwordCheckHash[32];
     std::string ownPublicKeyArmored;
     std::string ownSecretKeyArmored;
+    std::uint32_t keyCreationTime;   // seconds since epoch, as embedded in the exported public key packet -- reused by RevokeKeyArmored so its recomputed public-key-packet body byte-matches the one already exported (and therefore fingerprints/Key-IDs the same).
+    std::uint32_t keyExpirationSeconds; // 0 = never expires; otherwise seconds after keyCreationTime, as set by GenerateKeyPair's expiration overload.
 
     bool peerKeyImported;
     CryptoPP::RSA::PublicKey peerMasterPublicKey;
@@ -70,7 +72,7 @@ struct CPgpEngine::Impl
     unsigned char peerMasterKeyId[8];
     unsigned char peerSubkeyKeyId[8];
 
-    Impl() : rsaKeyBits(2048), ownKeyGenerated(false), peerKeyImported(false)
+    Impl() : rsaKeyBits(2048), ownKeyGenerated(false), keyCreationTime(0), keyExpirationSeconds(0), peerKeyImported(false)
     {
         std::memset(ownMasterKeyId, 0, 8);
         std::memset(ownSubkeyKeyId, 0, 8);
@@ -755,6 +757,38 @@ std::vector<unsigned char> buildKeyFlagsSubpacket(const unsigned char flags)
     std::vector<unsigned char> sub;
     std::vector<unsigned char> body(1, flags);
     appendSubpacket(sub, 27, body);
+    return sub;
+}
+// -----------------------------------------------------------------------------
+
+// RFC 4880 section 5.2.3.6 (type 9): number of seconds after the signed key's own creation time
+// that it expires. Only meaningful appended to a self-certification (0x13, primary key
+// expiration) or subkey-binding (0x18, subkey expiration) signature's hashed subpackets --
+// omitted entirely (not this subpacket with value 0) means "never expires" by RFC 4880
+// convention, so callers should simply not append this when expirationSeconds is 0.
+std::vector<unsigned char> buildKeyExpirationSubpacket(const std::uint32_t expirationSeconds)
+{
+    std::vector<unsigned char> sub;
+    std::vector<unsigned char> body;
+    appendBigEndian32(body, expirationSeconds);
+    appendSubpacket(sub, 9, body);
+    return sub;
+}
+// -----------------------------------------------------------------------------
+
+// RFC 4880 section 5.2.3.23 (type 29): 1-byte machine-readable reason code followed by an
+// optional UTF-8 human-readable reason. Appended to a revocation signature's (0x20/0x28) hashed
+// subpackets by RevokeKeyArmored.
+std::vector<unsigned char> buildRevocationReasonSubpacket(const unsigned char reasonCode, const char* reasonText, const int reasonTextSize)
+{
+    std::vector<unsigned char> sub;
+    std::vector<unsigned char> body;
+    body.push_back(reasonCode);
+    if (reasonText != nullptr && reasonTextSize > 0)
+    {
+        body.insert(body.end(), reasonText, reasonText + reasonTextSize);
+    }
+    appendSubpacket(sub, 29, body);
     return sub;
 }
 // -----------------------------------------------------------------------------
@@ -2154,6 +2188,12 @@ CPgpEngine::CPgpEngine(const int rsaKeyBits) : impl_(new Impl())
 
 int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const char* password, const int passwordSize)
 {
+    return GenerateKeyPair(userId, userIdSize, password, passwordSize, 0);
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const char* password, const int passwordSize, const unsigned int expirationSeconds)
+{
     try
     {
         if (!impl_ || userId == nullptr || userIdSize <= 0 || password == nullptr || passwordSize <= 0)
@@ -2193,17 +2233,25 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
         const std::vector<unsigned char> userIdBody(userIdStr.begin(), userIdStr.end());
         const std::vector<unsigned char> userIdPacket = writePacket(13, userIdBody);
 
+        std::vector<unsigned char> certExtraSubpackets = buildKeyFlagsSubpacket(0x03);
+        std::vector<unsigned char> bindExtraSubpackets = buildKeyFlagsSubpacket(0x0C);
+        if (expirationSeconds > 0)
+        {
+            appendAll(certExtraSubpackets, buildKeyExpirationSubpacket(expirationSeconds));
+            appendAll(bindExtraSubpackets, buildKeyExpirationSubpacket(expirationSeconds));
+        }
+
         std::vector<unsigned char> certDocument = buildKeyHashPrefix(masterPubBody);
         {
             certDocument.push_back(0xB4);
             appendBigEndian32(certDocument, static_cast<std::uint32_t>(userIdBody.size()));
             appendAll(certDocument, userIdBody);
         }
-        const std::vector<unsigned char> certSigPacket = buildSignaturePacket(masterPrivateKey, 0x13, certDocument, buildKeyFlagsSubpacket(0x03), masterKeyId);
+        const std::vector<unsigned char> certSigPacket = buildSignaturePacket(masterPrivateKey, 0x13, certDocument, certExtraSubpackets, masterKeyId);
 
         std::vector<unsigned char> bindDocument = buildKeyHashPrefix(masterPubBody);
         appendAll(bindDocument, buildKeyHashPrefix(subkeyPubBody));
-        const std::vector<unsigned char> bindSigPacket = buildSignaturePacket(masterPrivateKey, 0x18, bindDocument, buildKeyFlagsSubpacket(0x0C), masterKeyId);
+        const std::vector<unsigned char> bindSigPacket = buildSignaturePacket(masterPrivateKey, 0x18, bindDocument, bindExtraSubpackets, masterKeyId);
 
         const std::vector<unsigned char> subkeyPubPacket = writePacket(PGP_TAG_PUBLIC_SUBKEY, subkeyPubBody);
 
@@ -2241,6 +2289,8 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
         impl_->ownSubkeyPublicKey = subkeyPublicKey;
         std::memcpy(impl_->ownMasterKeyId, masterKeyId, 8);
         std::memcpy(impl_->ownSubkeyKeyId, subkeyKeyId, 8);
+        impl_->keyCreationTime = creationTime;
+        impl_->keyExpirationSeconds = expirationSeconds;
         CryptoPP::SHA256().CalculateDigest(impl_->passwordCheckHash, reinterpret_cast<const CryptoPP::byte*>(password), static_cast<std::size_t>(passwordSize));
 
         impl_->ownPublicKeyArmored = armorEncode("PGP PUBLIC KEY BLOCK", publicKeyBlock);
@@ -2360,6 +2410,67 @@ int CPgpEngine::GetKeyId(char* outputBuffer, const int outputBufferCapacity) con
             outputBuffer[i * 2 + 1] = hexDigits[impl_->ownMasterKeyId[i] & 0xF];
         }
         outputBuffer[16] = '\0';
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+unsigned int CPgpEngine::GetKeyExpirationSeconds(void) const
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated)
+        {
+            return 0;
+        }
+        return static_cast<unsigned int>(impl_->keyExpirationSeconds);
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::RevokeKeyArmored(const char* password, const int passwordSize, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        // Recomputed (not cached) from the same creationTime/modulus/exponent GenerateKeyPair
+        // used, so this byte-matches the public-key-packet body already embedded in the exported
+        // public key block -- required for the revocation signature to hash the same material a
+        // keyring importing it will see.
+        const std::vector<unsigned char> masterPubBody = buildRsaPublicKeyPacketBody(impl_->keyCreationTime, impl_->ownMasterPublicKey.GetModulus(), impl_->ownMasterPublicKey.GetPublicExponent());
+        const std::vector<unsigned char> document = buildKeyHashPrefix(masterPubBody);
+        const std::vector<unsigned char> reasonSubpacket = buildRevocationReasonSubpacket(reasonCode, reasonText, reasonTextSize);
+
+        const std::vector<unsigned char> revocationSigPacket = buildSignaturePacket(impl_->ownMasterPrivateKey, 0x20, document, reasonSubpacket, impl_->ownMasterKeyId);
+        if (revocationSigPacket.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string armored = armorEncode("PGP PUBLIC KEY BLOCK", revocationSigPacket);
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armored.size()))
+        {
+            *outputBufferSize = static_cast<int>(armored.size());
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, armored.data(), armored.size());
+        *outputBufferSize = static_cast<int>(armored.size());
         return NO_ERROR;
     }
     catch (...)

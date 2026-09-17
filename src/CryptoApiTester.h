@@ -424,6 +424,20 @@ public:
     // own correctness -- the other 4 directions already exercise the same sign/verify code path.
     int RunPgpGnuPgInteropTest(void);
 
+    // Internal-only (no GnuPG needed) round-trip of CPgpEngine's expiration API: generates one
+    // identity with the 4-argument GenerateKeyPair (must report GetKeyExpirationSeconds()==0)
+    // and another with the 5-argument overload's expirationSeconds set to a non-zero value (must
+    // echo that exact value back).
+    int RunPgpKeyExpirationTest(void);
+
+    // Cross-checks GenerateKeyPair's expiration overload and RevokeKeyArmored against real
+    // GnuPG -- SKIPPED (not FAILED) when gpg.exe isn't found, same convention as
+    // RunPgpGnuPgInteropTest. Generates an identity with a 30-day expiration, imports it, and
+    // confirms via "gpg --with-colons --list-keys" that the parsed expiry field is non-empty;
+    // then produces a revocation certificate (RevokeKeyArmored), imports it into the same
+    // keyring, and confirms the key's validity field flips to 'r' (revoked).
+    int RunPgpGnuPgRevocationInteropTest(void);
+
 protected:
 
 private:

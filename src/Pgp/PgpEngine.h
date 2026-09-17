@@ -31,6 +31,19 @@ public:
     int GenerateKeyPair( const char* userId, const int userIdSize,
                         const char* password, const int passwordSize);
 
+    // Same as the 4-argument overload above, plus a Key Expiration Time subpacket (RFC 4880
+    // 5.2.3.6, type 9) on both the self-certification and subkey-binding signatures:
+    // expirationSeconds is how many seconds after this call's creation timestamp the key expires;
+    // 0 means never expires (identical behavior to the 4-argument overload, which delegates here
+    // with 0).
+    int GenerateKeyPair( const char* userId, const int userIdSize,
+                        const char* password, const int passwordSize,
+                        const unsigned int expirationSeconds);
+
+    // What GenerateKeyPair's expirationSeconds argument was last called with (0 if never called,
+    // or if the 4-argument overload -- which always means "never expires" -- was used).
+    unsigned int GetKeyExpirationSeconds(void) const;
+
     // Exact ASCII-armored size ExportPublicKeyArmored/ExportSecretKeyArmored would need; 0 before
     // GenerateKeyPair() succeeds. capacity=0/buffer=nullptr queries the required size (see
     // BUFFER_TOO_SMALL convention on the methods below).
@@ -48,6 +61,20 @@ public:
     // Hex Key ID (8 bytes / 16 hex chars + null terminator) of this instance's own master key;
     // empty string before GenerateKeyPair() succeeds. outputBufferCapacity must be >= 17.
     int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const;
+
+    // GenerateKeyPair() must have succeeded first; password must match the one it was called
+    // with. Produces a standalone RFC 4880 key revocation certificate (signature type 0x20),
+    // armored under "-----BEGIN PGP PUBLIC KEY BLOCK-----" (the same label a real public key
+    // block uses -- this is standard OpenPGP/GnuPG convention for revocation certificates, since
+    // importing one into a keyring is exactly how it gets applied). Importing the result into a
+    // keyring that already holds this identity's public key marks that key as revoked; it does
+    // NOT delete or invalidate this CPgpEngine instance's own in-memory key, which remains fully
+    // usable for Sign/Encrypt/Decrypt calls after this returns. reasonCode: 0 = no reason
+    // specified, 1 = key superseded, 2 = key compromised, 3 = key retired (RFC 4880 5.2.3.23);
+    // reasonText may be nullptr/0-length for no human-readable reason.
+    int RevokeKeyArmored( const char* password, const int passwordSize,
+                         const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
+                         const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
 
     // ============================================================================================
     // Peer key (the other party's public key) -- unlike GenerateKeyPair() above, this instance

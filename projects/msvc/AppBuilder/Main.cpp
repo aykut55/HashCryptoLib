@@ -239,6 +239,10 @@ int main()
     cryptoApiTester.RunPgpFileSignVerifyTest();
 
     cryptoApiTester.RunPgpGnuPgInteropTest();
+
+    cryptoApiTester.RunPgpKeyExpirationTest();
+
+    cryptoApiTester.RunPgpGnuPgRevocationInteropTest();
 #endif
 
     return 0;
