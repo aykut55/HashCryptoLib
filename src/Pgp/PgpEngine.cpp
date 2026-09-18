@@ -19,11 +19,13 @@
 #include "cryptopp890/osrng.h"
 #include "cryptopp890/rsa.h"
 #include "cryptopp890/sha.h"
+#include "cryptopp890/xed25519.h"
 #include "cryptopp890/zdeflate.h"
 #include "cryptopp890/zinflate.h"
 #include "cryptopp890/zlib.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -50,16 +52,50 @@ namespace
     const unsigned char PGP_TAG_SEIP            = 18;
 }
 
+// One encryption-only recipient (RFC 4880 Public-Key Encrypted Session Key, tag 1) -- either an
+// RSA key or an Ed25519/X25519 identity's X25519 encryption subkey, each recipient's own algorithm
+// detected independently at import time (see parsePublicKeyBlock below). Used both for the primary
+// peer's encryption subkey (impl_->peerSubkeyAlgorithm/peerSubkeyPublicKey/peerX25519PublicKey/
+// peerSubkeyKeyId/peerSubkeyFingerprint fields below, kept as separate Impl members for backward
+// compatibility with the pre-multi-recipient single-peer field layout) and for every
+// ImportAdditionalRecipientPublicKey() addition (impl_->additionalRecipients below).
+struct PgpEncryptionRecipient
+{
+    PgpKeyAlgorithm algorithm;
+    CryptoPP::RSA::PublicKey rsaPublicKey;
+    unsigned char rsaKeyId[8];
+    unsigned char x25519PublicKey[32];
+    unsigned char x25519KeyId[8];
+    unsigned char x25519Fingerprint[20]; // needed as-is by the ECDH KDF's "param" (RFC 6637 section 7).
+
+    PgpEncryptionRecipient() : algorithm(PGP_KEY_ALGORITHM_RSA)
+    {
+        std::memset(rsaKeyId, 0, 8);
+        std::memset(x25519PublicKey, 0, 32);
+        std::memset(x25519KeyId, 0, 8);
+        std::memset(x25519Fingerprint, 0, 20);
+    }
+};
+
 struct CPgpEngine::Impl
 {
+    PgpKeyAlgorithm keyAlgorithm; // this instance's OWN identity algorithm; fixed at construction.
     int rsaKeyBits;
     bool ownKeyGenerated;
+
+    // Own key material -- only the fields matching keyAlgorithm are ever populated/used.
     CryptoPP::RSA::PrivateKey ownMasterPrivateKey;
     CryptoPP::RSA::PublicKey  ownMasterPublicKey;
     CryptoPP::RSA::PrivateKey ownSubkeyPrivateKey;
     CryptoPP::RSA::PublicKey  ownSubkeyPublicKey;
+    unsigned char ownEd25519PrivateKey[32];
+    unsigned char ownEd25519PublicKey[32];
+    unsigned char ownX25519PrivateKey[32];
+    unsigned char ownX25519PublicKey[32];
+
     unsigned char ownMasterKeyId[8];
     unsigned char ownSubkeyKeyId[8];
+    unsigned char ownSubkeyFingerprint[20]; // needed by the ECDH KDF when decrypting a PKESK addressed to our own X25519 encryption subkey.
     unsigned char passwordCheckHash[32];
     std::string ownPublicKeyArmored;
     std::string ownSecretKeyArmored;
@@ -67,18 +103,35 @@ struct CPgpEngine::Impl
     std::uint32_t keyExpirationSeconds; // 0 = never expires; otherwise seconds after keyCreationTime, as set by GenerateKeyPair's expiration overload.
 
     bool peerKeyImported;
+    PgpKeyAlgorithm peerMasterAlgorithm; // algorithm of the imported peer's MASTER (verify) key.
+    PgpKeyAlgorithm peerSubkeyAlgorithm; // algorithm of the imported peer's ENCRYPTION SUBKEY -- independent of peerMasterAlgorithm in principle, though every identity this engine or GnuPG's own "ed25519" default produces keeps both in the same family.
     CryptoPP::RSA::PublicKey peerMasterPublicKey;
     CryptoPP::RSA::PublicKey peerSubkeyPublicKey;
+    unsigned char peerEd25519PublicKey[32];
+    unsigned char peerX25519PublicKey[32];
     unsigned char peerMasterKeyId[8];
     unsigned char peerSubkeyKeyId[8];
+    unsigned char peerSubkeyFingerprint[20]; // needed by the ECDH KDF when peerSubkeyAlgorithm==ED25519_X25519.
 
-    Impl() : rsaKeyBits(2048), ownKeyGenerated(false), keyCreationTime(0), keyExpirationSeconds(0), peerKeyImported(false)
+    // ImportAdditionalRecipientPublicKey() additions -- encryption-only, never used for verify.
+    std::vector<PgpEncryptionRecipient> additionalRecipients;
+
+    Impl() : keyAlgorithm(PGP_KEY_ALGORITHM_RSA), rsaKeyBits(2048), ownKeyGenerated(false), keyCreationTime(0), keyExpirationSeconds(0),
+             peerKeyImported(false), peerMasterAlgorithm(PGP_KEY_ALGORITHM_RSA), peerSubkeyAlgorithm(PGP_KEY_ALGORITHM_RSA)
     {
+        std::memset(ownEd25519PrivateKey, 0, 32);
+        std::memset(ownEd25519PublicKey, 0, 32);
+        std::memset(ownX25519PrivateKey, 0, 32);
+        std::memset(ownX25519PublicKey, 0, 32);
         std::memset(ownMasterKeyId, 0, 8);
         std::memset(ownSubkeyKeyId, 0, 8);
+        std::memset(ownSubkeyFingerprint, 0, 20);
         std::memset(passwordCheckHash, 0, 32);
+        std::memset(peerEd25519PublicKey, 0, 32);
+        std::memset(peerX25519PublicKey, 0, 32);
         std::memset(peerMasterKeyId, 0, 8);
         std::memset(peerSubkeyKeyId, 0, 8);
+        std::memset(peerSubkeyFingerprint, 0, 20);
     }
 };
 
@@ -752,6 +805,332 @@ bool parseRsaPublicKeyPacketBody(const std::vector<unsigned char>& body, CryptoP
 }
 // -----------------------------------------------------------------------------
 
+// ================================================================================================
+// RFC 4880bis / crypto-refresh EdDSA Legacy (algorithm 22, Ed25519) and ECDH (algorithm 18, here
+// only used with Curve25519/X25519) public key packet bodies -- byte layout confirmed by
+// generating a real Ed25519+Cv25519 identity with a local GnuPG 2.5.21 install and inspecting its
+// exported packets directly (gpg --list-packets / hex dump), not from the spec text alone,
+// since GnuPG is this engine's actual interop target. Both curve OIDs below are DER content
+// octets only (no universal tag 0x06, no separate outer length -- the packet format's own 1-byte
+// "OID length" field IS the length prefix): Ed25519 = 1.3.6.1.4.1.11591.15.1 (9 octets), Curve25519
+// = 1.3.6.1.4.1.3029.1.5.1 (10 octets). The EC point itself is stored "native" -- CryptoPP's
+// ed25519/x25519 raw 32-byte byte arrays copied verbatim, no endianness conversion -- prefixed
+// with 0x40 and then MPI-encoded by treating the resulting 33-byte blob as one big-endian integer
+// for bit-counting purposes only (this is the same quirk real implementations use: the blob is
+// semantically a little-endian-encoded point, but the MPI wrapper around it is computed as if it
+// were plain big-endian bytes). Secret scalars (in buildEd25519SecretKeyCleartext/
+// buildX25519SecretKeyCleartext below) use the same native-bytes-as-MPI convention but WITHOUT the
+// 0x40 prefix (only public POINTS get that prefix, per RFC 4880bis 5.6.5/5.6.6).
+// ================================================================================================
+
+const unsigned char PGP_ED25519_OID[9] = { 0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01 };
+const unsigned char PGP_X25519_OID[10] = { 0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01 };
+const unsigned char PGP_ALGO_RSA      = 1;
+const unsigned char PGP_ALGO_EDDSA    = 22;
+const unsigned char PGP_ALGO_ECDH     = 18;
+
+std::vector<unsigned char> encodeNativePointMpi(const unsigned char point[32])
+{
+    unsigned char blob[33];
+    blob[0] = 0x40;
+    std::memcpy(blob + 1, point, 32);
+    const CryptoPP::Integer blobInt(blob, 33);
+    return encodeMpi(blobInt);
+}
+// -----------------------------------------------------------------------------
+
+bool readNativePointMpi(const std::vector<unsigned char>& body, std::size_t& pos, unsigned char pointOut[32])
+{
+    try
+    {
+        if (pos + 2 > body.size())
+        {
+            return false;
+        }
+        const std::size_t bitLength = readBigEndian16(body, pos);
+        pos += 2;
+        const std::size_t byteLength = (bitLength + 7) / 8;
+        if (byteLength != 33 || pos + byteLength > body.size() || body[pos] != 0x40)
+        {
+            return false;
+        }
+        std::memcpy(pointOut, &body[pos + 1], 32);
+        pos += byteLength;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::vector<unsigned char> buildEd25519PublicKeyPacketBody(const std::uint32_t creationTime, const unsigned char publicKey[32])
+{
+    std::vector<unsigned char> body;
+    body.push_back(4);
+    appendBigEndian32(body, creationTime);
+    body.push_back(PGP_ALGO_EDDSA);
+    body.push_back(static_cast<unsigned char>(sizeof(PGP_ED25519_OID)));
+    appendAll(body, std::vector<unsigned char>(PGP_ED25519_OID, PGP_ED25519_OID + sizeof(PGP_ED25519_OID)));
+    appendAll(body, encodeNativePointMpi(publicKey));
+    return body;
+}
+// -----------------------------------------------------------------------------
+
+// KDF parameters (RFC 6637 section 8): 1-octet size of the following fields, then reserved(1)=1,
+// KDF hash algorithm, and the symmetric key-wrap algorithm -- SHA-256 (8) / AES-128 (7) below match
+// real GnuPG's own default pairing for Curve25519 (confirmed by inspecting a real exported cv25519
+// subkey), so computeEcdhKek/aesKeyWrap below hardcode the same pairing rather than negotiating.
+std::vector<unsigned char> buildX25519PublicKeyPacketBody(const std::uint32_t creationTime, const unsigned char publicKey[32])
+{
+    std::vector<unsigned char> body;
+    body.push_back(4);
+    appendBigEndian32(body, creationTime);
+    body.push_back(PGP_ALGO_ECDH);
+    body.push_back(static_cast<unsigned char>(sizeof(PGP_X25519_OID)));
+    appendAll(body, std::vector<unsigned char>(PGP_X25519_OID, PGP_X25519_OID + sizeof(PGP_X25519_OID)));
+    appendAll(body, encodeNativePointMpi(publicKey));
+    body.push_back(3);
+    body.push_back(1);
+    body.push_back(8);
+    body.push_back(7);
+    return body;
+}
+// -----------------------------------------------------------------------------
+
+bool parseEd25519PublicKeyPacketBody(const std::vector<unsigned char>& body, unsigned char publicKeyOut[32], unsigned char keyIdOut[8])
+{
+    try
+    {
+        if (body.size() < 7 || body[0] != 4 || body[5] != PGP_ALGO_EDDSA)
+        {
+            return false;
+        }
+        if (body[6] != sizeof(PGP_ED25519_OID) || body.size() < 7 + sizeof(PGP_ED25519_OID) ||
+            std::memcmp(&body[7], PGP_ED25519_OID, sizeof(PGP_ED25519_OID)) != 0)
+        {
+            return false;
+        }
+        std::size_t pos = 7 + sizeof(PGP_ED25519_OID);
+        if (!readNativePointMpi(body, pos, publicKeyOut))
+        {
+            return false;
+        }
+        unsigned char fingerprint[20];
+        computeFingerprintAndKeyId(body, fingerprint, keyIdOut);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool parseX25519PublicKeyPacketBody(const std::vector<unsigned char>& body, unsigned char publicKeyOut[32], unsigned char keyIdOut[8], unsigned char fingerprintOut[20])
+{
+    try
+    {
+        if (body.size() < 7 || body[0] != 4 || body[5] != PGP_ALGO_ECDH)
+        {
+            return false;
+        }
+        if (body[6] != sizeof(PGP_X25519_OID) || body.size() < 7 + sizeof(PGP_X25519_OID) ||
+            std::memcmp(&body[7], PGP_X25519_OID, sizeof(PGP_X25519_OID)) != 0)
+        {
+            return false;
+        }
+        std::size_t pos = 7 + sizeof(PGP_X25519_OID);
+        if (!readNativePointMpi(body, pos, publicKeyOut))
+        {
+            return false;
+        }
+        // KDF params field (length-prefixed, 4 bytes total for the SHA-256/AES-128 pairing this
+        // engine always writes/expects) intentionally not validated here -- see this section's own
+        // top comment: this engine hardcodes SHA-256/AES-128 for every X25519 peer regardless of
+        // what its own KDF params advertise, matching the overwhelming real-world convention.
+        computeFingerprintAndKeyId(body, fingerprintOut, keyIdOut);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::vector<unsigned char> buildEd25519SecretKeyCleartext(const unsigned char privateKey[32])
+{
+    const CryptoPP::Integer scalarInt(privateKey, 32);
+    return encodeMpi(scalarInt);
+}
+// -----------------------------------------------------------------------------
+
+std::vector<unsigned char> buildX25519SecretKeyCleartext(const unsigned char privateKey[32])
+{
+    const CryptoPP::Integer scalarInt(privateKey, 32);
+    return encodeMpi(scalarInt);
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
+// RFC 3394 AES Key Wrap -- used only by the ECDH (X25519) PKESK path to wrap the AES session key
+// under the ECDH-derived KEK (RFC 6637 section 8). This CryptoPP version (8.9) ships no ready-made
+// key-wrap primitive, so it is hand-implemented directly against the RFC's own pseudocode using
+// CryptoPP::AES's raw single-block interface.
+// ================================================================================================
+
+std::vector<unsigned char> aesKeyWrap(const unsigned char* kek, const std::size_t kekLength, const std::vector<unsigned char>& plaintext)
+{
+    try
+    {
+        if (plaintext.empty() || plaintext.size() % 8 != 0)
+        {
+            return std::vector<unsigned char>();
+        }
+        const std::size_t n = plaintext.size() / 8;
+
+        CryptoPP::AES::Encryption aes;
+        aes.SetKey(kek, kekLength);
+
+        unsigned char a[8] = { 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6 };
+        std::vector<unsigned char> r(plaintext);
+
+        for (unsigned int j = 0; j <= 5; ++j)
+        {
+            for (std::size_t i = 1; i <= n; ++i)
+            {
+                unsigned char block[16];
+                std::memcpy(block, a, 8);
+                std::memcpy(block + 8, &r[(i - 1) * 8], 8);
+                unsigned char encrypted[16];
+                aes.ProcessBlock(block, encrypted);
+                std::memcpy(a, encrypted, 8);
+                const std::uint64_t t = static_cast<std::uint64_t>(n) * static_cast<std::uint64_t>(j) + static_cast<std::uint64_t>(i);
+                for (int b = 0; b < 8; ++b)
+                {
+                    a[7 - b] = static_cast<unsigned char>(a[7 - b] ^ static_cast<unsigned char>((t >> (8 * b)) & 0xFF));
+                }
+                std::memcpy(&r[(i - 1) * 8], encrypted + 8, 8);
+            }
+        }
+
+        std::vector<unsigned char> out(8 + plaintext.size());
+        std::memcpy(&out[0], a, 8);
+        std::memcpy(&out[8], r.data(), r.size());
+        return out;
+    }
+    catch (...)
+    {
+        return std::vector<unsigned char>();
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool aesKeyUnwrap(const unsigned char* kek, const std::size_t kekLength, const std::vector<unsigned char>& ciphertext, std::vector<unsigned char>& outPlaintext)
+{
+    try
+    {
+        if (ciphertext.size() < 16 || ciphertext.size() % 8 != 0)
+        {
+            return false;
+        }
+        const std::size_t n = (ciphertext.size() / 8) - 1;
+
+        CryptoPP::AES::Decryption aes;
+        aes.SetKey(kek, kekLength);
+
+        unsigned char a[8];
+        std::memcpy(a, &ciphertext[0], 8);
+        std::vector<unsigned char> r(ciphertext.begin() + 8, ciphertext.end());
+
+        for (int j = 5; j >= 0; --j)
+        {
+            for (std::size_t i = n; i >= 1; --i)
+            {
+                const std::uint64_t t = static_cast<std::uint64_t>(n) * static_cast<std::uint64_t>(j) + static_cast<std::uint64_t>(i);
+                unsigned char aXor[8];
+                std::memcpy(aXor, a, 8);
+                for (int b = 0; b < 8; ++b)
+                {
+                    aXor[7 - b] = static_cast<unsigned char>(aXor[7 - b] ^ static_cast<unsigned char>((t >> (8 * b)) & 0xFF));
+                }
+                unsigned char block[16];
+                std::memcpy(block, aXor, 8);
+                std::memcpy(block + 8, &r[(i - 1) * 8], 8);
+                unsigned char decrypted[16];
+                aes.ProcessBlock(block, decrypted);
+                std::memcpy(a, decrypted, 8);
+                std::memcpy(&r[(i - 1) * 8], decrypted + 8, 8);
+            }
+        }
+
+        static const unsigned char expectedIv[8] = { 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6 };
+        if (std::memcmp(a, expectedIv, 8) != 0)
+        {
+            return false;
+        }
+        outPlaintext = r;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// RFC 6637 section 7 KDF: Z = leading kekLength octets of HASH(00000001 || sharedSecret || param).
+// sharedSecret is the raw, native-byte-order X25519 shared secret (RFC 7748 output, exactly as
+// CryptoPP::x25519::Agree produces it) -- Curve25519 is a documented special case in the crypto-
+// refresh draft where this raw fixed-size octet string is used directly as the KDF's "X(S)" input,
+// unlike classical Weierstrass curves (P-256 etc.) where X(S) is instead the shared point's
+// x-coordinate MPI-stripped of its length prefix. Verified empirically below via a real round-trip
+// against GnuPG (see RunPgpGnuPgX25519InteropTest), not from spec text alone.
+std::vector<unsigned char> computeEcdhKek(const unsigned char sharedSecret[32], const std::vector<unsigned char>& param, const std::size_t kekLength)
+{
+    try
+    {
+        std::vector<unsigned char> hashInput;
+        appendBigEndian32(hashInput, 1);
+        hashInput.insert(hashInput.end(), sharedSecret, sharedSecret + 32);
+        appendAll(hashInput, param);
+        unsigned char digest[32];
+        CryptoPP::SHA256().CalculateDigest(digest, hashInput.data(), hashInput.size());
+        return std::vector<unsigned char>(digest, digest + kekLength);
+    }
+    catch (...)
+    {
+        return std::vector<unsigned char>();
+    }
+}
+// -----------------------------------------------------------------------------
+
+// RFC 6637 section 7 "param": curve OID (length-prefixed) || public key algorithm ID (18) || the
+// same 4-byte KDF-params field written into the key (03 01 08 07, see buildX25519PublicKeyPacketBody)
+// || the fixed 20-octet ASCII string "Anonymous Sender    " || the recipient encryption subkey's
+// own 20-byte v4 fingerprint.
+std::vector<unsigned char> buildEcdhKdfParam(const unsigned char recipientSubkeyFingerprint[20])
+{
+    std::vector<unsigned char> param;
+    param.push_back(static_cast<unsigned char>(sizeof(PGP_X25519_OID)));
+    appendAll(param, std::vector<unsigned char>(PGP_X25519_OID, PGP_X25519_OID + sizeof(PGP_X25519_OID)));
+    param.push_back(PGP_ALGO_ECDH);
+    param.push_back(3);
+    param.push_back(1);
+    param.push_back(8);
+    param.push_back(7);
+    static const unsigned char anonymousSender[20] =
+    {
+        'A', 'n', 'o', 'n', 'y', 'm', 'o', 'u', 's', ' ', 'S', 'e', 'n', 'd', 'e', 'r', ' ', ' ', ' ', ' '
+    };
+    param.insert(param.end(), anonymousSender, anonymousSender + 20);
+    param.insert(param.end(), recipientSubkeyFingerprint, recipientSubkeyFingerprint + 20);
+    return param;
+}
+// -----------------------------------------------------------------------------
+
 std::vector<unsigned char> buildKeyFlagsSubpacket(const unsigned char flags)
 {
     std::vector<unsigned char> sub;
@@ -827,17 +1206,26 @@ std::vector<unsigned char> deriveS2kKey(const char* password, const int password
 }
 // -----------------------------------------------------------------------------
 
-std::vector<unsigned char> buildSecretKeyPacketBody(const std::vector<unsigned char>& publicKeyPacketBody, const CryptoPP::RSA::PrivateKey& privateKey, const char* password, const int passwordSize)
+std::vector<unsigned char> buildRsaSecretKeyCleartext(const CryptoPP::RSA::PrivateKey& privateKey)
+{
+    std::vector<unsigned char> cleartext;
+    appendAll(cleartext, encodeMpi(privateKey.GetPrivateExponent()));
+    appendAll(cleartext, encodeMpi(privateKey.GetPrime1()));
+    appendAll(cleartext, encodeMpi(privateKey.GetPrime2()));
+    appendAll(cleartext, encodeMpi(privateKey.GetMultiplicativeInverseOfPrime2ModPrime1()));
+    return cleartext;
+}
+// -----------------------------------------------------------------------------
+
+// Iterated+Salted, SHA-1-checksummed (usage octet 254) secret-key protection envelope (RFC 4880
+// 5.5.3) -- algorithm-agnostic: cleartext is the already-built concatenation of the secret key's
+// own MPI(s) (RSA's 4 MPIs d/p/q/u, or a single raw-scalar MPI for Ed25519/X25519, see
+// buildRsaSecretKeyCleartext/buildEd25519SecretKeyCleartext/buildX25519SecretKeyCleartext above).
+std::vector<unsigned char> encryptSecretKeyMaterial(const std::vector<unsigned char>& publicKeyPacketBody, const std::vector<unsigned char>& cleartext, const char* password, const int passwordSize)
 {
     try
     {
         CryptoPP::AutoSeededRandomPool rng;
-
-        std::vector<unsigned char> cleartext;
-        appendAll(cleartext, encodeMpi(privateKey.GetPrivateExponent()));
-        appendAll(cleartext, encodeMpi(privateKey.GetPrime1()));
-        appendAll(cleartext, encodeMpi(privateKey.GetPrime2()));
-        appendAll(cleartext, encodeMpi(privateKey.GetMultiplicativeInverseOfPrime2ModPrime1()));
 
         unsigned char sha1Check[20];
         CryptoPP::SHA1().CalculateDigest(sha1Check, cleartext.data(), cleartext.size());
@@ -966,15 +1354,23 @@ std::vector<unsigned char> buildSignaturePacket(const CryptoPP::RSA::PrivateKey&
 }
 // -----------------------------------------------------------------------------
 
+// pkAlgorithm/hashAlgorithm are no longer hardcoded to RSA/SHA-256 here -- this parser accepts
+// both this engine's two supported combinations (RSA+SHA-256, algorithm octet 1/hash octet 8; or
+// EdDSA+SHA-512, algorithm octet 22/hash octet 10, matching real GnuPG's own Ed25519 signatures)
+// and leaves the algorithm-specific interpretation of the trailing MPI(s) to the caller:
+// signatureMpiValue is RSA's single signature-integer MPI OR EdDSA's "r" MPI; signatureMpiValue2
+// is only populated (and only meaningful) for EdDSA, holding its second "s" MPI.
 struct ParsedSignature
 {
     bool valid;
+    unsigned char pkAlgorithm;
     unsigned char signatureType;
     unsigned char hashAlgorithm;
     std::vector<unsigned char> hashedSubpackets;
     std::vector<unsigned char> signatureMpiValue;
+    std::vector<unsigned char> signatureMpiValue2;
 
-    ParsedSignature() : valid(false), signatureType(0), hashAlgorithm(0) {}
+    ParsedSignature() : valid(false), pkAlgorithm(0), signatureType(0), hashAlgorithm(0) {}
 };
 // -----------------------------------------------------------------------------
 
@@ -989,13 +1385,13 @@ ParsedSignature parseSignaturePacketBody(const std::vector<unsigned char>& body)
         }
         std::size_t pos = 1;
         result.signatureType = body[pos]; pos += 1;
-        const unsigned char pkAlgo = body[pos]; pos += 1;
-        if (pkAlgo != 1)
+        result.pkAlgorithm = body[pos]; pos += 1;
+        if (result.pkAlgorithm != PGP_ALGO_RSA && result.pkAlgorithm != PGP_ALGO_EDDSA)
         {
             return result;
         }
         result.hashAlgorithm = body[pos]; pos += 1;
-        if (result.hashAlgorithm != 8)
+        if (result.hashAlgorithm != 8 && result.hashAlgorithm != 10)
         {
             return result;
         }
@@ -1043,6 +1439,23 @@ ParsedSignature parseSignaturePacketBody(const std::vector<unsigned char>& body)
             return result;
         }
         result.signatureMpiValue.assign(body.begin() + pos, body.begin() + pos + sigByteLength);
+        pos += sigByteLength;
+
+        if (result.pkAlgorithm == PGP_ALGO_EDDSA)
+        {
+            if (pos + 2 > body.size())
+            {
+                return result;
+            }
+            const std::size_t sigBitLength2 = readBigEndian16(body, pos);
+            pos += 2;
+            const std::size_t sigByteLength2 = (sigBitLength2 + 7) / 8;
+            if (pos + sigByteLength2 > body.size())
+            {
+                return result;
+            }
+            result.signatureMpiValue2.assign(body.begin() + pos, body.begin() + pos + sigByteLength2);
+        }
 
         result.valid = true;
         return result;
@@ -1076,7 +1489,7 @@ bool verifySignaturePacket(const CryptoPP::RSA::PublicKey& verifyingKey, const s
 
         const std::vector<unsigned char> body(signaturePacketBytes.begin() + pos, signaturePacketBytes.begin() + pos + bodyLength);
         const ParsedSignature parsed = parseSignaturePacketBody(body);
-        if (!parsed.valid)
+        if (!parsed.valid || parsed.pkAlgorithm != PGP_ALGO_RSA || parsed.hashAlgorithm != 8)
         {
             return false;
         }
@@ -1102,6 +1515,156 @@ bool verifySignaturePacket(const CryptoPP::RSA::PublicKey& verifyingKey, const s
 
         CryptoPP::RSASS<CryptoPP::PKCS1v15, CryptoPP::SHA256>::Verifier verifier(verifyingKey);
         *isValid = verifier.VerifyMessage(toBeHashed.data(), toBeHashed.size(), fixedSignature.data(), fixedSignature.size());
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
+// Ed25519 (EdDSA Legacy, algorithm 22) signature packets -- same v4 signature framing as
+// buildSignaturePacket/verifySignaturePacket above, but SHA-512 (hash octet 10, per crypto-refresh's
+// mandatory EdDSA/SHA-512 pairing and confirmed against a real GnuPG-produced Ed25519 self-
+// signature) instead of SHA-256, and two MPIs (r, s -- CryptoPP's ed25519 64-byte raw r||s
+// signature output, split in half, each half copied verbatim into a big-endian MPI with no
+// endianness conversion, same native-bytes-as-MPI convention as the public key point) instead of
+// RSA's single signature-integer MPI.
+// ================================================================================================
+
+std::vector<unsigned char> buildEd25519SignaturePacket(const unsigned char privateKey[32], const unsigned char signatureType, const std::vector<unsigned char>& documentData, const std::vector<unsigned char>& extraHashedSubpacket, const unsigned char issuerKeyId[8])
+{
+    try
+    {
+        const std::uint32_t now = static_cast<std::uint32_t>(std::time(nullptr));
+
+        std::vector<unsigned char> hashedSubpackets;
+        {
+            std::vector<unsigned char> timeBody;
+            appendBigEndian32(timeBody, now);
+            appendSubpacket(hashedSubpackets, 2, timeBody);
+        }
+        appendAll(hashedSubpackets, extraHashedSubpacket);
+
+        std::vector<unsigned char> unhashedSubpackets;
+        {
+            std::vector<unsigned char> issuerBody(issuerKeyId, issuerKeyId + 8);
+            appendSubpacket(unhashedSubpackets, 16, issuerBody);
+        }
+
+        std::vector<unsigned char> toBeHashed;
+        appendAll(toBeHashed, documentData);
+        toBeHashed.push_back(4);
+        toBeHashed.push_back(signatureType);
+        toBeHashed.push_back(PGP_ALGO_EDDSA);
+        toBeHashed.push_back(10);
+        appendBigEndian16(toBeHashed, static_cast<std::uint16_t>(hashedSubpackets.size()));
+        appendAll(toBeHashed, hashedSubpackets);
+
+        const std::size_t hashedPortionLength = 6 + hashedSubpackets.size();
+        toBeHashed.push_back(4);
+        toBeHashed.push_back(0xFF);
+        appendBigEndian32(toBeHashed, static_cast<std::uint32_t>(hashedPortionLength));
+
+        // OpenPGP's v4 EdDSA convention (confirmed empirically against a real GnuPG-produced
+        // self-signature -- see this file's own commit history/notes) is NOT RFC 8032 PureEdDSA
+        // over the raw trailer bytes: it hashes the trailer with the declared hash algorithm
+        // (SHA-512 here) FIRST, then runs the Ed25519 core signing primitive over that 64-byte
+        // digest as if it were an ordinary fixed-size message -- i.e. the same "hash algorithm
+        // octet selects what actually gets hashed, then the PK primitive signs the digest"
+        // pattern RSA/DSA/ECDSA use, just reusing Ed25519's own signing procedure as the raw PK
+        // primitive rather than a padding scheme. A naive RFC 8032 PureEdDSA call directly over
+        // toBeHashed (letting Ed25519 do its own internal hashing) produces a signature real
+        // GnuPG rejects as "bad signature" even though it verifies fine against this engine's own
+        // (self-consistently wrong) verifier -- this was caught only by real-GnuPG interop
+        // testing, not by this engine's own round-trip tests.
+        unsigned char leftHash[64];
+        CryptoPP::SHA512().CalculateDigest(leftHash, toBeHashed.data(), toBeHashed.size());
+
+        CryptoPP::ed25519Signer signer(privateKey);
+        unsigned char rawSignature[64];
+        signer.SignMessage(CryptoPP::NullRNG(), leftHash, 64, rawSignature);
+
+        const CryptoPP::Integer rInt(rawSignature, 32);
+        const CryptoPP::Integer sInt(rawSignature + 32, 32);
+
+        std::vector<unsigned char> body;
+        body.push_back(4);
+        body.push_back(signatureType);
+        body.push_back(PGP_ALGO_EDDSA);
+        body.push_back(10);
+        appendBigEndian16(body, static_cast<std::uint16_t>(hashedSubpackets.size()));
+        appendAll(body, hashedSubpackets);
+        appendBigEndian16(body, static_cast<std::uint16_t>(unhashedSubpackets.size()));
+        appendAll(body, unhashedSubpackets);
+        body.push_back(leftHash[0]);
+        body.push_back(leftHash[1]);
+        appendAll(body, encodeMpi(rInt));
+        appendAll(body, encodeMpi(sInt));
+
+        return writePacket(PGP_TAG_SIGNATURE, body);
+    }
+    catch (...)
+    {
+        return std::vector<unsigned char>();
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Same NO_ERROR/*isValid convention as verifySignaturePacket above.
+bool verifyEd25519SignaturePacket(const unsigned char publicKey[32], const std::vector<unsigned char>& documentData, const std::vector<unsigned char>& signaturePacketBytes, bool* isValid)
+{
+    try
+    {
+        std::size_t pos = 0;
+        unsigned char tag = 0;
+        std::size_t bodyLength = 0;
+        if (!readPacketHeader(signaturePacketBytes, pos, tag, bodyLength) || tag != PGP_TAG_SIGNATURE)
+        {
+            return false;
+        }
+        if (pos + bodyLength > signaturePacketBytes.size())
+        {
+            return false;
+        }
+
+        const std::vector<unsigned char> body(signaturePacketBytes.begin() + pos, signaturePacketBytes.begin() + pos + bodyLength);
+        const ParsedSignature parsed = parseSignaturePacketBody(body);
+        if (!parsed.valid || parsed.pkAlgorithm != PGP_ALGO_EDDSA || parsed.hashAlgorithm != 10)
+        {
+            return false;
+        }
+
+        std::vector<unsigned char> toBeHashed;
+        appendAll(toBeHashed, documentData);
+        toBeHashed.push_back(4);
+        toBeHashed.push_back(parsed.signatureType);
+        toBeHashed.push_back(PGP_ALGO_EDDSA);
+        toBeHashed.push_back(10);
+        appendBigEndian16(toBeHashed, static_cast<std::uint16_t>(parsed.hashedSubpackets.size()));
+        appendAll(toBeHashed, parsed.hashedSubpackets);
+
+        const std::size_t hashedPortionLength = 6 + parsed.hashedSubpackets.size();
+        toBeHashed.push_back(4);
+        toBeHashed.push_back(0xFF);
+        appendBigEndian32(toBeHashed, static_cast<std::uint32_t>(hashedPortionLength));
+
+        unsigned char rawSignature[64];
+        std::memset(rawSignature, 0, 64);
+        const CryptoPP::Integer rInt(parsed.signatureMpiValue.data(), parsed.signatureMpiValue.size());
+        const CryptoPP::Integer sInt(parsed.signatureMpiValue2.data(), parsed.signatureMpiValue2.size());
+        rInt.Encode(rawSignature, 32);
+        sInt.Encode(rawSignature + 32, 32);
+
+        // See buildEd25519SignaturePacket's own comment -- OpenPGP EdDSA verifies the SHA-512
+        // digest of toBeHashed through Ed25519's core primitive, not toBeHashed itself.
+        unsigned char digest[64];
+        CryptoPP::SHA512().CalculateDigest(digest, toBeHashed.data(), toBeHashed.size());
+
+        CryptoPP::ed25519Verifier verifier(publicKey);
+        *isValid = verifier.VerifyMessage(digest, 64, rawSignature, 64);
         return true;
     }
     catch (...)
@@ -1164,10 +1727,108 @@ std::vector<std::string> splitAndCanonicalizeLines(const std::string& text)
 // Data, Sym. Encrypted Integrity Protected Data (AES-256-CFB, zero IV, SHA-1 MDC).
 // ================================================================================================
 
-bool buildEncryptedMessage(const CryptoPP::RSA::PublicKey& recipientKey, const unsigned char recipientKeyId[8], const unsigned char* plaintext, const std::size_t plaintextSize, std::vector<unsigned char>& out)
+// Builds a single PKESK packet (header+body) for one recipient, RSA-PKCS#1v1.5 or ECDH per
+// recipient.algorithm -- shared by buildEncryptedMessageMultiRecipient below and (for the RSA case
+// only) encryptFileStreaming further down.
+std::vector<unsigned char> buildPkeskPacketForRecipient(const PgpEncryptionRecipient& recipient, const unsigned char* sessionKey, const std::size_t sessionKeyLength)
 {
     try
     {
+        CryptoPP::AutoSeededRandomPool rng;
+
+        std::vector<unsigned char> sessionKeyPlain;
+        sessionKeyPlain.push_back(9); // AES-256 -- this engine always generates a 32-byte session key.
+        sessionKeyPlain.insert(sessionKeyPlain.end(), sessionKey, sessionKey + sessionKeyLength);
+        {
+            unsigned int checksum = 0;
+            for (std::size_t i = 0; i < sessionKeyLength; ++i)
+            {
+                checksum += sessionKey[i];
+            }
+            sessionKeyPlain.push_back(static_cast<unsigned char>((checksum >> 8) & 0xFF));
+            sessionKeyPlain.push_back(static_cast<unsigned char>(checksum & 0xFF));
+        }
+
+        if (recipient.algorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor encryptor(recipient.rsaPublicKey);
+            std::vector<unsigned char> pkcsCipher(encryptor.FixedCiphertextLength());
+            encryptor.Encrypt(rng, sessionKeyPlain.data(), sessionKeyPlain.size(), pkcsCipher.data());
+            const CryptoPP::Integer cipherInt(pkcsCipher.data(), pkcsCipher.size());
+            const std::vector<unsigned char> cipherMpi = encodeMpi(cipherInt);
+
+            std::vector<unsigned char> pkeskBody;
+            pkeskBody.push_back(3);
+            pkeskBody.insert(pkeskBody.end(), recipient.rsaKeyId, recipient.rsaKeyId + 8);
+            pkeskBody.push_back(PGP_ALGO_RSA);
+            appendAll(pkeskBody, cipherMpi);
+            return writePacket(PGP_TAG_PKESK, pkeskBody);
+        }
+        else
+        {
+            CryptoPP::x25519 dh;
+            unsigned char ephemeralPrivateKey[32];
+            unsigned char ephemeralPublicKey[32];
+            dh.GeneratePrivateKey(rng, ephemeralPrivateKey);
+            dh.GeneratePublicKey(rng, ephemeralPrivateKey, ephemeralPublicKey);
+
+            unsigned char sharedSecret[32];
+            if (!dh.Agree(sharedSecret, ephemeralPrivateKey, recipient.x25519PublicKey))
+            {
+                return std::vector<unsigned char>();
+            }
+
+            const std::vector<unsigned char> param = buildEcdhKdfParam(recipient.x25519Fingerprint);
+            const std::vector<unsigned char> kek = computeEcdhKek(sharedSecret, param, 16);
+            if (kek.size() != 16)
+            {
+                return std::vector<unsigned char>();
+            }
+
+            // RFC 6637 section 8: PKCS#5-pad sessionKeyPlain to a multiple of 8 octets before
+            // AES key-wrapping it (a value already a multiple of 8 still gets one full extra
+            // block of padding -- the value at every padding byte position IS the padding length).
+            std::vector<unsigned char> padded = sessionKeyPlain;
+            const std::size_t padLength = 8 - (padded.size() % 8);
+            for (std::size_t i = 0; i < padLength; ++i)
+            {
+                padded.push_back(static_cast<unsigned char>(padLength));
+            }
+            const std::vector<unsigned char> wrapped = aesKeyWrap(kek.data(), kek.size(), padded);
+            if (wrapped.empty())
+            {
+                return std::vector<unsigned char>();
+            }
+
+            std::vector<unsigned char> pkeskBody;
+            pkeskBody.push_back(3);
+            pkeskBody.insert(pkeskBody.end(), recipient.x25519KeyId, recipient.x25519KeyId + 8);
+            pkeskBody.push_back(PGP_ALGO_ECDH);
+            appendAll(pkeskBody, encodeNativePointMpi(ephemeralPublicKey));
+            pkeskBody.push_back(static_cast<unsigned char>(wrapped.size()));
+            appendAll(pkeskBody, wrapped);
+            return writePacket(PGP_TAG_PKESK, pkeskBody);
+        }
+    }
+    catch (...)
+    {
+        return std::vector<unsigned char>();
+    }
+}
+// -----------------------------------------------------------------------------
+
+// One PKESK packet per entry in `recipients` (all wrapping the SAME randomly generated session
+// key), followed by one shared SEIP packet -- the multi-recipient extension of what used to be
+// buildEncryptedMessage(single RSA recipient); recipients.size()==1 with a single RSA entry
+// reproduces that exact original single-recipient wire format byte-for-byte.
+bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipient>& recipients, const unsigned char* plaintext, const std::size_t plaintextSize, std::vector<unsigned char>& out)
+{
+    try
+    {
+        if (recipients.empty())
+        {
+            return false;
+        }
         CryptoPP::AutoSeededRandomPool rng;
 
         std::vector<unsigned char> literalBody;
@@ -1228,34 +1889,16 @@ bool buildEncryptedMessage(const CryptoPP::RSA::PublicKey& recipientKey, const u
         appendAll(seipBody, cfbCiphertext);
         const std::vector<unsigned char> seipPacket = writePacket(PGP_TAG_SEIP, seipBody);
 
-        unsigned char sessionKeyPlain[35];
-        sessionKeyPlain[0] = 9;
-        std::memcpy(sessionKeyPlain + 1, sessionKey, 32);
-        {
-            unsigned int checksum = 0;
-            for (int i = 0; i < 32; ++i)
-            {
-                checksum += sessionKey[i];
-            }
-            sessionKeyPlain[33] = static_cast<unsigned char>((checksum >> 8) & 0xFF);
-            sessionKeyPlain[34] = static_cast<unsigned char>(checksum & 0xFF);
-        }
-
-        CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor encryptor(recipientKey);
-        std::vector<unsigned char> pkcsCipher(encryptor.FixedCiphertextLength());
-        encryptor.Encrypt(rng, sessionKeyPlain, 35, pkcsCipher.data());
-        const CryptoPP::Integer cipherInt(pkcsCipher.data(), pkcsCipher.size());
-        const std::vector<unsigned char> cipherMpi = encodeMpi(cipherInt);
-
-        std::vector<unsigned char> pkeskBody;
-        pkeskBody.push_back(3);
-        pkeskBody.insert(pkeskBody.end(), recipientKeyId, recipientKeyId + 8);
-        pkeskBody.push_back(1);
-        appendAll(pkeskBody, cipherMpi);
-        const std::vector<unsigned char> pkeskPacket = writePacket(PGP_TAG_PKESK, pkeskBody);
-
         out.clear();
-        appendAll(out, pkeskPacket);
+        for (std::size_t i = 0; i < recipients.size(); ++i)
+        {
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[i], sessionKey, 32);
+            if (pkeskPacket.empty())
+            {
+                return false;
+            }
+            appendAll(out, pkeskPacket);
+        }
         appendAll(out, seipPacket);
         return true;
     }
@@ -1266,70 +1909,127 @@ bool buildEncryptedMessage(const CryptoPP::RSA::PublicKey& recipientKey, const u
 }
 // -----------------------------------------------------------------------------
 
-bool parseAndDecryptMessage(const CryptoPP::RSA::PrivateKey& recipientPrivateKey, const std::vector<unsigned char>& message, std::vector<unsigned char>& outPlaintext)
+// Scans one or more leading PKESK (tag 1) packets in `message`, looking for the one addressed to
+// THIS recipient's own Key ID (ownAlgorithm/ownRsaSubkey/ownX25519PrivateKey/ownSubkeyKeyId --
+// only the fields matching ownAlgorithm are used), decrypts that one PKESK's session key, and
+// keeps scanning to the start of the following SEIP packet regardless of which one matched -- a
+// real multi-recipient message may carry PKESKs for OTHER recipients before or after ours, all of
+// which must be skipped, not just the first.
+bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::RSA::PrivateKey& ownRsaSubkey, const unsigned char ownX25519PrivateKey[32], const unsigned char ownSubkeyFingerprint[20], const unsigned char ownSubkeyKeyId[8], const std::vector<unsigned char>& message, std::vector<unsigned char>& outPlaintext)
 {
     try
     {
         std::size_t pos = 0;
-        unsigned char tag = 0;
-        std::size_t bodyLength = 0;
-        if (!readPacketHeader(message, pos, tag, bodyLength) || tag != PGP_TAG_PKESK)
+        std::vector<unsigned char> sessionPlain;
+        bool found = false;
+
+        while (true)
         {
-            return false;
-        }
-        const std::size_t pkeskEnd = pos + bodyLength;
-        if (pkeskEnd > message.size())
-        {
-            return false;
+            std::size_t peekPos = pos;
+            unsigned char tag = 0;
+            std::size_t bodyLength = 0;
+            if (!readPacketHeader(message, peekPos, tag, bodyLength) || tag != PGP_TAG_PKESK)
+            {
+                break;
+            }
+            const std::size_t pkeskEnd = peekPos + bodyLength;
+            if (pkeskEnd > message.size())
+            {
+                return false;
+            }
+
+            std::size_t p = peekPos;
+            if (message[p] != 3)
+            {
+                return false;
+            }
+            p += 1;
+            const unsigned char* thisKeyId = &message[p];
+            p += 8;
+            const unsigned char pkAlgo = message[p];
+            p += 1;
+
+            const bool keyIdMatches = (std::memcmp(thisKeyId, ownSubkeyKeyId, 8) == 0);
+            const bool algoMatches = (ownAlgorithm == PGP_KEY_ALGORITHM_RSA) ? (pkAlgo == PGP_ALGO_RSA) : (pkAlgo == PGP_ALGO_ECDH);
+
+            if (!found && keyIdMatches && algoMatches)
+            {
+                if (pkAlgo == PGP_ALGO_RSA)
+                {
+                    if (p + 2 > pkeskEnd)
+                    {
+                        return false;
+                    }
+                    const std::size_t bitLength = readBigEndian16(message, p);
+                    p += 2;
+                    const std::size_t byteLength = (bitLength + 7) / 8;
+                    if (p + byteLength > pkeskEnd)
+                    {
+                        return false;
+                    }
+                    const CryptoPP::Integer cipherInt(&message[p], byteLength);
+
+                    const std::size_t modulusLength = rsaModulusByteLength(ownRsaSubkey.GetModulus());
+                    std::vector<unsigned char> fixedCipher(modulusLength, 0);
+                    cipherInt.Encode(fixedCipher.data(), modulusLength);
+
+                    CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor decryptor(ownRsaSubkey);
+                    std::vector<unsigned char> plain(decryptor.FixedMaxPlaintextLength());
+                    CryptoPP::AutoSeededRandomPool rng;
+                    const CryptoPP::DecodingResult result = decryptor.Decrypt(rng, fixedCipher.data(), fixedCipher.size(), plain.data());
+                    if (result.isValidCoding)
+                    {
+                        plain.resize(result.messageLength);
+                        sessionPlain = plain;
+                        found = true;
+                    }
+                }
+                else
+                {
+                    unsigned char ephemeralPublicKey[32];
+                    std::size_t mpiPos = p;
+                    if (readNativePointMpi(message, mpiPos, ephemeralPublicKey) && mpiPos < pkeskEnd)
+                    {
+                        const unsigned char wrappedLength = message[mpiPos];
+                        mpiPos += 1;
+                        if (mpiPos + wrappedLength <= pkeskEnd)
+                        {
+                            const std::vector<unsigned char> wrapped(message.begin() + mpiPos, message.begin() + mpiPos + wrappedLength);
+
+                            CryptoPP::x25519 dh;
+                            unsigned char sharedSecret[32];
+                            if (dh.Agree(sharedSecret, ownX25519PrivateKey, ephemeralPublicKey))
+                            {
+                                const std::vector<unsigned char> param = buildEcdhKdfParam(ownSubkeyFingerprint);
+                                const std::vector<unsigned char> kek = computeEcdhKek(sharedSecret, param, 16);
+                                std::vector<unsigned char> unwrapped;
+                                if (kek.size() == 16 && aesKeyUnwrap(kek.data(), kek.size(), wrapped, unwrapped) && !unwrapped.empty())
+                                {
+                                    const unsigned char padLength = unwrapped.back();
+                                    if (padLength >= 1 && padLength <= 8 && static_cast<std::size_t>(padLength) <= unwrapped.size())
+                                    {
+                                        unwrapped.resize(unwrapped.size() - padLength);
+                                        sessionPlain = unwrapped;
+                                        found = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            pos = pkeskEnd;
         }
 
-        std::size_t p = pos;
-        if (message[p] != 3)
+        if (!found || sessionPlain.empty())
         {
             return false;
         }
-        p += 1;
-        p += 8;
-        if (message[p] != 1)
-        {
-            return false;
-        }
-        p += 1;
-        if (p + 2 > pkeskEnd)
-        {
-            return false;
-        }
-        const std::size_t bitLength = readBigEndian16(message, p);
-        p += 2;
-        const std::size_t byteLength = (bitLength + 7) / 8;
-        if (p + byteLength > pkeskEnd)
-        {
-            return false;
-        }
-        const CryptoPP::Integer cipherInt(&message[p], byteLength);
-        pos = pkeskEnd;
-
-        const std::size_t modulusLength = rsaModulusByteLength(recipientPrivateKey.GetModulus());
-        std::vector<unsigned char> fixedCipher(modulusLength, 0);
-        cipherInt.Encode(fixedCipher.data(), modulusLength);
-
-        CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor decryptor(recipientPrivateKey);
-        std::vector<unsigned char> sessionPlain(decryptor.FixedMaxPlaintextLength());
-        CryptoPP::AutoSeededRandomPool rng;
-        const CryptoPP::DecodingResult result = decryptor.Decrypt(rng, fixedCipher.data(), fixedCipher.size(), sessionPlain.data());
-        if (!result.isValidCoding)
-        {
-            return false;
-        }
-        sessionPlain.resize(result.messageLength);
-        if (sessionPlain.empty())
-        {
-            return false;
-        }
-        // v1 always PRODUCES AES-256 (see buildEncryptedMessage), but real-world senders (verified
-        // against GnuPG 2.5.21, which defaults to AES-128 for a recipient key with no advertised
-        // preference) may choose any AES family member -- accept all three to decrypt their
-        // messages, not just our own.
+        // v1 always PRODUCES AES-256 (see buildEncryptedMessageMultiRecipient), but real-world
+        // senders (verified against GnuPG 2.5.21, which defaults to AES-128 for a recipient key
+        // with no advertised preference) may choose any AES family member -- accept all three to
+        // decrypt their messages, not just our own.
         std::size_t sessionKeyLength = 0;
         switch (sessionPlain[0])
         {
@@ -1487,10 +2187,14 @@ bool parseAndDecryptMessage(const CryptoPP::RSA::PrivateKey& recipientPrivateKey
 // upfront; DecryptFile writes to a temp file and only keeps it if the trailing MDC check passes).
 // ================================================================================================
 
-int encryptFileStreaming(const CryptoPP::RSA::PublicKey& recipientKey, const unsigned char recipientKeyId[8], HANDLE inputFileHandle, const unsigned long long fileSize, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+int encryptFileStreaming(const std::vector<CryptoPP::RSA::PublicKey>& recipientKeys, const std::vector<std::array<unsigned char, 8> >& recipientKeyIds, HANDLE inputFileHandle, const unsigned long long fileSize, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
 {
     try
     {
+        if (recipientKeys.empty() || recipientKeys.size() != recipientKeyIds.size())
+        {
+            return INVALID_ARGUMENT;
+        }
         CryptoPP::AutoSeededRandomPool rng;
 
         unsigned char sessionKey[32];
@@ -1508,21 +2212,24 @@ int encryptFileStreaming(const CryptoPP::RSA::PublicKey& recipientKey, const uns
             sessionKeyPlain[34] = static_cast<unsigned char>(checksum & 0xFF);
         }
 
-        CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor encryptor(recipientKey);
-        std::vector<unsigned char> pkcsCipher(encryptor.FixedCiphertextLength());
-        encryptor.Encrypt(rng, sessionKeyPlain, 35, pkcsCipher.data());
-        const CryptoPP::Integer cipherInt(pkcsCipher.data(), pkcsCipher.size());
-        const std::vector<unsigned char> cipherMpi = encodeMpi(cipherInt);
-
-        std::vector<unsigned char> pkeskBody;
-        pkeskBody.push_back(3);
-        pkeskBody.insert(pkeskBody.end(), recipientKeyId, recipientKeyId + 8);
-        pkeskBody.push_back(1);
-        appendAll(pkeskBody, cipherMpi);
-        const std::vector<unsigned char> pkeskPacket = writePacket(PGP_TAG_PKESK, pkeskBody);
-        if (!writeFileExact(outputFileHandle, pkeskPacket.data(), static_cast<DWORD>(pkeskPacket.size())))
+        for (std::size_t r = 0; r < recipientKeys.size(); ++r)
         {
-            return FILE_IO_ERROR;
+            CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor encryptor(recipientKeys[r]);
+            std::vector<unsigned char> pkcsCipher(encryptor.FixedCiphertextLength());
+            encryptor.Encrypt(rng, sessionKeyPlain, 35, pkcsCipher.data());
+            const CryptoPP::Integer cipherInt(pkcsCipher.data(), pkcsCipher.size());
+            const std::vector<unsigned char> cipherMpi = encodeMpi(cipherInt);
+
+            std::vector<unsigned char> pkeskBody;
+            pkeskBody.push_back(3);
+            pkeskBody.insert(pkeskBody.end(), recipientKeyIds[r].data(), recipientKeyIds[r].data() + 8);
+            pkeskBody.push_back(1);
+            appendAll(pkeskBody, cipherMpi);
+            const std::vector<unsigned char> pkeskPacket = writePacket(PGP_TAG_PKESK, pkeskBody);
+            if (!writeFileExact(outputFileHandle, pkeskPacket.data(), static_cast<DWORD>(pkeskPacket.size())))
+            {
+                return FILE_IO_ERROR;
+            }
         }
 
         // Literal Data (tag 11) header: no compression on this path, so this length is exactly
@@ -1838,16 +2545,19 @@ struct DecryptFileHeader
 };
 // -----------------------------------------------------------------------------
 
-// Reads just enough of the file (a small, bounded prefix -- PKESK plus the SEIP header are at
-// most ~550 bytes even for RSA-4096) to recover the session key and the SEIP body's exact
-// length. Any ciphertext bytes read past the SEIP header in that same prefix are returned in
-// leftoverCipher so decryptSeipBodyStreaming can consume them before reading more from the file.
-DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const CryptoPP::RSA::PrivateKey& recipientPrivateKey)
+// Reads just enough of the file (a small, bounded prefix -- PKESKs plus the SEIP header are at
+// most a few KB even for several RSA-4096 recipients) to recover the session key and the SEIP
+// body's exact length. Scans every leading PKESK packet for the one addressed to
+// ownSubkeyKeyId (multi-recipient support -- a real multi-recipient file may carry PKESKs for
+// OTHER recipients before or after ours). Any ciphertext bytes read past the SEIP header in that
+// same prefix are returned in leftoverCipher so decryptSeipBodyStreaming can consume them before
+// reading more from the file.
+DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const CryptoPP::RSA::PrivateKey& recipientPrivateKey, const unsigned char ownSubkeyKeyId[8])
 {
     DecryptFileHeader result;
     try
     {
-        std::vector<unsigned char> buf(8192);
+        std::vector<unsigned char> buf(65536);
         DWORD bytesRead = 0;
         if (!ReadFile(inputFileHandle, buf.data(), static_cast<DWORD>(buf.size()), &bytesRead, nullptr))
         {
@@ -1856,54 +2566,81 @@ DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const CryptoP
         buf.resize(bytesRead);
 
         std::size_t pos = 0;
-        unsigned char tag = 0;
-        std::size_t bodyLength = 0;
-        if (!readPacketHeader(buf, pos, tag, bodyLength) || tag != PGP_TAG_PKESK || pos + bodyLength > buf.size())
+        std::vector<unsigned char> sessionPlain;
+        bool found = false;
+        while (true)
         {
-            return result;
-        }
-        const std::size_t pkeskEnd = pos + bodyLength;
+            std::size_t peekPos = pos;
+            unsigned char tag = 0;
+            std::size_t bodyLength = 0;
+            if (!readPacketHeader(buf, peekPos, tag, bodyLength) || tag != PGP_TAG_PKESK || peekPos + bodyLength > buf.size())
+            {
+                break;
+            }
+            const std::size_t pkeskEnd = peekPos + bodyLength;
 
-        std::size_t p = pos;
-        if (buf[p] != 3)
-        {
-            return result;
-        }
-        p += 1;
-        p += 8;
-        if (buf[p] != 1)
-        {
-            return result;
-        }
-        p += 1;
-        if (p + 2 > pkeskEnd)
-        {
-            return result;
-        }
-        const std::size_t bitLength = readBigEndian16(buf, p);
-        p += 2;
-        const std::size_t byteLength = (bitLength + 7) / 8;
-        if (p + byteLength > pkeskEnd)
-        {
-            return result;
-        }
-        const CryptoPP::Integer cipherInt(&buf[p], byteLength);
-        pos = pkeskEnd;
+            // Non-RSA (e.g. ECDH) PKESKs for OTHER recipients are simply skipped here -- this
+            // v1 streaming path only ever decrypts an RSA PKESK addressed to OUR OWN key, but a
+            // multi-recipient file from another sender may still legitimately carry other
+            // recipients' PKESKs in any algorithm.
+            std::size_t p = peekPos;
+            if (p >= pkeskEnd || buf[p] != 3)
+            {
+                pos = pkeskEnd;
+                continue;
+            }
+            p += 1;
+            if (p + 9 > pkeskEnd)
+            {
+                pos = pkeskEnd;
+                continue;
+            }
+            const unsigned char thisKeyId[8] = { buf[p], buf[p+1], buf[p+2], buf[p+3], buf[p+4], buf[p+5], buf[p+6], buf[p+7] };
+            p += 8;
+            const unsigned char pkAlgo = buf[p];
+            p += 1;
 
-        const std::size_t modulusLength = rsaModulusByteLength(recipientPrivateKey.GetModulus());
-        std::vector<unsigned char> fixedCipher(modulusLength, 0);
-        cipherInt.Encode(fixedCipher.data(), modulusLength);
+            if (pkAlgo != PGP_ALGO_RSA || std::memcmp(thisKeyId, ownSubkeyKeyId, 8) != 0)
+            {
+                pos = pkeskEnd;
+                continue;
+            }
 
-        CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor decryptor(recipientPrivateKey);
-        std::vector<unsigned char> sessionPlain(decryptor.FixedMaxPlaintextLength());
-        CryptoPP::AutoSeededRandomPool rng;
-        const CryptoPP::DecodingResult decResult = decryptor.Decrypt(rng, fixedCipher.data(), fixedCipher.size(), sessionPlain.data());
-        if (!decResult.isValidCoding)
-        {
-            return result;
+            if (p + 2 > pkeskEnd)
+            {
+                return result;
+            }
+            const std::size_t bitLength = readBigEndian16(buf, p);
+            p += 2;
+            const std::size_t byteLength = (bitLength + 7) / 8;
+            if (p + byteLength > pkeskEnd)
+            {
+                return result;
+            }
+
+            if (!found)
+            {
+                const CryptoPP::Integer cipherInt(&buf[p], byteLength);
+                const std::size_t modulusLength = rsaModulusByteLength(recipientPrivateKey.GetModulus());
+                std::vector<unsigned char> fixedCipher(modulusLength, 0);
+                cipherInt.Encode(fixedCipher.data(), modulusLength);
+
+                CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor decryptor(recipientPrivateKey);
+                std::vector<unsigned char> plain(decryptor.FixedMaxPlaintextLength());
+                CryptoPP::AutoSeededRandomPool rng;
+                const CryptoPP::DecodingResult decResult = decryptor.Decrypt(rng, fixedCipher.data(), fixedCipher.size(), plain.data());
+                if (decResult.isValidCoding)
+                {
+                    plain.resize(decResult.messageLength);
+                    sessionPlain = plain;
+                    found = true;
+                }
+            }
+
+            pos = pkeskEnd;
         }
-        sessionPlain.resize(decResult.messageLength);
-        if (sessionPlain.empty())
+
+        if (!found || sessionPlain.empty())
         {
             return result;
         }
@@ -2164,6 +2901,173 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
 }
 // -----------------------------------------------------------------------------
 
+// ================================================================================================
+// Peer/recipient public key block parsing -- shared by ImportPeerPublicKey (wants both the master
+// verify key and the encryption subkey) and ImportAdditionalRecipientPublicKey (wants only the
+// encryption subkey). Each key packet's own algorithm octet is detected independently (RSA, or
+// EdDSA/ECDH), so a single armored/binary block's master and subkey may even use different
+// algorithm families in principle, though this engine and GnuPG's own "ed25519" identities always
+// keep both in the same family.
+// ================================================================================================
+
+struct ParsedPeerPublicKeyBlock
+{
+    bool haveMaster;
+    PgpKeyAlgorithm masterAlgorithm;
+    CryptoPP::RSA::PublicKey masterRsaKey;
+    unsigned char masterEd25519Key[32];
+    unsigned char masterKeyId[8];
+
+    bool haveSubkey;
+    PgpKeyAlgorithm subkeyAlgorithm;
+    CryptoPP::RSA::PublicKey subkeyRsaKey;
+    unsigned char subkeyX25519Key[32];
+    unsigned char subkeyKeyId[8];
+    unsigned char subkeyFingerprint[20];
+
+    ParsedPeerPublicKeyBlock() : haveMaster(false), masterAlgorithm(PGP_KEY_ALGORITHM_RSA), haveSubkey(false), subkeyAlgorithm(PGP_KEY_ALGORITHM_RSA)
+    {
+        std::memset(masterEd25519Key, 0, 32);
+        std::memset(masterKeyId, 0, 8);
+        std::memset(subkeyX25519Key, 0, 32);
+        std::memset(subkeyKeyId, 0, 8);
+        std::memset(subkeyFingerprint, 0, 20);
+    }
+};
+// -----------------------------------------------------------------------------
+
+bool decodeKeyBlockToBinary(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize, std::vector<unsigned char>& binary)
+{
+    try
+    {
+        if (keyBlockBufferSize >= 5 && std::memcmp(keyBlockBuffer, "-----", 5) == 0)
+        {
+            const std::string armored(reinterpret_cast<const char*>(keyBlockBuffer), static_cast<std::size_t>(keyBlockBufferSize));
+            std::string blockType;
+            return armorDecode(armored, blockType, binary);
+        }
+        binary.assign(keyBlockBuffer, keyBlockBuffer + keyBlockBufferSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool parsePeerPublicKeyBlock(const std::vector<unsigned char>& binary, ParsedPeerPublicKeyBlock& out)
+{
+    try
+    {
+        std::size_t pos = 0;
+        while (pos < binary.size())
+        {
+            unsigned char tag = 0;
+            std::size_t bodyLength = 0;
+            if (!readPacketHeader(binary, pos, tag, bodyLength) || pos + bodyLength > binary.size())
+            {
+                break;
+            }
+            const std::vector<unsigned char> body(binary.begin() + pos, binary.begin() + pos + bodyLength);
+            pos += bodyLength;
+
+            if (tag != PGP_TAG_PUBLIC_KEY && tag != PGP_TAG_PUBLIC_SUBKEY)
+            {
+                continue;
+            }
+            const bool isMaster = (tag == PGP_TAG_PUBLIC_KEY);
+            if ((isMaster && out.haveMaster) || (!isMaster && out.haveSubkey))
+            {
+                continue;
+            }
+            if (body.size() < 6)
+            {
+                continue;
+            }
+            const unsigned char algo = body[5];
+
+            if (algo == PGP_ALGO_RSA)
+            {
+                CryptoPP::Integer n;
+                CryptoPP::Integer e;
+                unsigned char keyId[8];
+                if (!parseRsaPublicKeyPacketBody(body, n, e, keyId))
+                {
+                    continue;
+                }
+                CryptoPP::RSA::PublicKey key;
+                key.Initialize(n, e);
+                if (isMaster)
+                {
+                    out.masterAlgorithm = PGP_KEY_ALGORITHM_RSA;
+                    out.masterRsaKey = key;
+                    std::memcpy(out.masterKeyId, keyId, 8);
+                    out.haveMaster = true;
+                }
+                else
+                {
+                    out.subkeyAlgorithm = PGP_KEY_ALGORITHM_RSA;
+                    out.subkeyRsaKey = key;
+                    std::memcpy(out.subkeyKeyId, keyId, 8);
+                    out.haveSubkey = true;
+                }
+            }
+            else if (algo == PGP_ALGO_EDDSA && isMaster)
+            {
+                unsigned char point[32];
+                unsigned char keyId[8];
+                if (!parseEd25519PublicKeyPacketBody(body, point, keyId))
+                {
+                    continue;
+                }
+                out.masterAlgorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
+                std::memcpy(out.masterEd25519Key, point, 32);
+                std::memcpy(out.masterKeyId, keyId, 8);
+                out.haveMaster = true;
+            }
+            else if (algo == PGP_ALGO_ECDH && !isMaster)
+            {
+                unsigned char point[32];
+                unsigned char keyId[8];
+                unsigned char fingerprint[20];
+                if (!parseX25519PublicKeyPacketBody(body, point, keyId, fingerprint))
+                {
+                    continue;
+                }
+                out.subkeyAlgorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
+                std::memcpy(out.subkeyX25519Key, point, 32);
+                std::memcpy(out.subkeyKeyId, keyId, 8);
+                std::memcpy(out.subkeyFingerprint, fingerprint, 20);
+                out.haveSubkey = true;
+            }
+        }
+
+        if (!out.haveMaster)
+        {
+            return false;
+        }
+        // No separate encryption subkey found (e.g. a bare master-key-only block) -- mirror the
+        // pre-multi-recipient/pre-ECC behavior of falling back to encrypting to the master key
+        // itself, but only when the master is RSA (an Ed25519 master key cannot encrypt -- RFC
+        // 4880 key flags reserve that to Encrypt-flagged keys, i.e. an X25519 subkey, which by
+        // construction never doubles as a signing master here).
+        if (!out.haveSubkey && out.masterAlgorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            out.subkeyAlgorithm = PGP_KEY_ALGORITHM_RSA;
+            out.subkeyRsaKey = out.masterRsaKey;
+            std::memcpy(out.subkeyKeyId, out.masterKeyId, 8);
+            out.haveSubkey = true;
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // anonymous namespace
 
 // ================================================================================================
@@ -2186,6 +3090,25 @@ CPgpEngine::CPgpEngine(const int rsaKeyBits) : impl_(new Impl())
 }
 // -----------------------------------------------------------------------------
 
+CPgpEngine::CPgpEngine(const PgpKeyAlgorithm keyAlgorithm) : impl_(new Impl())
+{
+    impl_->keyAlgorithm = keyAlgorithm;
+}
+// -----------------------------------------------------------------------------
+
+PgpKeyAlgorithm CPgpEngine::GetKeyAlgorithm(void) const
+{
+    try
+    {
+        return impl_ ? impl_->keyAlgorithm : PGP_KEY_ALGORITHM_RSA;
+    }
+    catch (...)
+    {
+        return PGP_KEY_ALGORITHM_RSA;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const char* password, const int passwordSize)
 {
     return GenerateKeyPair(userId, userIdSize, password, passwordSize, 0);
@@ -2200,38 +3123,23 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
         {
             return INVALID_ARGUMENT;
         }
-        if (impl_->rsaKeyBits != 1024 && impl_->rsaKeyBits != 2048 && impl_->rsaKeyBits != 3072 && impl_->rsaKeyBits != 4096)
-        {
-            return INVALID_ARGUMENT;
-        }
-
-        CryptoPP::AutoSeededRandomPool rng;
-
-        CryptoPP::RSA::PrivateKey masterPrivateKey;
-        masterPrivateKey.GenerateRandomWithKeySize(rng, static_cast<unsigned int>(impl_->rsaKeyBits));
-        const CryptoPP::RSA::PublicKey masterPublicKey(masterPrivateKey);
-
-        CryptoPP::RSA::PrivateKey subkeyPrivateKey;
-        subkeyPrivateKey.GenerateRandomWithKeySize(rng, static_cast<unsigned int>(impl_->rsaKeyBits));
-        const CryptoPP::RSA::PublicKey subkeyPublicKey(subkeyPrivateKey);
 
         const std::uint32_t creationTime = static_cast<std::uint32_t>(std::time(nullptr));
-
-        const std::vector<unsigned char> masterPubBody = buildRsaPublicKeyPacketBody(creationTime, masterPublicKey.GetModulus(), masterPublicKey.GetPublicExponent());
-        unsigned char masterFingerprint[20];
+        std::vector<unsigned char> masterPubBody;
+        std::vector<unsigned char> subkeyPubBody;
         unsigned char masterKeyId[8];
-        computeFingerprintAndKeyId(masterPubBody, masterFingerprint, masterKeyId);
-
-        const std::vector<unsigned char> subkeyPubBody = buildRsaPublicKeyPacketBody(creationTime, subkeyPublicKey.GetModulus(), subkeyPublicKey.GetPublicExponent());
-        unsigned char subkeyFingerprint[20];
         unsigned char subkeyKeyId[8];
-        computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprint, subkeyKeyId);
+        std::vector<unsigned char> masterSecretBody;
+        std::vector<unsigned char> subkeySecretBody;
 
-        const std::vector<unsigned char> masterPubPacket = writePacket(PGP_TAG_PUBLIC_KEY, masterPubBody);
-
-        const std::string userIdStr(userId, static_cast<std::size_t>(userIdSize));
-        const std::vector<unsigned char> userIdBody(userIdStr.begin(), userIdStr.end());
-        const std::vector<unsigned char> userIdPacket = writePacket(13, userIdBody);
+        CryptoPP::RSA::PrivateKey rsaMasterPrivateKey;
+        CryptoPP::RSA::PublicKey rsaMasterPublicKey;
+        CryptoPP::RSA::PrivateKey rsaSubkeyPrivateKey;
+        CryptoPP::RSA::PublicKey rsaSubkeyPublicKey;
+        unsigned char edMasterPrivateKey[32];
+        unsigned char edMasterPublicKey[32];
+        unsigned char edSubkeyPrivateKey[32];
+        unsigned char edSubkeyPublicKey[32];
 
         std::vector<unsigned char> certExtraSubpackets = buildKeyFlagsSubpacket(0x03);
         std::vector<unsigned char> bindExtraSubpackets = buildKeyFlagsSubpacket(0x0C);
@@ -2241,21 +3149,90 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
             appendAll(bindExtraSubpackets, buildKeyExpirationSubpacket(expirationSeconds));
         }
 
-        std::vector<unsigned char> certDocument = buildKeyHashPrefix(masterPubBody);
+        std::vector<unsigned char> certSigPacket;
+        std::vector<unsigned char> bindSigPacket;
+
+        if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA)
         {
+            if (impl_->rsaKeyBits != 1024 && impl_->rsaKeyBits != 2048 && impl_->rsaKeyBits != 3072 && impl_->rsaKeyBits != 4096)
+            {
+                return INVALID_ARGUMENT;
+            }
+
+            CryptoPP::AutoSeededRandomPool rng;
+
+            rsaMasterPrivateKey.GenerateRandomWithKeySize(rng, static_cast<unsigned int>(impl_->rsaKeyBits));
+            rsaMasterPublicKey = CryptoPP::RSA::PublicKey(rsaMasterPrivateKey);
+
+            rsaSubkeyPrivateKey.GenerateRandomWithKeySize(rng, static_cast<unsigned int>(impl_->rsaKeyBits));
+            rsaSubkeyPublicKey = CryptoPP::RSA::PublicKey(rsaSubkeyPrivateKey);
+
+            masterPubBody = buildRsaPublicKeyPacketBody(creationTime, rsaMasterPublicKey.GetModulus(), rsaMasterPublicKey.GetPublicExponent());
+            subkeyPubBody = buildRsaPublicKeyPacketBody(creationTime, rsaSubkeyPublicKey.GetModulus(), rsaSubkeyPublicKey.GetPublicExponent());
+            unsigned char masterFingerprint[20];
+            unsigned char subkeyFingerprint[20];
+            computeFingerprintAndKeyId(masterPubBody, masterFingerprint, masterKeyId);
+            computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprint, subkeyKeyId);
+
+            std::vector<unsigned char> certDocument = buildKeyHashPrefix(masterPubBody);
+            const std::string userIdStrForCert(userId, static_cast<std::size_t>(userIdSize));
+            const std::vector<unsigned char> userIdBodyForCert(userIdStrForCert.begin(), userIdStrForCert.end());
             certDocument.push_back(0xB4);
-            appendBigEndian32(certDocument, static_cast<std::uint32_t>(userIdBody.size()));
-            appendAll(certDocument, userIdBody);
+            appendBigEndian32(certDocument, static_cast<std::uint32_t>(userIdBodyForCert.size()));
+            appendAll(certDocument, userIdBodyForCert);
+            certSigPacket = buildSignaturePacket(rsaMasterPrivateKey, 0x13, certDocument, certExtraSubpackets, masterKeyId);
+
+            std::vector<unsigned char> bindDocument = buildKeyHashPrefix(masterPubBody);
+            appendAll(bindDocument, buildKeyHashPrefix(subkeyPubBody));
+            bindSigPacket = buildSignaturePacket(rsaMasterPrivateKey, 0x18, bindDocument, bindExtraSubpackets, masterKeyId);
+
+            masterSecretBody = encryptSecretKeyMaterial(masterPubBody, buildRsaSecretKeyCleartext(rsaMasterPrivateKey), password, passwordSize);
+            subkeySecretBody = encryptSecretKeyMaterial(subkeyPubBody, buildRsaSecretKeyCleartext(rsaSubkeyPrivateKey), password, passwordSize);
         }
-        const std::vector<unsigned char> certSigPacket = buildSignaturePacket(masterPrivateKey, 0x13, certDocument, certExtraSubpackets, masterKeyId);
+        else
+        {
+            CryptoPP::AutoSeededRandomPool rng;
 
-        std::vector<unsigned char> bindDocument = buildKeyHashPrefix(masterPubBody);
-        appendAll(bindDocument, buildKeyHashPrefix(subkeyPubBody));
-        const std::vector<unsigned char> bindSigPacket = buildSignaturePacket(masterPrivateKey, 0x18, bindDocument, bindExtraSubpackets, masterKeyId);
+            CryptoPP::ed25519PrivateKey edPriv;
+            edPriv.GenerateRandom(rng, CryptoPP::g_nullNameValuePairs);
+            std::memcpy(edMasterPrivateKey, edPriv.GetPrivateKeyBytePtr(), 32);
+            std::memcpy(edMasterPublicKey, edPriv.GetPublicKeyBytePtr(), 32);
 
+            CryptoPP::x25519 dh;
+            dh.GeneratePrivateKey(rng, edSubkeyPrivateKey);
+            dh.GeneratePublicKey(rng, edSubkeyPrivateKey, edSubkeyPublicKey);
+
+            masterPubBody = buildEd25519PublicKeyPacketBody(creationTime, edMasterPublicKey);
+            subkeyPubBody = buildX25519PublicKeyPacketBody(creationTime, edSubkeyPublicKey);
+            unsigned char masterFingerprint[20];
+            unsigned char subkeyFingerprint[20];
+            computeFingerprintAndKeyId(masterPubBody, masterFingerprint, masterKeyId);
+            computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprint, subkeyKeyId);
+
+            std::vector<unsigned char> certDocument = buildKeyHashPrefix(masterPubBody);
+            const std::string userIdStrForCert(userId, static_cast<std::size_t>(userIdSize));
+            const std::vector<unsigned char> userIdBodyForCert(userIdStrForCert.begin(), userIdStrForCert.end());
+            certDocument.push_back(0xB4);
+            appendBigEndian32(certDocument, static_cast<std::uint32_t>(userIdBodyForCert.size()));
+            appendAll(certDocument, userIdBodyForCert);
+            certSigPacket = buildEd25519SignaturePacket(edMasterPrivateKey, 0x13, certDocument, certExtraSubpackets, masterKeyId);
+
+            std::vector<unsigned char> bindDocument = buildKeyHashPrefix(masterPubBody);
+            appendAll(bindDocument, buildKeyHashPrefix(subkeyPubBody));
+            bindSigPacket = buildEd25519SignaturePacket(edMasterPrivateKey, 0x18, bindDocument, bindExtraSubpackets, masterKeyId);
+
+            masterSecretBody = encryptSecretKeyMaterial(masterPubBody, buildEd25519SecretKeyCleartext(edMasterPrivateKey), password, passwordSize);
+            subkeySecretBody = encryptSecretKeyMaterial(subkeyPubBody, buildX25519SecretKeyCleartext(edSubkeyPrivateKey), password, passwordSize);
+        }
+
+        const std::vector<unsigned char> masterPubPacket = writePacket(PGP_TAG_PUBLIC_KEY, masterPubBody);
         const std::vector<unsigned char> subkeyPubPacket = writePacket(PGP_TAG_PUBLIC_SUBKEY, subkeyPubBody);
 
-        if (certSigPacket.empty() || bindSigPacket.empty())
+        const std::string userIdStr(userId, static_cast<std::size_t>(userIdSize));
+        const std::vector<unsigned char> userIdBody(userIdStr.begin(), userIdStr.end());
+        const std::vector<unsigned char> userIdPacket = writePacket(13, userIdBody);
+
+        if (certSigPacket.empty() || bindSigPacket.empty() || masterSecretBody.empty() || subkeySecretBody.empty())
         {
             return UNEXPECTED_ERROR;
         }
@@ -2267,12 +3244,6 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
         appendAll(publicKeyBlock, subkeyPubPacket);
         appendAll(publicKeyBlock, bindSigPacket);
 
-        const std::vector<unsigned char> masterSecretBody = buildSecretKeyPacketBody(masterPubBody, masterPrivateKey, password, passwordSize);
-        const std::vector<unsigned char> subkeySecretBody = buildSecretKeyPacketBody(subkeyPubBody, subkeyPrivateKey, password, passwordSize);
-        if (masterSecretBody.empty() || subkeySecretBody.empty())
-        {
-            return UNEXPECTED_ERROR;
-        }
         const std::vector<unsigned char> masterSecretPacket = writePacket(PGP_TAG_SECRET_KEY, masterSecretBody);
         const std::vector<unsigned char> subkeySecretPacket = writePacket(PGP_TAG_SECRET_SUBKEY, subkeySecretBody);
 
@@ -2283,12 +3254,31 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
         appendAll(secretKeyBlock, subkeySecretPacket);
         appendAll(secretKeyBlock, bindSigPacket);
 
-        impl_->ownMasterPrivateKey = masterPrivateKey;
-        impl_->ownMasterPublicKey = masterPublicKey;
-        impl_->ownSubkeyPrivateKey = subkeyPrivateKey;
-        impl_->ownSubkeyPublicKey = subkeyPublicKey;
+        if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            impl_->ownMasterPrivateKey = rsaMasterPrivateKey;
+            impl_->ownMasterPublicKey = rsaMasterPublicKey;
+            impl_->ownSubkeyPrivateKey = rsaSubkeyPrivateKey;
+            impl_->ownSubkeyPublicKey = rsaSubkeyPublicKey;
+        }
+        else
+        {
+            std::memcpy(impl_->ownEd25519PrivateKey, edMasterPrivateKey, 32);
+            std::memcpy(impl_->ownEd25519PublicKey, edMasterPublicKey, 32);
+            std::memcpy(impl_->ownX25519PrivateKey, edSubkeyPrivateKey, 32);
+            std::memcpy(impl_->ownX25519PublicKey, edSubkeyPublicKey, 32);
+        }
         std::memcpy(impl_->ownMasterKeyId, masterKeyId, 8);
         std::memcpy(impl_->ownSubkeyKeyId, subkeyKeyId, 8);
+        {
+            // Recomputed from subkeyPubBody rather than threading the per-branch local fingerprint
+            // variable out of the if/else above -- cheap (one SHA-1) and keeps both branches
+            // symmetric.
+            unsigned char subkeyFingerprintForStorage[20];
+            unsigned char subkeyKeyIdRecomputed[8];
+            computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprintForStorage, subkeyKeyIdRecomputed);
+            std::memcpy(impl_->ownSubkeyFingerprint, subkeyFingerprintForStorage, 20);
+        }
         impl_->keyCreationTime = creationTime;
         impl_->keyExpirationSeconds = expirationSeconds;
         CryptoPP::SHA256().CalculateDigest(impl_->passwordCheckHash, reinterpret_cast<const CryptoPP::byte*>(password), static_cast<std::size_t>(passwordSize));
@@ -2449,15 +3439,25 @@ int CPgpEngine::RevokeKeyArmored(const char* password, const int passwordSize, c
             return INVALID_ARGUMENT;
         }
 
-        // Recomputed (not cached) from the same creationTime/modulus/exponent GenerateKeyPair
-        // used, so this byte-matches the public-key-packet body already embedded in the exported
-        // public key block -- required for the revocation signature to hash the same material a
-        // keyring importing it will see.
-        const std::vector<unsigned char> masterPubBody = buildRsaPublicKeyPacketBody(impl_->keyCreationTime, impl_->ownMasterPublicKey.GetModulus(), impl_->ownMasterPublicKey.GetPublicExponent());
+        // Recomputed (not cached) from the same creationTime/key material GenerateKeyPair used,
+        // so this byte-matches the public-key-packet body already embedded in the exported public
+        // key block -- required for the revocation signature to hash the same material a keyring
+        // importing it will see.
+        std::vector<unsigned char> masterPubBody;
+        if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            masterPubBody = buildRsaPublicKeyPacketBody(impl_->keyCreationTime, impl_->ownMasterPublicKey.GetModulus(), impl_->ownMasterPublicKey.GetPublicExponent());
+        }
+        else
+        {
+            masterPubBody = buildEd25519PublicKeyPacketBody(impl_->keyCreationTime, impl_->ownEd25519PublicKey);
+        }
         const std::vector<unsigned char> document = buildKeyHashPrefix(masterPubBody);
         const std::vector<unsigned char> reasonSubpacket = buildRevocationReasonSubpacket(reasonCode, reasonText, reasonTextSize);
 
-        const std::vector<unsigned char> revocationSigPacket = buildSignaturePacket(impl_->ownMasterPrivateKey, 0x20, document, reasonSubpacket, impl_->ownMasterKeyId);
+        const std::vector<unsigned char> revocationSigPacket = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            buildSignaturePacket(impl_->ownMasterPrivateKey, 0x20, document, reasonSubpacket, impl_->ownMasterKeyId) :
+            buildEd25519SignaturePacket(impl_->ownEd25519PrivateKey, 0x20, document, reasonSubpacket, impl_->ownMasterKeyId);
         if (revocationSigPacket.empty())
         {
             return UNEXPECTED_ERROR;
@@ -2490,84 +3490,40 @@ int CPgpEngine::ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const i
         }
 
         std::vector<unsigned char> binary;
-        if (keyBlockBufferSize >= 5 && std::memcmp(keyBlockBuffer, "-----", 5) == 0)
-        {
-            const std::string armored(reinterpret_cast<const char*>(keyBlockBuffer), static_cast<std::size_t>(keyBlockBufferSize));
-            std::string blockType;
-            if (!armorDecode(armored, blockType, binary))
-            {
-                return INVALID_DATA;
-            }
-        }
-        else
-        {
-            binary.assign(keyBlockBuffer, keyBlockBuffer + keyBlockBufferSize);
-        }
-
-        CryptoPP::RSA::PublicKey masterKey;
-        CryptoPP::RSA::PublicKey subkey;
-        unsigned char masterKeyId[8];
-        unsigned char subkeyKeyId[8];
-        std::memset(masterKeyId, 0, 8);
-        std::memset(subkeyKeyId, 0, 8);
-        bool haveMaster = false;
-        bool haveSubkey = false;
-
-        std::size_t pos = 0;
-        while (pos < binary.size())
-        {
-            unsigned char tag = 0;
-            std::size_t bodyLength = 0;
-            if (!readPacketHeader(binary, pos, tag, bodyLength) || pos + bodyLength > binary.size())
-            {
-                break;
-            }
-            const std::vector<unsigned char> body(binary.begin() + pos, binary.begin() + pos + bodyLength);
-            pos += bodyLength;
-
-            if (tag == PGP_TAG_PUBLIC_KEY || tag == PGP_TAG_PUBLIC_SUBKEY)
-            {
-                CryptoPP::Integer n;
-                CryptoPP::Integer e;
-                unsigned char keyId[8];
-                if (!parseRsaPublicKeyPacketBody(body, n, e, keyId))
-                {
-                    continue;
-                }
-                CryptoPP::RSA::PublicKey key;
-                key.Initialize(n, e);
-                if (tag == PGP_TAG_PUBLIC_KEY && !haveMaster)
-                {
-                    masterKey = key;
-                    std::memcpy(masterKeyId, keyId, 8);
-                    haveMaster = true;
-                }
-                else if (tag == PGP_TAG_PUBLIC_SUBKEY && !haveSubkey)
-                {
-                    subkey = key;
-                    std::memcpy(subkeyKeyId, keyId, 8);
-                    haveSubkey = true;
-                }
-            }
-        }
-
-        if (!haveMaster)
+        if (!decodeKeyBlockToBinary(keyBlockBuffer, keyBlockBufferSize, binary))
         {
             return INVALID_DATA;
         }
 
-        impl_->peerMasterPublicKey = masterKey;
-        std::memcpy(impl_->peerMasterKeyId, masterKeyId, 8);
-        if (haveSubkey)
+        ParsedPeerPublicKeyBlock parsed;
+        if (!parsePeerPublicKeyBlock(binary, parsed))
         {
-            impl_->peerSubkeyPublicKey = subkey;
-            std::memcpy(impl_->peerSubkeyKeyId, subkeyKeyId, 8);
+            return INVALID_DATA;
+        }
+
+        impl_->peerMasterAlgorithm = parsed.masterAlgorithm;
+        impl_->peerSubkeyAlgorithm = parsed.subkeyAlgorithm;
+        if (parsed.masterAlgorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            impl_->peerMasterPublicKey = parsed.masterRsaKey;
         }
         else
         {
-            impl_->peerSubkeyPublicKey = masterKey;
-            std::memcpy(impl_->peerSubkeyKeyId, masterKeyId, 8);
+            std::memcpy(impl_->peerEd25519PublicKey, parsed.masterEd25519Key, 32);
         }
+        std::memcpy(impl_->peerMasterKeyId, parsed.masterKeyId, 8);
+
+        if (parsed.subkeyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            impl_->peerSubkeyPublicKey = parsed.subkeyRsaKey;
+        }
+        else
+        {
+            std::memcpy(impl_->peerX25519PublicKey, parsed.subkeyX25519Key, 32);
+            std::memcpy(impl_->peerSubkeyFingerprint, parsed.subkeyFingerprint, 20);
+        }
+        std::memcpy(impl_->peerSubkeyKeyId, parsed.subkeyKeyId, 8);
+
         impl_->peerKeyImported = true;
         return NO_ERROR;
     }
@@ -2607,6 +3563,51 @@ int CPgpEngine::GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity)
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngine::ImportAdditionalRecipientPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->peerKeyImported || keyBlockBuffer == nullptr || keyBlockBufferSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::vector<unsigned char> binary;
+        if (!decodeKeyBlockToBinary(keyBlockBuffer, keyBlockBufferSize, binary))
+        {
+            return INVALID_DATA;
+        }
+
+        ParsedPeerPublicKeyBlock parsed;
+        if (!parsePeerPublicKeyBlock(binary, parsed) || !parsed.haveSubkey)
+        {
+            return INVALID_DATA;
+        }
+
+        PgpEncryptionRecipient recipient;
+        recipient.algorithm = parsed.subkeyAlgorithm;
+        if (parsed.subkeyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            recipient.rsaPublicKey = parsed.subkeyRsaKey;
+            std::memcpy(recipient.rsaKeyId, parsed.subkeyKeyId, 8);
+        }
+        else
+        {
+            std::memcpy(recipient.x25519PublicKey, parsed.subkeyX25519Key, 32);
+            std::memcpy(recipient.x25519KeyId, parsed.subkeyKeyId, 8);
+            std::memcpy(recipient.x25519Fingerprint, parsed.subkeyFingerprint, 20);
+        }
+
+        impl_->additionalRecipients.push_back(recipient);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngine::EncryptBuffer(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
 {
     try
@@ -2616,8 +3617,30 @@ int CPgpEngine::EncryptBuffer(const unsigned char* inputBuffer, const int inputB
             return INVALID_ARGUMENT;
         }
 
+        std::vector<PgpEncryptionRecipient> recipients;
+        {
+            PgpEncryptionRecipient primary;
+            primary.algorithm = impl_->peerSubkeyAlgorithm;
+            if (impl_->peerSubkeyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                primary.rsaPublicKey = impl_->peerSubkeyPublicKey;
+                std::memcpy(primary.rsaKeyId, impl_->peerSubkeyKeyId, 8);
+            }
+            else
+            {
+                std::memcpy(primary.x25519PublicKey, impl_->peerX25519PublicKey, 32);
+                std::memcpy(primary.x25519KeyId, impl_->peerSubkeyKeyId, 8);
+                std::memcpy(primary.x25519Fingerprint, impl_->peerSubkeyFingerprint, 20);
+            }
+            recipients.push_back(primary);
+        }
+        for (std::size_t i = 0; i < impl_->additionalRecipients.size(); ++i)
+        {
+            recipients.push_back(impl_->additionalRecipients[i]);
+        }
+
         std::vector<unsigned char> message;
-        if (!buildEncryptedMessage(impl_->peerSubkeyPublicKey, impl_->peerSubkeyKeyId, inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
+        if (!buildEncryptedMessageMultiRecipient(recipients, inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -2647,9 +3670,31 @@ int CPgpEngine::EncryptStringArmored(const char* inputString, const int inputStr
             return INVALID_ARGUMENT;
         }
 
+        std::vector<PgpEncryptionRecipient> recipients;
+        {
+            PgpEncryptionRecipient primary;
+            primary.algorithm = impl_->peerSubkeyAlgorithm;
+            if (impl_->peerSubkeyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                primary.rsaPublicKey = impl_->peerSubkeyPublicKey;
+                std::memcpy(primary.rsaKeyId, impl_->peerSubkeyKeyId, 8);
+            }
+            else
+            {
+                std::memcpy(primary.x25519PublicKey, impl_->peerX25519PublicKey, 32);
+                std::memcpy(primary.x25519KeyId, impl_->peerSubkeyKeyId, 8);
+                std::memcpy(primary.x25519Fingerprint, impl_->peerSubkeyFingerprint, 20);
+            }
+            recipients.push_back(primary);
+        }
+        for (std::size_t i = 0; i < impl_->additionalRecipients.size(); ++i)
+        {
+            recipients.push_back(impl_->additionalRecipients[i]);
+        }
+
         const unsigned char* inputBytes = reinterpret_cast<const unsigned char*>(inputString);
         std::vector<unsigned char> message;
-        if (!buildEncryptedMessage(impl_->peerSubkeyPublicKey, impl_->peerSubkeyKeyId, inputBytes, static_cast<std::size_t>(inputStringSize), message))
+        if (!buildEncryptedMessageMultiRecipient(recipients, inputBytes, static_cast<std::size_t>(inputStringSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -2686,7 +3731,7 @@ int CPgpEngine::DecryptBuffer(const char* password, const int passwordSize, cons
 
         const std::vector<unsigned char> message(inputBuffer, inputBuffer + inputBufferSize);
         std::vector<unsigned char> plaintext;
-        if (!parseAndDecryptMessage(impl_->ownSubkeyPrivateKey, message, plaintext))
+        if (!parseAndDecryptMessage(impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint, impl_->ownSubkeyKeyId, message, plaintext))
         {
             return INVALID_DATA;
         }
@@ -2732,7 +3777,7 @@ int CPgpEngine::DecryptStringArmored(const char* password, const int passwordSiz
         }
 
         std::vector<unsigned char> plaintext;
-        if (!parseAndDecryptMessage(impl_->ownSubkeyPrivateKey, message, plaintext))
+        if (!parseAndDecryptMessage(impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint, impl_->ownSubkeyKeyId, message, plaintext))
         {
             return INVALID_DATA;
         }
@@ -2770,7 +3815,9 @@ int CPgpEngine::SignBuffer(const char* password, const int passwordSize, const u
         }
 
         const std::vector<unsigned char> documentData(inputBuffer, inputBuffer + inputBufferSize);
-        const std::vector<unsigned char> sigPacket = buildSignaturePacket(impl_->ownMasterPrivateKey, 0x00, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId);
+        const std::vector<unsigned char> sigPacket = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            buildSignaturePacket(impl_->ownMasterPrivateKey, 0x00, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId) :
+            buildEd25519SignaturePacket(impl_->ownEd25519PrivateKey, 0x00, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId);
         if (sigPacket.empty())
         {
             return UNEXPECTED_ERROR;
@@ -2805,7 +3852,10 @@ int CPgpEngine::VerifyBuffer(const unsigned char* inputBuffer, const int inputBu
         const std::vector<unsigned char> sigPacketBytes(signatureBuffer, signatureBuffer + signatureBufferSize);
 
         bool verified = false;
-        if (!verifySignaturePacket(impl_->peerMasterPublicKey, documentData, sigPacketBytes, &verified))
+        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(impl_->peerMasterPublicKey, documentData, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, documentData, sigPacketBytes, &verified);
+        if (!technicalOk)
         {
             return INVALID_DATA;
         }
@@ -2850,13 +3900,17 @@ int CPgpEngine::ClearSignString(const char* password, const int passwordSize, co
             }
         }
 
-        const std::vector<unsigned char> sigPacket = buildSignaturePacket(impl_->ownMasterPrivateKey, 0x01, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId);
+        const std::vector<unsigned char> sigPacket = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            buildSignaturePacket(impl_->ownMasterPrivateKey, 0x01, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId) :
+            buildEd25519SignaturePacket(impl_->ownEd25519PrivateKey, 0x01, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId);
         if (sigPacket.empty())
         {
             return UNEXPECTED_ERROR;
         }
 
-        std::string out = "-----BEGIN PGP SIGNED MESSAGE-----\r\nHash: SHA256\r\n\r\n";
+        std::string out = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            "-----BEGIN PGP SIGNED MESSAGE-----\r\nHash: SHA256\r\n\r\n" :
+            "-----BEGIN PGP SIGNED MESSAGE-----\r\nHash: SHA512\r\n\r\n";
         for (std::size_t i = 0; i < lines.size(); ++i)
         {
             if (!lines[i].empty() && lines[i][0] == '-')
@@ -2978,7 +4032,10 @@ int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int
         }
 
         bool verified = false;
-        if (!verifySignaturePacket(impl_->peerMasterPublicKey, documentData, sigPacketBytes, &verified))
+        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(impl_->peerMasterPublicKey, documentData, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, documentData, sigPacketBytes, &verified);
+        if (!technicalOk)
         {
             return INVALID_DATA;
         }
@@ -3000,6 +4057,32 @@ int CPgpEngine::EncryptFile(const char* inputFilePath, const char* outputFilePat
         if (!impl_ || !impl_->peerKeyImported || inputFilePath == nullptr || outputFilePath == nullptr)
         {
             return INVALID_ARGUMENT;
+        }
+        // v1 streaming-path scope limitation (see this method's own header comment) -- RSA
+        // recipients only, though multiple RSA recipients (ImportAdditionalRecipientPublicKey)
+        // ARE supported here.
+        if (impl_->peerSubkeyAlgorithm != PGP_KEY_ALGORITHM_RSA)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        std::vector<CryptoPP::RSA::PublicKey> recipientKeys;
+        std::vector<std::array<unsigned char, 8> > recipientKeyIds;
+        {
+            recipientKeys.push_back(impl_->peerSubkeyPublicKey);
+            std::array<unsigned char, 8> primaryId;
+            std::memcpy(primaryId.data(), impl_->peerSubkeyKeyId, 8);
+            recipientKeyIds.push_back(primaryId);
+        }
+        for (std::size_t i = 0; i < impl_->additionalRecipients.size(); ++i)
+        {
+            if (impl_->additionalRecipients[i].algorithm != PGP_KEY_ALGORITHM_RSA)
+            {
+                return NOT_IMPLEMENTED;
+            }
+            recipientKeys.push_back(impl_->additionalRecipients[i].rsaPublicKey);
+            std::array<unsigned char, 8> recipientId;
+            std::memcpy(recipientId.data(), impl_->additionalRecipients[i].rsaKeyId, 8);
+            recipientKeyIds.push_back(recipientId);
         }
 
         std::wstring wideInputPath;
@@ -3031,7 +4114,7 @@ int CPgpEngine::EncryptFile(const char* inputFilePath, const char* outputFilePat
         }
         std::unique_ptr<void, decltype(&CloseHandle)> outputHandle(rawOutputHandle, &CloseHandle);
 
-        const int status = encryptFileStreaming(impl_->peerSubkeyPublicKey, impl_->peerSubkeyKeyId, rawInputHandle, fileSize, rawOutputHandle, onProgress, progressUserData);
+        const int status = encryptFileStreaming(recipientKeys, recipientKeyIds, rawInputHandle, fileSize, rawOutputHandle, onProgress, progressUserData);
         if (status != NO_ERROR)
         {
             outputHandle.reset();
@@ -3054,6 +4137,10 @@ int CPgpEngine::DecryptFile(const char* password, const int passwordSize, const 
         {
             return INVALID_ARGUMENT;
         }
+        if (impl_->keyAlgorithm != PGP_KEY_ALGORITHM_RSA)
+        {
+            return NOT_IMPLEMENTED;
+        }
         if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
         {
             return INVALID_ARGUMENT;
@@ -3074,7 +4161,7 @@ int CPgpEngine::DecryptFile(const char* password, const int passwordSize, const 
         }
         std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
 
-        const DecryptFileHeader header = parseEncryptedFileHeader(rawInputHandle, impl_->ownSubkeyPrivateKey);
+        const DecryptFileHeader header = parseEncryptedFileHeader(rawInputHandle, impl_->ownSubkeyPrivateKey, impl_->ownSubkeyKeyId);
         if (!header.ok)
         {
             return INVALID_DATA;
@@ -3119,6 +4206,10 @@ int CPgpEngine::SignFile(const char* password, const int passwordSize, const cha
         if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0 || inputFilePath == nullptr || signatureFilePath == nullptr)
         {
             return INVALID_ARGUMENT;
+        }
+        if (impl_->keyAlgorithm != PGP_KEY_ALGORITHM_RSA)
+        {
+            return NOT_IMPLEMENTED;
         }
         if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
         {
@@ -3182,6 +4273,10 @@ int CPgpEngine::VerifyFile(const char* inputFilePath, const char* signatureFileP
         if (!impl_ || !impl_->peerKeyImported || inputFilePath == nullptr || signatureFilePath == nullptr || isValid == nullptr)
         {
             return INVALID_ARGUMENT;
+        }
+        if (impl_->peerMasterAlgorithm != PGP_KEY_ALGORITHM_RSA)
+        {
+            return NOT_IMPLEMENTED;
         }
 
         std::wstring wideInputPath;

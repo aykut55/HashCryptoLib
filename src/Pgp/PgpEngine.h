@@ -8,6 +8,25 @@
 namespace CryptoApiNS
 {
 
+// Which public-key algorithm family GenerateKeyPair() below uses for this instance's own identity
+// -- fixed at construction (see the two constructors below), never changed afterward.
+// PGP_KEY_ALGORITHM_RSA (the default -- also what the no-arg and rsaKeyBits constructors select)
+// pairs an RSA master key with an RSA encryption subkey, exactly as documented on GenerateKeyPair
+// itself. PGP_KEY_ALGORITHM_ED25519_X25519 instead pairs an Ed25519 (RFC 8032, OpenPGP algorithm
+// ID 22, "EdDSA Legacy") master signing key with an X25519 (RFC 7748, OpenPGP algorithm ID 18,
+// ECDH over Curve25519) encryption subkey -- the same "ed25519" default identity shape real GnuPG
+// produces (verified by generating one with a local GnuPG install and inspecting its exported
+// packets byte-for-byte), so identities from either implementation interoperate. Note this
+// describes THIS instance's OWN identity only: the peer key imported via ImportPeerPublicKey/
+// ImportAdditionalRecipientPublicKey below carries its own, independently-detected algorithm per
+// key (RSA and Ed25519/X25519 peers can be mixed freely, including as multiple recipients of the
+// same EncryptBuffer call).
+enum PgpKeyAlgorithm
+{
+    PGP_KEY_ALGORITHM_RSA           = 0,
+    PGP_KEY_ALGORITHM_ED25519_X25519 = 1
+};
+
 class CPgpEngine
 {
 public:
@@ -15,17 +34,33 @@ public:
              CPgpEngine();
 
     // rsaKeyBits selects the RSA key size GenerateKeyPair() below will use (1024/2048/3072/4096);
-    // any other value is rejected by GenerateKeyPair() with INVALID_ARGUMENT.
+    // any other value is rejected by GenerateKeyPair() with INVALID_ARGUMENT. Selects
+    // PGP_KEY_ALGORITHM_RSA (see GetKeyAlgorithm below).
     explicit CPgpEngine(const int rsaKeyBits);
 
+    // Selects keyAlgorithm for this instance's own identity (see the PgpKeyAlgorithm comment
+    // above); GenerateKeyPair() then generates that kind of key pair instead of RSA. There is no
+    // key-size parameter for PGP_KEY_ALGORITHM_ED25519_X25519 -- Ed25519/X25519 both have exactly
+    // one fixed size (RFC 8032/7748), unlike RSA. Passing PGP_KEY_ALGORITHM_RSA here is equivalent
+    // to the rsaKeyBits constructor with 2048.
+    explicit CPgpEngine(const PgpKeyAlgorithm keyAlgorithm);
+
+    // Which algorithm this instance's own identity uses -- fixed at construction (see the two
+    // constructors above), independent of whether GenerateKeyPair() has been called yet.
+    PgpKeyAlgorithm GetKeyAlgorithm(void) const;
+
     // ============================================================================================
-    // Identity (own key pair) -- RFC 4880 v4 keys: one RSA master key (Sign+Certify, key flags
-    // 0x03) plus one RSA encryption subkey (Encrypt, key flags 0x0C), bound to userId by a 0x13
-    // positive-certification self-signature (SHA-256). password protects the exported secret key
-    // material (S2K, iterated+salted, SHA-256) -- it is NOT the same as any per-message password.
-    // Must be called once before ExportPublicKeyArmored/ExportSecretKeyArmored/DecryptBuffer/
-    // DecryptStringArmored/SignBuffer/ClearSignString; calling it again rotates to a fresh
-    // identity (old exported keys/signatures become unrelated to the new one).
+    // Identity (own key pair) -- RFC 4880 v4 keys: for PGP_KEY_ALGORITHM_RSA (the default), one
+    // RSA master key (Sign+Certify, key flags 0x03) plus one RSA encryption subkey (Encrypt, key
+    // flags 0x0C); for PGP_KEY_ALGORITHM_ED25519_X25519, one Ed25519 master key (same Sign+Certify
+    // flags 0x03) plus one X25519 encryption subkey (same Encrypt flags 0x0C), self-certification
+    // signed with Ed25519/SHA-512 instead of RSA/SHA-256 (matching what real GnuPG's own "ed25519"
+    // identities use). Either way, bound to userId by a 0x13 positive-certification self-signature.
+    // password protects the exported secret key material (S2K, iterated+salted, SHA-256) -- it is
+    // NOT the same as any per-message password. Must be called once before
+    // ExportPublicKeyArmored/ExportSecretKeyArmored/DecryptBuffer/DecryptStringArmored/
+    // SignBuffer/ClearSignString; calling it again rotates to a fresh identity (old exported keys/
+    // signatures become unrelated to the new one).
     // ============================================================================================
 
     int GenerateKeyPair( const char* userId, const int userIdSize,
@@ -91,12 +126,35 @@ public:
     // ImportPeerPublicKey() succeeds.
     int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const;
 
+    // Adds ANOTHER recipient's public key to an internal list used ONLY by EncryptBuffer/
+    // EncryptStringArmored/EncryptFile below -- never by VerifyBuffer/VerifyClearSignedString/
+    // VerifyFile, which always verify against the single peer ImportPeerPublicKey set (this is the
+    // multi-recipient extension of the single-peer model above: ImportPeerPublicKey's peer is
+    // always included as one recipient automatically, so callers do not re-add it here). May be
+    // called multiple times to add multiple additional recipients; every call so far (the
+    // ImportPeerPublicKey peer plus every ImportAdditionalRecipientPublicKey addition) receives its
+    // own Public-Key Encrypted Session Key (tag 1) packet in the NEXT Encrypt* call's output, all
+    // of them wrapping the SAME randomly generated session key -- so any one recipient's matching
+    // secret key can decrypt the result independently, exactly like a real multi-recipient OpenPGP
+    // message. ImportPeerPublicKey() must have succeeded first (it establishes the primary peer);
+    // keyBlockBuffer follows the same armored-or-binary auto-detection as ImportPeerPublicKey, and
+    // the added recipient's own algorithm (RSA or Ed25519/X25519) is detected independently of both
+    // this instance's own GetKeyAlgorithm() and the primary peer's -- recipients of different
+    // algorithms may be mixed freely in the same call sequence. Encrypt* keeps working exactly as
+    // before (single PKESK, to the ImportPeerPublicKey peer only) when this is never called.
+    int ImportAdditionalRecipientPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize);
+
     // ============================================================================================
-    // Encrypt (to the imported peer's encryption subkey) / Decrypt (with this instance's own
-    // secret key) -- RFC 4880 single-recipient message: Public-Key Encrypted Session Key (tag 1,
-    // RSA-PKCS#1v1.5) + Compressed Data (tag 8, ZIP) + Literal Data (tag 11), all wrapped in a
-    // Sym. Encrypted Integrity Protected Data packet (tag 18, AES-256-CFB, SHA-1 MDC). Decrypt
-    // fails closed (INVALID_DATA) on any MDC mismatch before returning partial plaintext.
+    // Encrypt (to the imported peer's encryption subkey, plus any ImportAdditionalRecipientPublicKey
+    // recipients) / Decrypt (with this instance's own secret key) -- RFC 4880 message: one
+    // Public-Key Encrypted Session Key (tag 1) packet per recipient (RSA-PKCS#1v1.5 or, for an
+    // Ed25519/X25519 recipient, ECDH per RFC 6637/crypto-refresh -- ephemeral X25519 key agreement,
+    // SHA-256 KDF, AES-128 RFC 3394 key wrap, matching real GnuPG's own Curve25519 defaults) +
+    // Compressed Data (tag 8, ZIP) + Literal Data (tag 11), all wrapped in a single Sym. Encrypted
+    // Integrity Protected Data packet (tag 18, AES-256-CFB, SHA-1 MDC) shared by every recipient.
+    // Decrypt fails closed (INVALID_DATA) on any MDC mismatch before returning partial plaintext,
+    // and (when there are multiple PKESK packets) tries each one in turn looking for the one
+    // addressed to this instance's own Key ID rather than assuming the first PKESK is always ours.
     // ============================================================================================
 
     // ImportPeerPublicKey() must have succeeded first. No chunking -- inputBufferSize is bounded
@@ -122,7 +180,12 @@ public:
 
     // ============================================================================================
     // Sign (with this instance's own master key) / Verify (against the imported peer's master
-    // key) -- detached RSA-PKCS#1v1.5-SHA256 signature packet (tag 2, signature type 0x00).
+    // key) -- detached signature packet (tag 2, signature type 0x00): RSA-PKCS#1v1.5-SHA256 for a
+    // PGP_KEY_ALGORITHM_RSA identity/peer, or Ed25519-SHA512 (per crypto-refresh's EdDSA Legacy
+    // convention, matching real GnuPG) for a PGP_KEY_ALGORITHM_ED25519_X25519 one -- SignBuffer
+    // always uses THIS instance's own GetKeyAlgorithm(); VerifyBuffer detects the peer's algorithm
+    // independently from the signature packet's own algorithm octet, so either engine can verify
+    // either kind of signature regardless of its own identity's algorithm.
     // ============================================================================================
 
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
@@ -165,7 +228,17 @@ public:
     // the trailing MDC check passes: SEIP's MDC sits at the very end of the stream, so unlike
     // DecryptBuffer's one-shot version there is no way to verify integrity before starting to
     // write plaintext -- this mirrors GnuPG's own inherent limitation for streamed decryption,
-    // not something specific to this engine.
+    // not something specific to this engine. Multi-recipient (ImportAdditionalRecipientPublicKey)
+    // IS supported here for RSA recipients. v1 scope limitation: these four streaming methods
+    // support PGP_KEY_ALGORITHM_RSA only -- EncryptFile returns NOT_IMPLEMENTED if this instance's
+    // own algorithm, the ImportPeerPublicKey peer's encryption-subkey algorithm, or any
+    // ImportAdditionalRecipientPublicKey recipient's algorithm is PGP_KEY_ALGORITHM_ED25519_X25519;
+    // DecryptFile/SignFile return NOT_IMPLEMENTED when this instance's own algorithm is
+    // PGP_KEY_ALGORITHM_ED25519_X25519; VerifyFile returns NOT_IMPLEMENTED when the
+    // ImportPeerPublicKey peer's master-key algorithm is PGP_KEY_ALGORITHM_ED25519_X25519. The
+    // buffer-based Encrypt/Decrypt/Sign/Verify/ClearSign methods above have no such restriction --
+    // this gap is streaming-path-only, deferred for scope/time (see CPgpEngine.cpp's own comment
+    // on these four methods for the reasoning).
     // ============================================================================================
 
     // ImportPeerPublicKey() must have succeeded first.

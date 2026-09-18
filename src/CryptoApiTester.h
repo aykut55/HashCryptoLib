@@ -387,9 +387,10 @@ public:
     // (same WriteTesterFile/ReadTesterFile + std::remove pattern as RunEncryptDecryptFileTest) to
     // exercise real file I/O, not just an in-memory literal. Bob signs that document once
     // (SignBuffer) and separately encrypts the signature-plus-document to each of Alice/Carol/
-    // Dave's public keys in turn (ImportPeerPublicKey + EncryptBuffer per recipient -- this
-    // engine has no multi-recipient PKESK support, so "sending to 3 people" means 3 independent
-    // ciphertexts of the same signed payload, not one shared ciphertext). The signature and
+    // Dave's public keys in turn (ImportPeerPublicKey + EncryptBuffer per recipient -- deliberately
+    // 3 independent ciphertexts of the same signed payload rather than one shared multi-recipient
+    // ciphertext, predating ImportAdditionalRecipientPublicKey/RunPgpMultiRecipientEncryptDecryptTest;
+    // kept as-is since it still exercises a real, valid usage pattern). The signature and
     // document are framed together as a 4-byte big-endian signature length prefix followed by
     // the signature packet and then the document bytes, so each recipient can split them back
     // apart after decrypting. Each of Alice/Carol/Dave independently decrypts its own ciphertext
@@ -437,6 +438,80 @@ public:
     // then produces a revocation certificate (RevokeKeyArmored), imports it into the same
     // keyring, and confirms the key's validity field flips to 'r' (revoked).
     int RunPgpGnuPgRevocationInteropTest(void);
+
+    // Internal-only (no GnuPG needed) multi-recipient round-trip: bob imports alice's public key
+    // (ImportPeerPublicKey, the primary recipient) and carol's public key
+    // (ImportAdditionalRecipientPublicKey, an additional recipient), then EncryptBuffer/
+    // EncryptStringArmored ONCE each; both alice and carol independently DecryptBuffer/
+    // DecryptStringArmored the SAME ciphertext successfully (one shared session key, two PKESK
+    // packets). A fourth identity (dave, never imported as a recipient) is confirmed unable to
+    // decrypt either ciphertext (INVALID_DATA), proving the recipient list is actually enforced
+    // rather than every ciphertext being universally decryptable.
+    int RunPgpMultiRecipientEncryptDecryptTest(void);
+
+    // Same multi-recipient scenario as RunPgpMultiRecipientEncryptDecryptTest, but through the
+    // streaming EncryptFile API (bob) and DecryptFile (alice, then carol, both against the exact
+    // same encrypted file) -- same WriteTesterFile/ReadTesterFile file-based pattern as
+    // RunPgpFileEncryptDecryptTest.
+    int RunPgpMultiRecipientFileEncryptDecryptTest(void);
+
+    // Cross-checks multi-recipient encryption against two REAL, independently GnuPG-generated
+    // identities -- SKIPPED (not FAILED) when gpg.exe isn't found, same convention as
+    // RunPgpGnuPgInteropTest. Uses two isolated --homedirs (one per gpg identity, gpg's own
+    // "--quick-generate-key" -- the piped/non-console gpg-agent quirk noted on
+    // RunPgpGnuPgInteropTest can affect key generation too, so this test treats the operation as
+    // successful whenever a follow-up "--list-secret-keys" confirms the identity actually exists,
+    // regardless of _popen's own reported exit code). This engine imports BOTH gpg public keys
+    // (ImportPeerPublicKey + ImportAdditionalRecipientPublicKey) and EncryptStringArmored's ONCE;
+    // the resulting single ciphertext is then handed to EACH gpg identity's own homedir in turn
+    // ("gpg --decrypt") and both must independently recover the original plaintext.
+    int RunPgpGnuPgMultiRecipientInteropTest(void);
+
+    // Generates an Ed25519/X25519 identity (the CPgpEngine(PGP_KEY_ALGORITHM_ED25519_X25519)
+    // constructor) and checks GetKeyAlgorithm() reports it back, then otherwise mirrors
+    // RunPgpKeyGenerationTest exactly (GetKeyId, ExportPublicKeyArmored/ExportSecretKeyArmored
+    // round-tripped through the capacity=0 BUFFER_TOO_SMALL convention, armor framing checks).
+    int RunPgpEd25519KeyGenerationTest(void);
+
+    // Ed25519/X25519 analogue of RunPgpEncryptDecryptTest -- both alice and bob are
+    // PGP_KEY_ALGORITHM_ED25519_X25519 identities; same buffer + armored-string round-trip checks.
+    int RunPgpEd25519EncryptDecryptTest(void);
+
+    // Ed25519/X25519 analogue of RunPgpSignVerifyTest (Ed25519-SHA512 detached signatures instead
+    // of RSA-PKCS#1v1.5-SHA256), including the same bit-flipped-signature negative check.
+    int RunPgpEd25519SignVerifyTest(void);
+
+    // Ed25519/X25519 analogue of RunPgpClearSignTest, including the same tampered-body negative
+    // check.
+    int RunPgpEd25519ClearSignTest(void);
+
+    // Cross-checks a PGP_KEY_ALGORITHM_ED25519_X25519 identity against a real, installed GnuPG --
+    // SKIPPED (not FAILED) when gpg.exe isn't found, same convention as RunPgpGnuPgInteropTest.
+    // Exports this engine's Ed25519/X25519 public key and imports it into a real gpg (confirming
+    // gpg parses/accepts the EdDSA-Legacy/ECDH packet layout byte-for-byte, not just that this
+    // engine can read its own output back), then exercises the same 3 directions
+    // RunPgpGnuPgInteropTest does: gpg encrypts (to the imported cv25519 subkey) and this engine
+    // decrypts (DecryptStringArmored, exercising the ECDH/AES-KeyWrap decrypt path against a REAL
+    // gpg-produced PKESK, not just this engine's own); this engine signs (SignBuffer, Ed25519) and
+    // gpg verifies; this engine clear-signs (ClearSignString) and gpg verifies.
+    int RunPgpGnuPgEd25519InteropTest(void);
+
+    // Internal-only (no GnuPG needed) round-trip of CPgpEngine's expiration API against Ed25519/
+    // X25519 identities: generates one identity with the 4-argument GenerateKeyPair (must report
+    // GetKeyExpirationSeconds()==0) and another with the 5-argument overload's expirationSeconds
+    // set to a non-zero value (must echo that exact value back) -- same shape as
+    // RunPgpKeyExpirationTest, using CPgpEngine(PGP_KEY_ALGORITHM_ED25519_X25519) instead.
+    int RunPgpEd25519KeyExpirationTest(void);
+
+    // Cross-checks GenerateKeyPair's expiration overload and RevokeKeyArmored against real GnuPG
+    // for an Ed25519/X25519 identity -- SKIPPED (not FAILED) when gpg.exe isn't found, same
+    // convention as RunPgpGnuPgInteropTest. Generates a PGP_KEY_ALGORITHM_ED25519_X25519 identity
+    // with a 30-day expiration, imports it, and confirms via "gpg --with-colons --list-keys" that
+    // the parsed expiry field is non-empty; then produces a revocation certificate
+    // (RevokeKeyArmored), imports it into the same keyring, and confirms the key's validity field
+    // flips to 'r' (revoked) -- same shape as RunPgpGnuPgRevocationInteropTest, using an Ed25519/
+    // X25519 identity instead of RSA.
+    int RunPgpGnuPgEd25519RevocationInteropTest(void);
 
     // ============================================================================================
     // CPgpEngineWrapper -- parallel test suite for the gpg.exe-backed engine (see

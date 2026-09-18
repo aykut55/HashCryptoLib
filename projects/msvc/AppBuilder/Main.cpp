@@ -221,7 +221,7 @@ int main()
     cryptoApiTester.RunRandomAlgorithmsTest();
 #endif
 
-#if 0
+#if 1
     cryptoApiTester.RunPgpKeyGenerationTest();
 
     cryptoApiTester.RunPgpEncryptDecryptTest();
@@ -243,6 +243,26 @@ int main()
     cryptoApiTester.RunPgpKeyExpirationTest();
 
     cryptoApiTester.RunPgpGnuPgRevocationInteropTest();
+
+    cryptoApiTester.RunPgpMultiRecipientEncryptDecryptTest();
+
+    cryptoApiTester.RunPgpMultiRecipientFileEncryptDecryptTest();
+
+    cryptoApiTester.RunPgpGnuPgMultiRecipientInteropTest();
+
+    cryptoApiTester.RunPgpEd25519KeyGenerationTest();
+
+    cryptoApiTester.RunPgpEd25519EncryptDecryptTest();
+
+    cryptoApiTester.RunPgpEd25519SignVerifyTest();
+
+    cryptoApiTester.RunPgpEd25519ClearSignTest();
+
+    cryptoApiTester.RunPgpGnuPgEd25519InteropTest();
+
+    cryptoApiTester.RunPgpEd25519KeyExpirationTest();
+
+    cryptoApiTester.RunPgpGnuPgEd25519RevocationInteropTest();
 #endif
 
 #if 1
