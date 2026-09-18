@@ -12760,6 +12760,37 @@ int CCryptoApiTester::RunPgpEccFileStreamingTest(void)
                 }
             }
         }
+        CPgpEngine compressedSender;
+        status = compressedSender.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(eccKey.data()), eccKeySize);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        int compressedSize = 0;
+        status = compressedSender.EncryptBuffer(inputData.data(), static_cast<int>(inputData.size()), 0, nullptr, &compressedSize);
+        if (status != BUFFER_TOO_SMALL || compressedSize <= 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> compressedCipher(static_cast<std::size_t>(compressedSize));
+        int actualCompressedSize = 0;
+        status = compressedSender.EncryptBuffer(inputData.data(), static_cast<int>(inputData.size()), compressedSize, compressedCipher.data(), &actualCompressedSize);
+        if (status != NO_ERROR || actualCompressedSize <= 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        compressedCipher.resize(static_cast<std::size_t>(actualCompressedSize));
+        if (!WriteTesterFile(cipherPath, compressedCipher))
+        {
+            return FILE_IO_ERROR;
+        }
+        status = ecc.DecryptFile(eccPassword, static_cast<int>(std::strlen(eccPassword)), cipherPath, outputPath, nullptr, nullptr);
+        std::vector<unsigned char> decompressedData;
+        if (status != NO_ERROR || !ReadTesterFile(outputPath, decompressedData) || decompressedData != inputData)
+        {
+            std::cout << "RunPgpEccFileStreamingTest: FAILED compressed DecryptFile status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
         status = ecc.SignFile(eccPassword, static_cast<int>(std::strlen(eccPassword)), inputPath, signaturePath, nullptr, nullptr);
         bool isValid = false;
         if (status == NO_ERROR)
@@ -12809,7 +12840,7 @@ int CCryptoApiTester::RunPgpEccFileStreamingTest(void)
             std::cout << "RunPgpEccFileStreamingTest: FAILED corrupted ciphertext accepted" << std::endl;
             return UNEXPECTED_ERROR;
         }
-        std::cout << "RunPgpEccFileStreamingTest: PASSED ECC/RSA file encryption, ECC signing, tamper checks" << std::endl;
+        std::cout << "RunPgpEccFileStreamingTest: PASSED ECC/RSA file encryption, ZIP DecryptFile, ECC signing, tamper checks" << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -14240,6 +14271,8 @@ int CCryptoApiTester::RunPgpGnuPgEd25519InteropTest(void)
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_ed25519_pub.asc";
         const char* plainPath = "cryptoapi_pgp_gnupg_ed25519_plain.txt";
         const char* encryptedPath = "cryptoapi_pgp_gnupg_ed25519_encrypted.asc";
+        const char* compressedPath = "cryptoapi_pgp_gnupg_ed25519_zlib.pgp";
+        const char* compressedOutputPath = "cryptoapi_pgp_gnupg_ed25519_zlib_out.bin";
         const char* signDataPath = "cryptoapi_pgp_gnupg_ed25519_signdata.bin";
         const char* signaturePath = "cryptoapi_pgp_gnupg_ed25519_signdata.sig";
         const char* clearSignedPath = "cryptoapi_pgp_gnupg_ed25519_clearsigned.asc";
@@ -14328,6 +14361,30 @@ int CCryptoApiTester::RunPgpGnuPgEd25519InteropTest(void)
             return UNEXPECTED_ERROR;
         }
         std::cout << "RunPgpGnuPgEd25519InteropTest: PASSED direction gpg-encrypt(ECDH/X25519) -> our-decrypt" << std::endl;
+
+        // GnuPG writes an old-format indeterminate-length compressed packet here. Keep the
+        // plaintext compressible so the requested ZLIB algorithm is actually used.
+        const std::vector<unsigned char> zlibPlaintext(8192, 'Z');
+        if (!WriteTesterFile(plainPath, zlibPlaintext))
+        {
+            return FILE_IO_ERROR;
+        }
+        rc = RunShellCommand(gpgBase + "--compress-algo zlib --compress-level 6 -r " + keyId + " --output " + QuoteShellPath(compressedPath) + " --encrypt " + QuoteShellPath(plainPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgEd25519InteropTest: FAILED gpg ZLIB encryption rc=" << rc << "\n" << cmdOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        status = pgp.DecryptFile(password, static_cast<int>(std::strlen(password)), compressedPath, compressedOutputPath, nullptr, nullptr);
+        std::vector<unsigned char> zlibDecrypted;
+        if (status != NO_ERROR || !ReadTesterFile(compressedOutputPath, zlibDecrypted) || zlibDecrypted != zlibPlaintext)
+        {
+            std::cout << "RunPgpGnuPgEd25519InteropTest: FAILED ZLIB DecryptFile status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::remove(compressedPath);
+        std::remove(compressedOutputPath);
+        std::cout << "RunPgpGnuPgEd25519InteropTest: PASSED gpg ZLIB file -> our DecryptFile" << std::endl;
 
         const std::vector<unsigned char> signData(plaintext, plaintext + std::strlen(plaintext));
         if (!WriteTesterFile(signDataPath, signData))

@@ -239,8 +239,9 @@ public:
                     ProgressCallback onProgress, void* progressUserData);
 
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
-    // with. Currently accepts an uncompressed literal packet such as EncryptFile produces;
-    // compressed inner packets (e.g. from EncryptBuffer or GnuPG) return NOT_IMPLEMENTED.
+    // with. Accepts an uncompressed literal packet such as EncryptFile produces, or a compressed
+    // inner packet using uncompressed, ZIP, or ZLIB encoding (e.g. from EncryptBuffer or GnuPG).
+    // New-format partial-body-length packets are not yet supported by the packet reader.
     int DecryptFile( const char* password, const int passwordSize,
                     const char* inputFilePath, const char* outputFilePath,
                     ProgressCallback onProgress, void* progressUserData);

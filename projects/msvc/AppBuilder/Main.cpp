@@ -71,7 +71,7 @@ int main()
 #endif
 
 #if 0
-    cryptoApiTester.RunLegacyAlgorithmsTest();
+    cryptoApiTester.RunLegacyAlgorithmsTest();  // Uzun surdu
 #endif
 
 #if 0
@@ -109,7 +109,6 @@ int main()
 #endif
 
 #if 0
-
     cryptoApiTester.RunMicrosoftProviderAllAlgorithmsTest();
 
     cryptoApiTester.RunCryptoPPProviderAllAlgorithmsTest();
@@ -122,7 +121,7 @@ int main()
 #if 0
     cryptoApiTester.RunEncodingUtilsTest();
 
-    //cryptoApiTester.RunAesConfigurationDemoTest();
+    cryptoApiTester.RunAesConfigurationDemoTest();  // Uzun surdu
 
     cryptoApiTester.RunPaddingUtilsTest();
 #endif
@@ -190,7 +189,7 @@ int main()
 
     cryptoApiTester.RunCryptoPPProviderSignatureTest();
 
-    cryptoApiTester.RunBotanProviderSignatureTest();
+    cryptoApiTester.RunBotanProviderSignatureTest();        // Uzun surdu
 
     cryptoApiTester.RunOpenSslProviderSignatureTest();
 
@@ -210,7 +209,7 @@ int main()
 #endif
 
 #if 0
-    cryptoApiTester.RunAESTests();
+    cryptoApiTester.RunAESTests();  // Uzun surdu
 #endif
 
 #if 0
@@ -240,6 +239,9 @@ int main()
 
     cryptoApiTester.RunPgpEccFileStreamingTest();
 
+    // TODO: Investigate local gpg-agent socket creation failure in the two GnuPG import tests
+    // below. GnuPG reports the public key as imported, then exits with rc=2 because the agent
+    // cannot bind its socket under AppData\Local\gnupg ("No such file or directory").
     cryptoApiTester.RunPgpGnuPgInteropTest();
 
     cryptoApiTester.RunPgpKeyExpirationTest();
@@ -274,7 +276,7 @@ int main()
 
     cryptoApiTester.RunPgpWrapperKeyGenerationTest();
 
-    cryptoApiTester.RunPgpWrapperEncryptDecryptTest();
+    cryptoApiTester.RunPgpWrapperEncryptDecryptTest();  // FAILED, PASSED
 
     cryptoApiTester.RunPgpWrapperSignVerifyTest();
 

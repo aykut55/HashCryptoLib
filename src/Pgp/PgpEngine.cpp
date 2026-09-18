@@ -2842,11 +2842,9 @@ DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const PgpKeyA
 }
 // -----------------------------------------------------------------------------
 
-// Streams the SEIP body (CFB-decrypt + running MDC) into outputFileHandle. v1 scope: the inner
-// packet must be an uncompressed Literal Data packet (tag 11) -- a compressed (tag 8) inner
-// packet, as EncryptBuffer/GnuPG would produce, is not yet supported for this streaming path
-// (returns NOT_IMPLEMENTED; see the pgp-engine-todo-streaming memory note for why: decompression
-// would need its own nested streaming header-parsing pass, deferred).
+// Streams the SEIP body (CFB-decrypt + running MDC) into outputFileHandle. The inner packet may
+// be a Literal Data packet (tag 11) or a Compressed Data packet (tag 8) containing one literal
+// packet; ZIP and ZLIB are inflated incrementally so file size does not bound memory usage.
 int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned char>& leftoverCipher, const std::size_t encLength, const unsigned char* sessionKey, const std::size_t sessionKeyLength, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
 {
     try
@@ -2944,73 +2942,241 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
         {
             return INVALID_DATA;
         }
-        if (innerTag != PGP_TAG_LITERAL_DATA)
-        {
-            return NOT_IMPLEMENTED;
-        }
+        const unsigned char innerFirst = pending[pendingPos];
+        const bool innerIndeterminate = (innerFirst & 0xC0) == 0x80 && (innerFirst & 0x03) == 3;
         consumeForHash(innerHeaderLength);
-
-        if (!ensurePending(2))
+        if (innerIndeterminate)
         {
-            return INVALID_DATA;
-        }
-        const unsigned char filenameLength = pending[pendingPos + 1];
-        consumeForHash(2);
-        if (filenameLength > 0)
-        {
-            if (!ensurePending(filenameLength))
+            if (streamPos > encLength - 22)
             {
                 return INVALID_DATA;
             }
-            consumeForHash(filenameLength);
+            innerBodyLength = encLength - 22 - streamPos;
         }
-        if (!ensurePending(4))
+        if (innerTag == PGP_TAG_COMPRESSED_DATA)
         {
-            return INVALID_DATA;
-        }
-        consumeForHash(4);
-
-        const std::size_t literalHeaderTotal = 2 + static_cast<std::size_t>(filenameLength) + 4;
-        if (innerBodyLength < literalHeaderTotal)
-        {
-            return INVALID_DATA;
-        }
-        std::size_t contentRemaining = innerBodyLength - literalHeaderTotal;
-        const unsigned long long totalContentBytes = static_cast<unsigned long long>(contentRemaining);
-        unsigned long long processedBytes = 0;
-
-        while (contentRemaining > 0)
-        {
+            if (innerBodyLength < 1 || innerBodyLength > mdcHashOffset - streamPos - 2)
+            {
+                return INVALID_DATA;
+            }
             if (!ensurePending(1))
             {
                 return INVALID_DATA;
             }
-            const std::size_t available = pending.size() - pendingPos;
-            const std::size_t wantBytes = (contentRemaining < PGP_FILE_CHUNK_SIZE) ? contentRemaining : PGP_FILE_CHUNK_SIZE;
-            const std::size_t takeNow = (available < wantBytes) ? available : wantBytes;
-
-            if (!writeFileExact(outputFileHandle, &pending[pendingPos], static_cast<DWORD>(takeNow)))
+            const unsigned char algorithm = pending[pendingPos];
+            consumeForHash(1);
+            if (algorithm > 2)
             {
-                return FILE_IO_ERROR;
+                return NOT_IMPLEMENTED;
             }
-            consumeForHash(takeNow);
-            contentRemaining -= takeNow;
-            processedBytes += takeNow;
-
-            if (onProgress)
+            std::size_t compressedRemaining = innerBodyLength - 1;
+            CryptoPP::ByteQueue* decodedQueue = new CryptoPP::ByteQueue();
+            std::unique_ptr<CryptoPP::BufferedTransformation> inflator;
+            if (algorithm == 1)
             {
-                const double percentage = totalContentBytes > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(totalContentBytes)) * 100.0 : 0.0;
-                if (!onProgress(processedBytes, totalContentBytes, percentage, progressUserData))
+                inflator.reset(new CryptoPP::Inflator(decodedQueue));
+            }
+            else if (algorithm == 2)
+            {
+                inflator.reset(new CryptoPP::ZlibDecompressor(decodedQueue));
+            }
+            else
+            {
+                inflator.reset(decodedQueue);
+            }
+
+            std::vector<unsigned char> decodedPending;
+            bool literalHeaderParsed = false;
+            bool literalPrefixParsed = false;
+            bool literalIndeterminate = false;
+            std::size_t literalHeaderEnd = 0;
+            std::size_t literalBodyLength = 0;
+            std::size_t contentRemaining = 0;
+            unsigned long long processedBytes = 0;
+            auto drainDecoded = [&]() -> int
+            {
+                const std::size_t available = static_cast<std::size_t>(decodedQueue->MaxRetrievable());
+                if (available > 0)
                 {
-                    return OPERATION_CANCELLED;
+                    const std::size_t oldSize = decodedPending.size();
+                    decodedPending.resize(oldSize + available);
+                    decodedQueue->Get(decodedPending.data() + oldSize, available);
+                }
+                if (!literalHeaderParsed)
+                {
+                    if (decodedPending.empty())
+                    {
+                        return NO_ERROR;
+                    }
+                    std::size_t pos = 0;
+                    unsigned char tag = 0;
+                    if (!readPacketHeader(decodedPending, pos, tag, literalBodyLength))
+                    {
+                        return decodedPending.size() > 512 ? INVALID_DATA : NO_ERROR;
+                    }
+                    if (tag != PGP_TAG_LITERAL_DATA)
+                    {
+                        return INVALID_DATA;
+                    }
+                    const unsigned char first = decodedPending[0];
+                    literalIndeterminate = (first & 0xC0) == 0x80 && (first & 0x03) == 3;
+                    literalHeaderParsed = true;
+                    literalHeaderEnd = pos;
+                }
+                if (!literalPrefixParsed)
+                {
+                    if (decodedPending.size() < literalHeaderEnd + 2)
+                    {
+                        return NO_ERROR;
+                    }
+                    const std::size_t prefixLength = 2 + static_cast<std::size_t>(decodedPending[literalHeaderEnd + 1]) + 4;
+                    if (!literalIndeterminate && literalBodyLength < prefixLength)
+                    {
+                        return INVALID_DATA;
+                    }
+                    if (decodedPending.size() < literalHeaderEnd + prefixLength)
+                    {
+                        return NO_ERROR;
+                    }
+                    contentRemaining = literalIndeterminate ? 0 : literalBodyLength - prefixLength;
+                    decodedPending.erase(decodedPending.begin(), decodedPending.begin() + literalHeaderEnd + prefixLength);
+                    literalPrefixParsed = true;
+                }
+                if (!literalIndeterminate && decodedPending.size() > contentRemaining)
+                {
+                    return INVALID_DATA;
+                }
+                if (!decodedPending.empty())
+                {
+                    if (!writeFileExact(outputFileHandle, decodedPending.data(), static_cast<DWORD>(decodedPending.size())))
+                    {
+                        return FILE_IO_ERROR;
+                    }
+                    processedBytes += decodedPending.size();
+                    if (!literalIndeterminate)
+                    {
+                        contentRemaining -= decodedPending.size();
+                    }
+                    decodedPending.clear();
+                    if (onProgress)
+                    {
+                        const unsigned long long total = literalIndeterminate ? 0 : processedBytes + contentRemaining;
+                        const double percentage = total > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(total)) * 100.0 : 0.0;
+                        if (!onProgress(processedBytes, total, percentage, progressUserData))
+                        {
+                            return OPERATION_CANCELLED;
+                        }
+                    }
+                }
+                return NO_ERROR;
+            };
+
+            while (compressedRemaining > 0)
+            {
+                if (!ensurePending(1))
+                {
+                    return INVALID_DATA;
+                }
+                const std::size_t available = pending.size() - pendingPos;
+                const std::size_t takeNow = std::min<std::size_t>(std::min<std::size_t>(available, compressedRemaining), 4096);
+                try
+                {
+                    inflator->Put(&pending[pendingPos], takeNow);
+                }
+                catch (const CryptoPP::Exception&)
+                {
+                    return INVALID_DATA;
+                }
+                consumeForHash(takeNow);
+                compressedRemaining -= takeNow;
+                const int status = drainDecoded();
+                if (status != NO_ERROR)
+                {
+                    return status;
+                }
+                if (pendingPos > PGP_FILE_CHUNK_SIZE)
+                {
+                    pending.erase(pending.begin(), pending.begin() + pendingPos);
+                    pendingPos = 0;
                 }
             }
-
-            if (pendingPos > PGP_FILE_CHUNK_SIZE)
+            try
             {
-                pending.erase(pending.begin(), pending.begin() + pendingPos);
-                pendingPos = 0;
+                inflator->MessageEnd();
             }
+            catch (const CryptoPP::Exception&)
+            {
+                return INVALID_DATA;
+            }
+            const int status = drainDecoded();
+            if (status != NO_ERROR || !literalPrefixParsed || (!literalIndeterminate && contentRemaining != 0))
+            {
+                return status != NO_ERROR ? status : INVALID_DATA;
+            }
+        }
+        else if (innerTag == PGP_TAG_LITERAL_DATA)
+        {
+            if (!ensurePending(2))
+            {
+                return INVALID_DATA;
+            }
+            const unsigned char filenameLength = pending[pendingPos + 1];
+            consumeForHash(2);
+            if (filenameLength > 0)
+            {
+                if (!ensurePending(filenameLength))
+                {
+                    return INVALID_DATA;
+                }
+                consumeForHash(filenameLength);
+            }
+            if (!ensurePending(4))
+            {
+                return INVALID_DATA;
+            }
+            consumeForHash(4);
+            const std::size_t literalHeaderTotal = 2 + static_cast<std::size_t>(filenameLength) + 4;
+            if (innerBodyLength < literalHeaderTotal)
+            {
+                return INVALID_DATA;
+            }
+            std::size_t contentRemaining = innerBodyLength - literalHeaderTotal;
+            const unsigned long long totalContentBytes = static_cast<unsigned long long>(contentRemaining);
+            unsigned long long processedBytes = 0;
+            while (contentRemaining > 0)
+            {
+                if (!ensurePending(1))
+                {
+                    return INVALID_DATA;
+                }
+                const std::size_t available = pending.size() - pendingPos;
+                const std::size_t wantBytes = (contentRemaining < PGP_FILE_CHUNK_SIZE) ? contentRemaining : PGP_FILE_CHUNK_SIZE;
+                const std::size_t takeNow = (available < wantBytes) ? available : wantBytes;
+                if (!writeFileExact(outputFileHandle, &pending[pendingPos], static_cast<DWORD>(takeNow)))
+                {
+                    return FILE_IO_ERROR;
+                }
+                consumeForHash(takeNow);
+                contentRemaining -= takeNow;
+                processedBytes += takeNow;
+                if (onProgress)
+                {
+                    const double percentage = totalContentBytes > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(totalContentBytes)) * 100.0 : 0.0;
+                    if (!onProgress(processedBytes, totalContentBytes, percentage, progressUserData))
+                    {
+                        return OPERATION_CANCELLED;
+                    }
+                }
+                if (pendingPos > PGP_FILE_CHUNK_SIZE)
+                {
+                    pending.erase(pending.begin(), pending.begin() + pendingPos);
+                    pendingPos = 0;
+                }
+            }
+        }
+        else
+        {
+            return NOT_IMPLEMENTED;
         }
 
         if (!ensurePending(22))

@@ -412,7 +412,8 @@ public:
     int RunPgpFileSignVerifyTest(void);
 
     // ECC file encryption/decryption and detached signing/verification across chunk boundaries;
-    // checks ECC-only and both mixed RSA/ECC recipient orders, plus corruption rejection.
+    // checks ECC-only and both mixed RSA/ECC recipient orders, compressed EncryptBuffer output,
+    // and corruption rejection.
     int RunPgpEccFileStreamingTest(void);
 
     // Cross-checks CPgpEngine against a real, installed GnuPG (Gpg4win) binary -- SKIPPED (not
