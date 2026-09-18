@@ -228,17 +228,10 @@ public:
     // the trailing MDC check passes: SEIP's MDC sits at the very end of the stream, so unlike
     // DecryptBuffer's one-shot version there is no way to verify integrity before starting to
     // write plaintext -- this mirrors GnuPG's own inherent limitation for streamed decryption,
-    // not something specific to this engine. Multi-recipient (ImportAdditionalRecipientPublicKey)
-    // IS supported here for RSA recipients. v1 scope limitation: these four streaming methods
-    // support PGP_KEY_ALGORITHM_RSA only -- EncryptFile returns NOT_IMPLEMENTED if this instance's
-    // own algorithm, the ImportPeerPublicKey peer's encryption-subkey algorithm, or any
-    // ImportAdditionalRecipientPublicKey recipient's algorithm is PGP_KEY_ALGORITHM_ED25519_X25519;
-    // DecryptFile/SignFile return NOT_IMPLEMENTED when this instance's own algorithm is
-    // PGP_KEY_ALGORITHM_ED25519_X25519; VerifyFile returns NOT_IMPLEMENTED when the
-    // ImportPeerPublicKey peer's master-key algorithm is PGP_KEY_ALGORITHM_ED25519_X25519. The
-    // buffer-based Encrypt/Decrypt/Sign/Verify/ClearSign methods above have no such restriction --
-    // this gap is streaming-path-only, deferred for scope/time (see CPgpEngine.cpp's own comment
-    // on these four methods for the reasoning).
+    // not something specific to this engine. RSA and Ed25519/X25519 identities may be mixed as
+    // recipients. File signing and verification use RSA/SHA-256 or Ed25519/SHA-512 according to
+    // the signing/peer identity's algorithm, while file encryption uses each recipient's own
+    // RSA or X25519 encryption subkey.
     // ============================================================================================
 
     // ImportPeerPublicKey() must have succeeded first.
@@ -246,8 +239,8 @@ public:
                     ProgressCallback onProgress, void* progressUserData);
 
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
-    // with. Decompresses a ZIP/ZLIB-compressed inner packet if present (e.g. from EncryptBuffer
-    // or GnuPG), otherwise reads the uncompressed literal packet EncryptFile itself produces.
+    // with. Currently accepts an uncompressed literal packet such as EncryptFile produces;
+    // compressed inner packets (e.g. from EncryptBuffer or GnuPG) return NOT_IMPLEMENTED.
     int DecryptFile( const char* password, const int passwordSize,
                     const char* inputFilePath, const char* outputFilePath,
                     ProgressCallback onProgress, void* progressUserData);

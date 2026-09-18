@@ -1728,8 +1728,8 @@ std::vector<std::string> splitAndCanonicalizeLines(const std::string& text)
 // ================================================================================================
 
 // Builds a single PKESK packet (header+body) for one recipient, RSA-PKCS#1v1.5 or ECDH per
-// recipient.algorithm -- shared by buildEncryptedMessageMultiRecipient below and (for the RSA case
-// only) encryptFileStreaming further down.
+// recipient.algorithm -- shared by buildEncryptedMessageMultiRecipient below and
+// encryptFileStreaming further down.
 std::vector<unsigned char> buildPkeskPacketForRecipient(const PgpEncryptionRecipient& recipient, const unsigned char* sessionKey, const std::size_t sessionKeyLength)
 {
     try
@@ -2187,11 +2187,11 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
 // upfront; DecryptFile writes to a temp file and only keeps it if the trailing MDC check passes).
 // ================================================================================================
 
-int encryptFileStreaming(const std::vector<CryptoPP::RSA::PublicKey>& recipientKeys, const std::vector<std::array<unsigned char, 8> >& recipientKeyIds, HANDLE inputFileHandle, const unsigned long long fileSize, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+int encryptFileStreaming(const std::vector<PgpEncryptionRecipient>& recipients, HANDLE inputFileHandle, const unsigned long long fileSize, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
 {
     try
     {
-        if (recipientKeys.empty() || recipientKeys.size() != recipientKeyIds.size())
+        if (recipients.empty())
         {
             return INVALID_ARGUMENT;
         }
@@ -2199,33 +2199,13 @@ int encryptFileStreaming(const std::vector<CryptoPP::RSA::PublicKey>& recipientK
 
         unsigned char sessionKey[32];
         rng.GenerateBlock(sessionKey, 32);
-        unsigned char sessionKeyPlain[35];
-        sessionKeyPlain[0] = 9;
-        std::memcpy(sessionKeyPlain + 1, sessionKey, 32);
+        for (std::size_t r = 0; r < recipients.size(); ++r)
         {
-            unsigned int checksum = 0;
-            for (int i = 0; i < 32; ++i)
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[r], sessionKey, 32);
+            if (pkeskPacket.empty())
             {
-                checksum += sessionKey[i];
+                return UNEXPECTED_ERROR;
             }
-            sessionKeyPlain[33] = static_cast<unsigned char>((checksum >> 8) & 0xFF);
-            sessionKeyPlain[34] = static_cast<unsigned char>(checksum & 0xFF);
-        }
-
-        for (std::size_t r = 0; r < recipientKeys.size(); ++r)
-        {
-            CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor encryptor(recipientKeys[r]);
-            std::vector<unsigned char> pkcsCipher(encryptor.FixedCiphertextLength());
-            encryptor.Encrypt(rng, sessionKeyPlain, 35, pkcsCipher.data());
-            const CryptoPP::Integer cipherInt(pkcsCipher.data(), pkcsCipher.size());
-            const std::vector<unsigned char> cipherMpi = encodeMpi(cipherInt);
-
-            std::vector<unsigned char> pkeskBody;
-            pkeskBody.push_back(3);
-            pkeskBody.insert(pkeskBody.end(), recipientKeyIds[r].data(), recipientKeyIds[r].data() + 8);
-            pkeskBody.push_back(1);
-            appendAll(pkeskBody, cipherMpi);
-            const std::vector<unsigned char> pkeskPacket = writePacket(PGP_TAG_PKESK, pkeskBody);
             if (!writeFileExact(outputFileHandle, pkeskPacket.data(), static_cast<DWORD>(pkeskPacket.size())))
             {
                 return FILE_IO_ERROR;
@@ -2457,6 +2437,141 @@ int signFileStreaming(const CryptoPP::RSA::PrivateKey& signingKey, HANDLE inputF
 }
 // -----------------------------------------------------------------------------
 
+int signEd25519FileStreaming(const unsigned char privateKey[32], HANDLE inputFileHandle, const unsigned long long fileSize, const unsigned char issuerKeyId[8], ProgressCallback onProgress, void* progressUserData, std::vector<unsigned char>& outSignaturePacket)
+{
+    try
+    {
+        std::vector<unsigned char> hashedSubpackets;
+        std::vector<unsigned char> timeBody;
+        appendBigEndian32(timeBody, static_cast<std::uint32_t>(std::time(nullptr)));
+        appendSubpacket(hashedSubpackets, 2, timeBody);
+        std::vector<unsigned char> unhashedSubpackets;
+        appendSubpacket(unhashedSubpackets, 16, std::vector<unsigned char>(issuerKeyId, issuerKeyId + 8));
+
+        CryptoPP::SHA512 digest;
+        std::vector<unsigned char> chunk(PGP_FILE_CHUNK_SIZE);
+        unsigned long long processedBytes = 0;
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(inputFileHandle, chunk.data(), static_cast<DWORD>(chunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+            if (bytesRead == 0)
+            {
+                break;
+            }
+            digest.Update(chunk.data(), bytesRead);
+            processedBytes += bytesRead;
+            if (onProgress)
+            {
+                const double percentage = fileSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(fileSize)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, fileSize, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+
+        std::vector<unsigned char> suffix = { 4, 0, PGP_ALGO_EDDSA, 10 };
+        appendBigEndian16(suffix, static_cast<std::uint16_t>(hashedSubpackets.size()));
+        appendAll(suffix, hashedSubpackets);
+        suffix.push_back(4);
+        suffix.push_back(0xFF);
+        appendBigEndian32(suffix, static_cast<std::uint32_t>(6 + hashedSubpackets.size()));
+        digest.Update(suffix.data(), suffix.size());
+        unsigned char hash[64];
+        digest.Final(hash);
+
+        CryptoPP::ed25519Signer signer(privateKey);
+        unsigned char signature[64];
+        signer.SignMessage(CryptoPP::NullRNG(), hash, 64, signature);
+        std::vector<unsigned char> body = { 4, 0, PGP_ALGO_EDDSA, 10 };
+        appendBigEndian16(body, static_cast<std::uint16_t>(hashedSubpackets.size()));
+        appendAll(body, hashedSubpackets);
+        appendBigEndian16(body, static_cast<std::uint16_t>(unhashedSubpackets.size()));
+        appendAll(body, unhashedSubpackets);
+        body.push_back(hash[0]);
+        body.push_back(hash[1]);
+        appendAll(body, encodeMpi(CryptoPP::Integer(signature, 32)));
+        appendAll(body, encodeMpi(CryptoPP::Integer(signature + 32, 32)));
+        outSignaturePacket = writePacket(PGP_TAG_SIGNATURE, body);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int verifyEd25519FileStreaming(const unsigned char publicKey[32], HANDLE inputFileHandle, const unsigned long long fileSize, const std::vector<unsigned char>& signaturePacketBytes, bool* isValid, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        std::size_t pos = 0;
+        unsigned char tag = 0;
+        std::size_t bodyLength = 0;
+        if (!readPacketHeader(signaturePacketBytes, pos, tag, bodyLength) || tag != PGP_TAG_SIGNATURE || pos + bodyLength != signaturePacketBytes.size())
+        {
+            return INVALID_DATA;
+        }
+        const ParsedSignature parsed = parseSignaturePacketBody(std::vector<unsigned char>(signaturePacketBytes.begin() + pos, signaturePacketBytes.end()));
+        if (!parsed.valid || parsed.pkAlgorithm != PGP_ALGO_EDDSA || parsed.hashAlgorithm != 10 || parsed.signatureType != 0)
+        {
+            return INVALID_DATA;
+        }
+
+        CryptoPP::SHA512 digest;
+        std::vector<unsigned char> chunk(PGP_FILE_CHUNK_SIZE);
+        unsigned long long processedBytes = 0;
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(inputFileHandle, chunk.data(), static_cast<DWORD>(chunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+            if (bytesRead == 0)
+            {
+                break;
+            }
+            digest.Update(chunk.data(), bytesRead);
+            processedBytes += bytesRead;
+            if (onProgress)
+            {
+                const double percentage = fileSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(fileSize)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, fileSize, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+
+        std::vector<unsigned char> suffix = { 4, parsed.signatureType, PGP_ALGO_EDDSA, 10 };
+        appendBigEndian16(suffix, static_cast<std::uint16_t>(parsed.hashedSubpackets.size()));
+        appendAll(suffix, parsed.hashedSubpackets);
+        suffix.push_back(4);
+        suffix.push_back(0xFF);
+        appendBigEndian32(suffix, static_cast<std::uint32_t>(6 + parsed.hashedSubpackets.size()));
+        digest.Update(suffix.data(), suffix.size());
+        unsigned char hash[64];
+        digest.Final(hash);
+        unsigned char rawSignature[64];
+        CryptoPP::Integer(parsed.signatureMpiValue.data(), parsed.signatureMpiValue.size()).Encode(rawSignature, 32);
+        CryptoPP::Integer(parsed.signatureMpiValue2.data(), parsed.signatureMpiValue2.size()).Encode(rawSignature + 32, 32);
+        CryptoPP::ed25519Verifier verifier(publicKey);
+        *isValid = verifier.VerifyMessage(hash, 64, rawSignature, 64);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int verifyFileStreaming(const CryptoPP::RSA::PublicKey& verifyingKey, HANDLE inputFileHandle, const unsigned long long fileSize, const std::vector<unsigned char>& signaturePacketBytes, bool* isValid, ProgressCallback onProgress, void* progressUserData)
 {
     try
@@ -2552,7 +2667,7 @@ struct DecryptFileHeader
 // OTHER recipients before or after ours). Any ciphertext bytes read past the SEIP header in that
 // same prefix are returned in leftoverCipher so decryptSeipBodyStreaming can consume them before
 // reading more from the file.
-DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const CryptoPP::RSA::PrivateKey& recipientPrivateKey, const unsigned char ownSubkeyKeyId[8])
+DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::RSA::PrivateKey& recipientPrivateKey, const unsigned char ownX25519PrivateKey[32], const unsigned char ownSubkeyFingerprint[20], const unsigned char ownSubkeyKeyId[8])
 {
     DecryptFileHeader result;
     try
@@ -2579,10 +2694,6 @@ DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const CryptoP
             }
             const std::size_t pkeskEnd = peekPos + bodyLength;
 
-            // Non-RSA (e.g. ECDH) PKESKs for OTHER recipients are simply skipped here -- this
-            // v1 streaming path only ever decrypts an RSA PKESK addressed to OUR OWN key, but a
-            // multi-recipient file from another sender may still legitimately carry other
-            // recipients' PKESKs in any algorithm.
             std::size_t p = peekPos;
             if (p >= pkeskEnd || buf[p] != 3)
             {
@@ -2600,40 +2711,71 @@ DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const CryptoP
             const unsigned char pkAlgo = buf[p];
             p += 1;
 
-            if (pkAlgo != PGP_ALGO_RSA || std::memcmp(thisKeyId, ownSubkeyKeyId, 8) != 0)
+            const bool algorithmMatches = ownAlgorithm == PGP_KEY_ALGORITHM_RSA ? pkAlgo == PGP_ALGO_RSA : pkAlgo == PGP_ALGO_ECDH;
+            if (!algorithmMatches || std::memcmp(thisKeyId, ownSubkeyKeyId, 8) != 0)
             {
                 pos = pkeskEnd;
                 continue;
             }
-
-            if (p + 2 > pkeskEnd)
+            if (pkAlgo == PGP_ALGO_ECDH)
             {
-                return result;
-            }
-            const std::size_t bitLength = readBigEndian16(buf, p);
-            p += 2;
-            const std::size_t byteLength = (bitLength + 7) / 8;
-            if (p + byteLength > pkeskEnd)
-            {
-                return result;
-            }
-
-            if (!found)
-            {
-                const CryptoPP::Integer cipherInt(&buf[p], byteLength);
-                const std::size_t modulusLength = rsaModulusByteLength(recipientPrivateKey.GetModulus());
-                std::vector<unsigned char> fixedCipher(modulusLength, 0);
-                cipherInt.Encode(fixedCipher.data(), modulusLength);
-
-                CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor decryptor(recipientPrivateKey);
-                std::vector<unsigned char> plain(decryptor.FixedMaxPlaintextLength());
-                CryptoPP::AutoSeededRandomPool rng;
-                const CryptoPP::DecodingResult decResult = decryptor.Decrypt(rng, fixedCipher.data(), fixedCipher.size(), plain.data());
-                if (decResult.isValidCoding)
+                unsigned char ephemeralPublicKey[32];
+                if (readNativePointMpi(buf, p, ephemeralPublicKey) && p < pkeskEnd)
                 {
-                    plain.resize(decResult.messageLength);
-                    sessionPlain = plain;
-                    found = true;
+                    const std::size_t wrappedLength = buf[p++];
+                    if (p + wrappedLength <= pkeskEnd)
+                    {
+                        const std::vector<unsigned char> wrapped(buf.begin() + p, buf.begin() + p + wrappedLength);
+                        CryptoPP::x25519 dh;
+                        unsigned char sharedSecret[32];
+                        if (dh.Agree(sharedSecret, ownX25519PrivateKey, ephemeralPublicKey))
+                        {
+                            const std::vector<unsigned char> param = buildEcdhKdfParam(ownSubkeyFingerprint);
+                            const std::vector<unsigned char> kek = computeEcdhKek(sharedSecret, param, 16);
+                            std::vector<unsigned char> unwrapped;
+                            if (kek.size() == 16 && aesKeyUnwrap(kek.data(), kek.size(), wrapped, unwrapped) && !unwrapped.empty())
+                            {
+                                const unsigned char padLength = unwrapped.back();
+                                if (padLength >= 1 && padLength <= 8 && static_cast<std::size_t>(padLength) <= unwrapped.size())
+                                {
+                                    unwrapped.resize(unwrapped.size() - padLength);
+                                    sessionPlain = unwrapped;
+                                    found = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (p + 2 > pkeskEnd)
+                {
+                    return result;
+                }
+                const std::size_t bitLength = readBigEndian16(buf, p);
+                p += 2;
+                const std::size_t byteLength = (bitLength + 7) / 8;
+                if (p + byteLength > pkeskEnd)
+                {
+                    return result;
+                }
+                if (!found)
+                {
+                    const CryptoPP::Integer cipherInt(&buf[p], byteLength);
+                    const std::size_t modulusLength = rsaModulusByteLength(recipientPrivateKey.GetModulus());
+                    std::vector<unsigned char> fixedCipher(modulusLength, 0);
+                    cipherInt.Encode(fixedCipher.data(), modulusLength);
+                    CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor decryptor(recipientPrivateKey);
+                    std::vector<unsigned char> plain(decryptor.FixedMaxPlaintextLength());
+                    CryptoPP::AutoSeededRandomPool rng;
+                    const CryptoPP::DecodingResult decResult = decryptor.Decrypt(rng, fixedCipher.data(), fixedCipher.size(), plain.data());
+                    if (decResult.isValidCoding)
+                    {
+                        plain.resize(decResult.messageLength);
+                        sessionPlain = plain;
+                        found = true;
+                    }
                 }
             }
 
@@ -4058,31 +4200,26 @@ int CPgpEngine::EncryptFile(const char* inputFilePath, const char* outputFilePat
         {
             return INVALID_ARGUMENT;
         }
-        // v1 streaming-path scope limitation (see this method's own header comment) -- RSA
-        // recipients only, though multiple RSA recipients (ImportAdditionalRecipientPublicKey)
-        // ARE supported here.
-        if (impl_->peerSubkeyAlgorithm != PGP_KEY_ALGORITHM_RSA)
+        std::vector<PgpEncryptionRecipient> recipients;
         {
-            return NOT_IMPLEMENTED;
-        }
-        std::vector<CryptoPP::RSA::PublicKey> recipientKeys;
-        std::vector<std::array<unsigned char, 8> > recipientKeyIds;
-        {
-            recipientKeys.push_back(impl_->peerSubkeyPublicKey);
-            std::array<unsigned char, 8> primaryId;
-            std::memcpy(primaryId.data(), impl_->peerSubkeyKeyId, 8);
-            recipientKeyIds.push_back(primaryId);
+            PgpEncryptionRecipient primary;
+            primary.algorithm = impl_->peerSubkeyAlgorithm;
+            if (primary.algorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                primary.rsaPublicKey = impl_->peerSubkeyPublicKey;
+                std::memcpy(primary.rsaKeyId, impl_->peerSubkeyKeyId, 8);
+            }
+            else
+            {
+                std::memcpy(primary.x25519PublicKey, impl_->peerX25519PublicKey, 32);
+                std::memcpy(primary.x25519KeyId, impl_->peerSubkeyKeyId, 8);
+                std::memcpy(primary.x25519Fingerprint, impl_->peerSubkeyFingerprint, 20);
+            }
+            recipients.push_back(primary);
         }
         for (std::size_t i = 0; i < impl_->additionalRecipients.size(); ++i)
         {
-            if (impl_->additionalRecipients[i].algorithm != PGP_KEY_ALGORITHM_RSA)
-            {
-                return NOT_IMPLEMENTED;
-            }
-            recipientKeys.push_back(impl_->additionalRecipients[i].rsaPublicKey);
-            std::array<unsigned char, 8> recipientId;
-            std::memcpy(recipientId.data(), impl_->additionalRecipients[i].rsaKeyId, 8);
-            recipientKeyIds.push_back(recipientId);
+            recipients.push_back(impl_->additionalRecipients[i]);
         }
 
         std::wstring wideInputPath;
@@ -4114,7 +4251,7 @@ int CPgpEngine::EncryptFile(const char* inputFilePath, const char* outputFilePat
         }
         std::unique_ptr<void, decltype(&CloseHandle)> outputHandle(rawOutputHandle, &CloseHandle);
 
-        const int status = encryptFileStreaming(recipientKeys, recipientKeyIds, rawInputHandle, fileSize, rawOutputHandle, onProgress, progressUserData);
+        const int status = encryptFileStreaming(recipients, rawInputHandle, fileSize, rawOutputHandle, onProgress, progressUserData);
         if (status != NO_ERROR)
         {
             outputHandle.reset();
@@ -4137,10 +4274,6 @@ int CPgpEngine::DecryptFile(const char* password, const int passwordSize, const 
         {
             return INVALID_ARGUMENT;
         }
-        if (impl_->keyAlgorithm != PGP_KEY_ALGORITHM_RSA)
-        {
-            return NOT_IMPLEMENTED;
-        }
         if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
         {
             return INVALID_ARGUMENT;
@@ -4161,7 +4294,7 @@ int CPgpEngine::DecryptFile(const char* password, const int passwordSize, const 
         }
         std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
 
-        const DecryptFileHeader header = parseEncryptedFileHeader(rawInputHandle, impl_->ownSubkeyPrivateKey, impl_->ownSubkeyKeyId);
+        const DecryptFileHeader header = parseEncryptedFileHeader(rawInputHandle, impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint, impl_->ownSubkeyKeyId);
         if (!header.ok)
         {
             return INVALID_DATA;
@@ -4207,10 +4340,6 @@ int CPgpEngine::SignFile(const char* password, const int passwordSize, const cha
         {
             return INVALID_ARGUMENT;
         }
-        if (impl_->keyAlgorithm != PGP_KEY_ALGORITHM_RSA)
-        {
-            return NOT_IMPLEMENTED;
-        }
         if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
         {
             return INVALID_ARGUMENT;
@@ -4239,7 +4368,9 @@ int CPgpEngine::SignFile(const char* password, const int passwordSize, const cha
         const unsigned long long fileSize = static_cast<unsigned long long>(inputFileSize.QuadPart);
 
         std::vector<unsigned char> signaturePacket;
-        const int status = signFileStreaming(impl_->ownMasterPrivateKey, rawInputHandle, fileSize, impl_->ownMasterKeyId, onProgress, progressUserData, signaturePacket);
+        const int status = impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA
+            ? signFileStreaming(impl_->ownMasterPrivateKey, rawInputHandle, fileSize, impl_->ownMasterKeyId, onProgress, progressUserData, signaturePacket)
+            : signEd25519FileStreaming(impl_->ownEd25519PrivateKey, rawInputHandle, fileSize, impl_->ownMasterKeyId, onProgress, progressUserData, signaturePacket);
         if (status != NO_ERROR)
         {
             return status;
@@ -4274,11 +4405,6 @@ int CPgpEngine::VerifyFile(const char* inputFilePath, const char* signatureFileP
         {
             return INVALID_ARGUMENT;
         }
-        if (impl_->peerMasterAlgorithm != PGP_KEY_ALGORITHM_RSA)
-        {
-            return NOT_IMPLEMENTED;
-        }
-
         std::wstring wideInputPath;
         std::wstring wideSignaturePath;
         if (!convertUtf8PathToWide(inputFilePath, wideInputPath) || !convertUtf8PathToWide(signatureFilePath, wideSignaturePath))
@@ -4323,7 +4449,9 @@ int CPgpEngine::VerifyFile(const char* inputFilePath, const char* signatureFileP
         }
         const unsigned long long fileSize = static_cast<unsigned long long>(inputFileSize.QuadPart);
 
-        return verifyFileStreaming(impl_->peerMasterPublicKey, rawInputHandle, fileSize, signaturePacketBytes, isValid, onProgress, progressUserData);
+        return impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA
+            ? verifyFileStreaming(impl_->peerMasterPublicKey, rawInputHandle, fileSize, signaturePacketBytes, isValid, onProgress, progressUserData)
+            : verifyEd25519FileStreaming(impl_->peerEd25519PublicKey, rawInputHandle, fileSize, signaturePacketBytes, isValid, onProgress, progressUserData);
     }
     catch (...)
     {

@@ -411,6 +411,10 @@ public:
     // and confirms VerifyFile reports it as invalid rather than erroring out.
     int RunPgpFileSignVerifyTest(void);
 
+    // ECC file encryption/decryption and detached signing/verification across chunk boundaries;
+    // checks ECC-only and both mixed RSA/ECC recipient orders, plus corruption rejection.
+    int RunPgpEccFileStreamingTest(void);
+
     // Cross-checks CPgpEngine against a real, installed GnuPG (Gpg4win) binary -- SKIPPED (not
     // FAILED, returns NO_ERROR) when gpg.exe isn't found at one of the common install paths,
     // since a real GnuPG install is an optional, machine-specific dependency the repo's own build

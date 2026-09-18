@@ -12685,6 +12685,140 @@ int CCryptoApiTester::RunPgpFileSignVerifyTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpEccFileStreamingTest(void)
+{
+    try
+    {
+        const char* inputPath = "cryptoapi_pgp_ecc_stream_in.bin";
+        const char* cipherPath = "cryptoapi_pgp_ecc_stream.pgp";
+        const char* outputPath = "cryptoapi_pgp_ecc_stream_out.bin";
+        const char* signaturePath = "cryptoapi_pgp_ecc_stream.sig";
+        const char* eccPassword = "ecc-stream-password";
+        const char* rsaPassword = "rsa-stream-password";
+        const std::vector<unsigned char> inputData(1048576 + 37, 0xA5);
+        if (!WriteTesterFile(inputPath, inputData))
+        {
+            return FILE_IO_ERROR;
+        }
+        CPgpEngine ecc(PGP_KEY_ALGORITHM_ED25519_X25519);
+        CPgpEngine rsa(PGP_KEY_ALGORITHM_RSA);
+        CPgpEngine verifier;
+        const char* eccUserId = "ECC Stream <ecc@example.com>";
+        const char* rsaUserId = "RSA Stream <rsa@example.com>";
+        int status = ecc.GenerateKeyPair(eccUserId, static_cast<int>(std::strlen(eccUserId)), eccPassword, static_cast<int>(std::strlen(eccPassword)));
+        if (status == NO_ERROR)
+        {
+            status = rsa.GenerateKeyPair(rsaUserId, static_cast<int>(std::strlen(rsaUserId)), rsaPassword, static_cast<int>(std::strlen(rsaPassword)));
+        }
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEccFileStreamingTest: FAILED key generation status=" << status << std::endl;
+            return status;
+        }
+        int eccKeySize = 0;
+        int rsaKeySize = 0;
+        ecc.ExportPublicKeyArmored(0, nullptr, &eccKeySize);
+        rsa.ExportPublicKeyArmored(0, nullptr, &rsaKeySize);
+        std::vector<char> eccKey(static_cast<std::size_t>(eccKeySize));
+        std::vector<char> rsaKey(static_cast<std::size_t>(rsaKeySize));
+        ecc.ExportPublicKeyArmored(eccKeySize, eccKey.data(), &eccKeySize);
+        rsa.ExportPublicKeyArmored(rsaKeySize, rsaKey.data(), &rsaKeySize);
+        status = verifier.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(eccKey.data()), eccKeySize);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        CPgpEngine* recipients[] = { &ecc, &rsa };
+        const char* passwords[] = { eccPassword, rsaPassword };
+        const std::vector<char>* keys[] = { &eccKey, &rsaKey };
+        for (int scenario = 0; scenario < 3; ++scenario)
+        {
+            const int primary = scenario == 2 ? 0 : scenario;
+            CPgpEngine sender;
+            status = sender.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(keys[primary]->data()), static_cast<int>(keys[primary]->size()));
+            if (status == NO_ERROR && scenario < 2)
+            {
+                status = sender.ImportAdditionalRecipientPublicKey(reinterpret_cast<const unsigned char*>(keys[1 - primary]->data()), static_cast<int>(keys[1 - primary]->size()));
+            }
+            if (status == NO_ERROR)
+            {
+                status = sender.EncryptFile(inputPath, cipherPath, nullptr, nullptr);
+            }
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpEccFileStreamingTest: FAILED encryption primary=" << primary << " status=" << status << std::endl;
+                return status;
+            }
+            for (int i = 0; i < (scenario == 2 ? 1 : 2); ++i)
+            {
+                status = recipients[i]->DecryptFile(passwords[i], static_cast<int>(std::strlen(passwords[i])), cipherPath, outputPath, nullptr, nullptr);
+                std::vector<unsigned char> outputData;
+                if (status != NO_ERROR || !ReadTesterFile(outputPath, outputData) || outputData != inputData)
+                {
+                    std::cout << "RunPgpEccFileStreamingTest: FAILED decryption primary=" << primary << " recipient=" << i << " status=" << status << std::endl;
+                    return UNEXPECTED_ERROR;
+                }
+            }
+        }
+        status = ecc.SignFile(eccPassword, static_cast<int>(std::strlen(eccPassword)), inputPath, signaturePath, nullptr, nullptr);
+        bool isValid = false;
+        if (status == NO_ERROR)
+        {
+            status = verifier.VerifyFile(inputPath, signaturePath, &isValid, nullptr, nullptr);
+        }
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpEccFileStreamingTest: FAILED sign/verify status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> signature;
+        if (!ReadTesterFile(signaturePath, signature) || signature.empty())
+        {
+            return FILE_IO_ERROR;
+        }
+        signature.back() ^= 0x01;
+        if (!WriteTesterFile(signaturePath, signature))
+        {
+            return FILE_IO_ERROR;
+        }
+        isValid = true;
+        status = verifier.VerifyFile(inputPath, signaturePath, &isValid, nullptr, nullptr);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunPgpEccFileStreamingTest: FAILED tampered signature status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> cipher;
+        if (!ReadTesterFile(cipherPath, cipher) || cipher.size() < 100)
+        {
+            return FILE_IO_ERROR;
+        }
+        cipher[cipher.size() / 2] ^= 0x01;
+        if (!WriteTesterFile(cipherPath, cipher))
+        {
+            return FILE_IO_ERROR;
+        }
+        std::remove(outputPath);
+        status = ecc.DecryptFile(eccPassword, static_cast<int>(std::strlen(eccPassword)), cipherPath, outputPath, nullptr, nullptr);
+        std::remove(inputPath);
+        std::remove(cipherPath);
+        std::remove(outputPath);
+        std::remove(signaturePath);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunPgpEccFileStreamingTest: FAILED corrupted ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpEccFileStreamingTest: PASSED ECC/RSA file encryption, ECC signing, tamper checks" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunPgpGnuPgInteropTest(void)
 {
     try

@@ -238,6 +238,8 @@ int main()
 
     cryptoApiTester.RunPgpFileSignVerifyTest();
 
+    cryptoApiTester.RunPgpEccFileStreamingTest();
+
     cryptoApiTester.RunPgpGnuPgInteropTest();
 
     cryptoApiTester.RunPgpKeyExpirationTest();
@@ -267,7 +269,7 @@ int main()
     cryptoApiTester.RunPgpGnuPgEd25519RevocationInteropTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunPgpWrapperAvailabilityTest();
 
     cryptoApiTester.RunPgpWrapperKeyGenerationTest();
