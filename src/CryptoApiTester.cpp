@@ -13296,6 +13296,120 @@ int CCryptoApiTester::RunPgpMultiRecipientEncryptDecryptTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpMixedRecipientEncryptDecryptTest(void)
+{
+    try
+    {
+        CPgpEngine rsa(PGP_KEY_ALGORITHM_RSA);
+        CPgpEngine ecc(PGP_KEY_ALGORITHM_ED25519_X25519);
+        CPgpEngine outsider(PGP_KEY_ALGORITHM_ED25519_X25519);
+        const char* rsaPassword = "mixed-rsa-password";
+        const char* eccPassword = "mixed-ecc-password";
+        const char* outsiderPassword = "mixed-outsider-password";
+        const char* names[] = { "Mixed RSA <rsa@example.com>", "Mixed ECC <ecc@example.com>", "Mixed outsider <outsider@example.com>" };
+        CPgpEngine* identities[] = { &rsa, &ecc, &outsider };
+        const char* passwords[] = { rsaPassword, eccPassword, outsiderPassword };
+        std::vector<char> publicKeys[2];
+
+        for (int i = 0; i < 3; ++i)
+        {
+            const int status = identities[i]->GenerateKeyPair(names[i], static_cast<int>(std::strlen(names[i])), passwords[i], static_cast<int>(std::strlen(passwords[i])));
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED GenerateKeyPair identity=" << i << " status=" << status << std::endl;
+                return status;
+            }
+        }
+        for (int i = 0; i < 2; ++i)
+        {
+            int keySize = 0;
+            int status = identities[i]->ExportPublicKeyArmored(0, nullptr, &keySize);
+            if (status != BUFFER_TOO_SMALL || keySize <= 0)
+            {
+                std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED public key size identity=" << i << " status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+            publicKeys[i].resize(static_cast<std::size_t>(keySize));
+            int actualSize = 0;
+            status = identities[i]->ExportPublicKeyArmored(keySize, publicKeys[i].data(), &actualSize);
+            if (status != NO_ERROR || actualSize <= 0)
+            {
+                std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED public key export identity=" << i << " status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+            publicKeys[i].resize(static_cast<std::size_t>(actualSize));
+        }
+
+        const std::vector<unsigned char> plaintext = { 'R', 'S', 'A', '+', 'E', 'C', 'C', 0x00, 0xAB, 0xCD };
+        for (int primary = 0; primary < 2; ++primary)
+        {
+            CPgpEngine sender;
+            const int additional = 1 - primary;
+            int status = sender.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(publicKeys[primary].data()), static_cast<int>(publicKeys[primary].size()));
+            if (status == NO_ERROR)
+            {
+                status = sender.ImportAdditionalRecipientPublicKey(reinterpret_cast<const unsigned char*>(publicKeys[additional].data()), static_cast<int>(publicKeys[additional].size()));
+            }
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED import primary=" << primary << " status=" << status << std::endl;
+                return status;
+            }
+
+            int cipherSize = 0;
+            status = sender.EncryptBuffer(plaintext.data(), static_cast<int>(plaintext.size()), 0, nullptr, &cipherSize);
+            if (status != BUFFER_TOO_SMALL || cipherSize <= 0)
+            {
+                std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED EncryptBuffer size primary=" << primary << " status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+            std::vector<unsigned char> ciphertext(static_cast<std::size_t>(cipherSize));
+            int actualCipherSize = 0;
+            status = sender.EncryptBuffer(plaintext.data(), static_cast<int>(plaintext.size()), cipherSize, ciphertext.data(), &actualCipherSize);
+            if (status != NO_ERROR || actualCipherSize <= 0)
+            {
+                std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED EncryptBuffer primary=" << primary << " status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            for (int i = 0; i < 3; ++i)
+            {
+                int plainSize = 0;
+                status = identities[i]->DecryptBuffer(passwords[i], static_cast<int>(std::strlen(passwords[i])), ciphertext.data(), actualCipherSize, 0, nullptr, &plainSize);
+                if (i == 2)
+                {
+                    if (status == NO_ERROR || status == BUFFER_TOO_SMALL)
+                    {
+                        std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED outsider decrypted primary=" << primary << std::endl;
+                        return UNEXPECTED_ERROR;
+                    }
+                    continue;
+                }
+                if (status != BUFFER_TOO_SMALL || plainSize != static_cast<int>(plaintext.size()))
+                {
+                    std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED DecryptBuffer size primary=" << primary << " identity=" << i << " status=" << status << std::endl;
+                    return UNEXPECTED_ERROR;
+                }
+                std::vector<unsigned char> decrypted(static_cast<std::size_t>(plainSize));
+                int actualPlainSize = 0;
+                status = identities[i]->DecryptBuffer(passwords[i], static_cast<int>(std::strlen(passwords[i])), ciphertext.data(), actualCipherSize, plainSize, decrypted.data(), &actualPlainSize);
+                if (status != NO_ERROR || actualPlainSize != plainSize || decrypted != plaintext)
+                {
+                    std::cout << "RunPgpMixedRecipientEncryptDecryptTest: FAILED DecryptBuffer primary=" << primary << " identity=" << i << " status=" << status << std::endl;
+                    return UNEXPECTED_ERROR;
+                }
+            }
+        }
+        std::cout << "RunPgpMixedRecipientEncryptDecryptTest: PASSED RSA/ECC in both recipient orders; outsider rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunPgpMultiRecipientFileEncryptDecryptTest(void)
 {
     try

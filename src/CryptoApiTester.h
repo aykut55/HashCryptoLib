@@ -449,6 +449,10 @@ public:
     // rather than every ciphertext being universally decryptable.
     int RunPgpMultiRecipientEncryptDecryptTest(void);
 
+    // Encrypt one message for mixed RSA and Ed25519/X25519 recipients, with each algorithm
+    // serving as the primary and additional recipient in turn. Both decrypt; a third key cannot.
+    int RunPgpMixedRecipientEncryptDecryptTest(void);
+
     // Same multi-recipient scenario as RunPgpMultiRecipientEncryptDecryptTest, but through the
     // streaming EncryptFile API (bob) and DecryptFile (alice, then carol, both against the exact
     // same encrypted file) -- same WriteTesterFile/ReadTesterFile file-based pattern as

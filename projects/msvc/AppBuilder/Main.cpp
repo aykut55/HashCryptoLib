@@ -246,6 +246,8 @@ int main()
 
     cryptoApiTester.RunPgpMultiRecipientEncryptDecryptTest();
 
+    cryptoApiTester.RunPgpMixedRecipientEncryptDecryptTest();
+
     cryptoApiTester.RunPgpMultiRecipientFileEncryptDecryptTest();
 
     cryptoApiTester.RunPgpGnuPgMultiRecipientInteropTest();
