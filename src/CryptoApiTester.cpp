@@ -3,6 +3,7 @@
 #include "CryptoApi.h"
 #include "Definitions/Definitions.h"
 #include "Pgp/PgpEngine.h"
+#include "Pgp/PgpEngineWrapper.h"
 #include "Providers/CryptoProviderRegistry.h"
 #include "Utils/Utils.h"
 
@@ -13100,6 +13101,1492 @@ int CCryptoApiTester::RunPgpGnuPgRevocationInteropTest(void)
         }
 
         std::cout << "RunPgpGnuPgRevocationInteropTest: PASSED gpg marked the key as revoked after importing RevokeKeyArmored's certificate" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperAvailabilityTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper pgp;
+        const bool reportedAvailable = pgp.IsGnuPgAvailable();
+        const bool actuallyFound = !FindGpgExecutable().empty();
+        if (reportedAvailable != actuallyFound)
+        {
+            std::cout << "RunPgpWrapperAvailabilityTest: FAILED IsGnuPgAvailable()=" << reportedAvailable
+                      << " but a direct probe of the well-known Gpg4win paths found=" << actuallyFound << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpWrapperAvailabilityTest: PASSED IsGnuPgAvailable()=" << reportedAvailable << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperKeyGenerationTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper pgp;
+        if (!pgp.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId = "Alice <alice-wrapper@example.com>";
+        const char* password = "correct horse battery staple";
+
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        status = pgp.GetKeyId(keyId, 17);
+        if (status != NO_ERROR || std::strlen(keyId) != 16)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED GetKeyId status=" << status << " keyId=" << keyId << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int requiredSize = 0;
+        status = pgp.ExportPublicKeyArmored(0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize <= 0)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED ExportPublicKeyArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> publicKeyArmored(static_cast<std::size_t>(requiredSize));
+        int actualPublicKeySize = 0;
+        status = pgp.ExportPublicKeyArmored(requiredSize, &publicKeyArmored[0], &actualPublicKeySize);
+        if (status != NO_ERROR || actualPublicKeySize != requiredSize)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED ExportPublicKeyArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string publicKeyText(publicKeyArmored.begin(), publicKeyArmored.end());
+        if (publicKeyText.find("-----BEGIN PGP PUBLIC KEY BLOCK-----") == std::string::npos ||
+            publicKeyText.find("-----END PGP PUBLIC KEY BLOCK-----") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED public key armor framing missing" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        requiredSize = 0;
+        status = pgp.ExportSecretKeyArmored(0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize <= 0)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED ExportSecretKeyArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> secretKeyArmored(static_cast<std::size_t>(requiredSize));
+        int actualSecretKeySize = 0;
+        status = pgp.ExportSecretKeyArmored(requiredSize, &secretKeyArmored[0], &actualSecretKeySize);
+        if (status != NO_ERROR || actualSecretKeySize != requiredSize)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED ExportSecretKeyArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string secretKeyText(secretKeyArmored.begin(), secretKeyArmored.end());
+        if (secretKeyText.find("-----BEGIN PGP PRIVATE KEY BLOCK-----") == std::string::npos ||
+            secretKeyText.find("-----END PGP PRIVATE KEY BLOCK-----") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperKeyGenerationTest: FAILED secret key armor framing missing" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperKeyGenerationTest: PASSED keyId=" << keyId << " publicKeyArmoredSize=" << actualPublicKeySize
+                  << " secretKeyArmoredSize=" << actualSecretKeySize << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperEncryptDecryptTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+        CPgpEngineWrapper bob;
+        const char* aliceUserId = "Alice <alice-wrapper-ed@example.com>";
+        const char* bobUserId = "Bob <bob-wrapper-ed@example.com>";
+        const char* alicePassword = "alice-password-1";
+        const char* bobPassword = "bob-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> plaintext = { 'H', 'e', 'l', 'l', 'o', ',', ' ', 'B', 'o', 'b', '!', 0x00, 0x01, 0xFF };
+
+        int cipherSize = 0;
+        status = alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &cipherSize);
+        if (status != BUFFER_TOO_SMALL || cipherSize <= 0)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED EncryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> ciphertext(static_cast<std::size_t>(cipherSize));
+        int actualCipherSize = 0;
+        status = alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), cipherSize, &ciphertext[0], &actualCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int plainSize = 0;
+        status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &ciphertext[0], actualCipherSize, 0, nullptr, &plainSize);
+        if (status != BUFFER_TOO_SMALL || plainSize != static_cast<int>(plaintext.size()))
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED DecryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> decrypted(static_cast<std::size_t>(plainSize));
+        int actualPlainSize = 0;
+        status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &ciphertext[0], actualCipherSize, plainSize, &decrypted[0], &actualPlainSize);
+        if (status != NO_ERROR || decrypted != plaintext)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* textMessage = "Merhaba Bob, bu gizli bir mesaj.";
+        int armoredSize = 0;
+        status = bob.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), 0, nullptr, &armoredSize);
+        if (status != BUFFER_TOO_SMALL || armoredSize <= 0)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED EncryptStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize));
+        int actualArmoredSize = 0;
+        status = bob.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), armoredSize, &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        int decodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), &armored[0], actualArmoredSize, 0, nullptr, &decodedSize);
+        if (status != BUFFER_TOO_SMALL || decodedSize != static_cast<int>(std::strlen(textMessage)))
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED DecryptStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> decodedText(static_cast<std::size_t>(decodedSize));
+        int actualDecodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), &armored[0], actualArmoredSize, decodedSize, &decodedText[0], &actualDecodedSize);
+        if (status != NO_ERROR || std::string(decodedText.begin(), decodedText.end()) != textMessage)
+        {
+            std::cout << "RunPgpWrapperEncryptDecryptTest: FAILED DecryptStringArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperEncryptDecryptTest: PASSED buffer(" << actualCipherSize << " bytes) and armored string(" << actualArmoredSize
+                  << " bytes) round trips via real gpg" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperSignVerifyTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperSignVerifyTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+        CPgpEngineWrapper bob;
+        const char* aliceUserId = "Alice <alice-wrapper-sv@example.com>";
+        const char* alicePassword = "alice-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperSignVerifyTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperSignVerifyTest: FAILED bob ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> document = { 'C', 'o', 'n', 't', 'r', 'a', 'c', 't', ' ', 'v', '1' };
+
+        int sigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        if (status != BUFFER_TOO_SMALL || sigSize <= 0)
+        {
+            std::cout << "RunPgpWrapperSignVerifyTest: FAILED SignBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), sigSize, &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperSignVerifyTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = bob.VerifyBuffer(&document[0], static_cast<int>(document.size()), &signature[0], actualSigSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpWrapperSignVerifyTest: FAILED VerifyBuffer status=" << status << " isValid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedSignature(signature.begin(), signature.begin() + actualSigSize);
+        tamperedSignature[tamperedSignature.size() - 1] = static_cast<unsigned char>(tamperedSignature[tamperedSignature.size() - 1] ^ 0xFF);
+        bool tamperedIsValid = true;
+        status = bob.VerifyBuffer(&document[0], static_cast<int>(document.size()), &tamperedSignature[0], actualSigSize, &tamperedIsValid);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpWrapperSignVerifyTest: FAILED tampered signature reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperSignVerifyTest: PASSED signature(" << actualSigSize << " bytes) verified via real gpg, tampered signature correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperClearSignTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperClearSignTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+        CPgpEngineWrapper bob;
+        const char* aliceUserId = "Alice <alice-wrapper-cs@example.com>";
+        const char* alicePassword = "alice-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperClearSignTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperClearSignTest: FAILED bob ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const char* message = "Line one.\nLine two.\nLine three.";
+
+        int outSize = 0;
+        status = alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), message, static_cast<int>(std::strlen(message)), 0, nullptr, &outSize);
+        if (status != BUFFER_TOO_SMALL || outSize <= 0)
+        {
+            std::cout << "RunPgpWrapperClearSignTest: FAILED ClearSignString capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> clearSigned(static_cast<std::size_t>(outSize));
+        int actualOutSize = 0;
+        status = alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), message, static_cast<int>(std::strlen(message)), outSize, &clearSigned[0], &actualOutSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperClearSignTest: FAILED ClearSignString status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = bob.VerifyClearSignedString(&clearSigned[0], actualOutSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpWrapperClearSignTest: FAILED VerifyClearSignedString status=" << status << " isValid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string tampered(clearSigned.begin(), clearSigned.begin() + actualOutSize);
+        const std::size_t tamperPos = tampered.find("Line two.");
+        if (tamperPos == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperClearSignTest: FAILED could not locate body text to tamper" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        tampered[tamperPos] = 'X';
+        bool tamperedIsValid = true;
+        status = bob.VerifyClearSignedString(tampered.c_str(), static_cast<int>(tampered.size()), &tamperedIsValid);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpWrapperClearSignTest: FAILED tampered clear-signed text reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperClearSignTest: PASSED clear-sign(" << actualOutSize << " bytes) verified via real gpg, tampered text correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperAliceBobTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+        CPgpEngineWrapper alice;
+        CPgpEngineWrapper carol;
+        CPgpEngineWrapper dave;
+
+        const char* bobUserId   = "Bob <bob-wrapper-ab@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-ab@example.com>";
+        const char* carolUserId = "Carol <carol-wrapper-ab@example.com>";
+        const char* daveUserId  = "Dave <dave-wrapper-ab@example.com>";
+        const char* bobPassword   = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+        const char* carolPassword = "carol-password-1";
+        const char* davePassword  = "dave-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = carol.GenerateKeyPair(carolUserId, static_cast<int>(std::strlen(carolUserId)), carolPassword, static_cast<int>(std::strlen(carolPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED carol GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = dave.GenerateKeyPair(daveUserId, static_cast<int>(std::strlen(daveUserId)), davePassword, static_cast<int>(std::strlen(davePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED dave GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int carolKeySize = 0;
+        carol.ExportPublicKeyArmored(0, nullptr, &carolKeySize);
+        std::vector<char> carolPublicKey(static_cast<std::size_t>(carolKeySize));
+        int carolActualKeySize = 0;
+        carol.ExportPublicKeyArmored(carolKeySize, &carolPublicKey[0], &carolActualKeySize);
+
+        int daveKeySize = 0;
+        dave.ExportPublicKeyArmored(0, nullptr, &daveKeySize);
+        std::vector<char> davePublicKey(static_cast<std::size_t>(daveKeySize));
+        int daveActualKeySize = 0;
+        dave.ExportPublicKeyArmored(daveKeySize, &davePublicKey[0], &daveActualKeySize);
+
+        // Each recipient needs Bob's public key to verify his signature later.
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+        status = carol.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED carol ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+        status = dave.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED dave ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> document = { 'Q', 'u', 'a', 'r', 't', 'e', 'r', 'l', 'y', ' ', 'R', 'e', 'p', 'o', 'r', 't', ' ', 'v', '1' };
+
+        int sigSize = 0;
+        bob.SignBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        if (sigSize <= 0)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob SignBuffer capacity query" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        status = bob.SignBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &document[0], static_cast<int>(document.size()), sigSize, &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        // Frame [4-byte big-endian signature length][signature][document] -- same combined-payload
+        // convention RunPgpAliceBobTest uses, since neither engine has a built-in combined
+        // sign+encrypt call.
+        std::vector<unsigned char> combined;
+        combined.push_back(static_cast<unsigned char>((actualSigSize >> 24) & 0xFF));
+        combined.push_back(static_cast<unsigned char>((actualSigSize >> 16) & 0xFF));
+        combined.push_back(static_cast<unsigned char>((actualSigSize >> 8) & 0xFF));
+        combined.push_back(static_cast<unsigned char>(actualSigSize & 0xFF));
+        combined.insert(combined.end(), signature.begin(), signature.begin() + actualSigSize);
+        combined.insert(combined.end(), document.begin(), document.end());
+
+        // Bob encrypts the same signed payload separately to each of alice/carol/dave via ordinary
+        // single-recipient EncryptBuffer -- RunPgpWrapperMultiRecipientEncryptTest already covers the
+        // real multi-recipient (EncryptBufferMultiRecipient) capability on its own.
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        int cipherForAliceSize = 0;
+        bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), 0, nullptr, &cipherForAliceSize);
+        std::vector<unsigned char> cipherForAlice(static_cast<std::size_t>(cipherForAliceSize));
+        int actualCipherForAliceSize = 0;
+        status = bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), cipherForAliceSize, &cipherForAlice[0], &actualCipherForAliceSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob EncryptBuffer(for alice) status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&carolPublicKey[0]), carolActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob ImportPeerPublicKey(carol) status=" << status << std::endl;
+            return status;
+        }
+        int cipherForCarolSize = 0;
+        bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), 0, nullptr, &cipherForCarolSize);
+        std::vector<unsigned char> cipherForCarol(static_cast<std::size_t>(cipherForCarolSize));
+        int actualCipherForCarolSize = 0;
+        status = bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), cipherForCarolSize, &cipherForCarol[0], &actualCipherForCarolSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob EncryptBuffer(for carol) status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&davePublicKey[0]), daveActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob ImportPeerPublicKey(dave) status=" << status << std::endl;
+            return status;
+        }
+        int cipherForDaveSize = 0;
+        bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), 0, nullptr, &cipherForDaveSize);
+        std::vector<unsigned char> cipherForDave(static_cast<std::size_t>(cipherForDaveSize));
+        int actualCipherForDaveSize = 0;
+        status = bob.EncryptBuffer(&combined[0], static_cast<int>(combined.size()), cipherForDaveSize, &cipherForDave[0], &actualCipherForDaveSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED bob EncryptBuffer(for dave) status=" << status << std::endl;
+            return status;
+        }
+
+        // Alice decrypts her own copy and verifies Bob's signature.
+        int alicePlainSize = 0;
+        alice.DecryptBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &cipherForAlice[0], actualCipherForAliceSize, 0, nullptr, &alicePlainSize);
+        std::vector<unsigned char> alicePlain(static_cast<std::size_t>(alicePlainSize));
+        int aliceActualPlainSize = 0;
+        status = alice.DecryptBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &cipherForAlice[0], actualCipherForAliceSize, alicePlainSize, &alicePlain[0], &aliceActualPlainSize);
+        if (status != NO_ERROR || alicePlain.size() < 4)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED alice DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const int aliceSigLen = (alicePlain[0] << 24) | (alicePlain[1] << 16) | (alicePlain[2] << 8) | alicePlain[3];
+        if (static_cast<std::size_t>(4 + aliceSigLen) > alicePlain.size())
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED alice combined payload malformed" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::vector<unsigned char> aliceSignature(alicePlain.begin() + 4, alicePlain.begin() + 4 + aliceSigLen);
+        const std::vector<unsigned char> aliceDocument(alicePlain.begin() + 4 + aliceSigLen, alicePlain.end());
+        if (aliceDocument != document)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED alice recovered document does not match original" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        bool aliceIsValid = false;
+        status = alice.VerifyBuffer(&aliceDocument[0], static_cast<int>(aliceDocument.size()), &aliceSignature[0], static_cast<int>(aliceSignature.size()), &aliceIsValid);
+        if (status != NO_ERROR || !aliceIsValid)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED alice VerifyBuffer status=" << status << " isValid=" << aliceIsValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Carol decrypts her own copy and verifies Bob's signature.
+        int carolPlainSize = 0;
+        carol.DecryptBuffer(carolPassword, static_cast<int>(std::strlen(carolPassword)), &cipherForCarol[0], actualCipherForCarolSize, 0, nullptr, &carolPlainSize);
+        std::vector<unsigned char> carolPlain(static_cast<std::size_t>(carolPlainSize));
+        int carolActualPlainSize = 0;
+        status = carol.DecryptBuffer(carolPassword, static_cast<int>(std::strlen(carolPassword)), &cipherForCarol[0], actualCipherForCarolSize, carolPlainSize, &carolPlain[0], &carolActualPlainSize);
+        if (status != NO_ERROR || carolPlain.size() < 4)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED carol DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const int carolSigLen = (carolPlain[0] << 24) | (carolPlain[1] << 16) | (carolPlain[2] << 8) | carolPlain[3];
+        if (static_cast<std::size_t>(4 + carolSigLen) > carolPlain.size())
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED carol combined payload malformed" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::vector<unsigned char> carolSignature(carolPlain.begin() + 4, carolPlain.begin() + 4 + carolSigLen);
+        const std::vector<unsigned char> carolDocument(carolPlain.begin() + 4 + carolSigLen, carolPlain.end());
+        if (carolDocument != document)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED carol recovered document does not match original" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        bool carolIsValid = false;
+        status = carol.VerifyBuffer(&carolDocument[0], static_cast<int>(carolDocument.size()), &carolSignature[0], static_cast<int>(carolSignature.size()), &carolIsValid);
+        if (status != NO_ERROR || !carolIsValid)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED carol VerifyBuffer status=" << status << " isValid=" << carolIsValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Dave decrypts his own copy and verifies Bob's signature, then a tampered copy of that same
+        // signature is confirmed to be correctly rejected.
+        int davePlainSize = 0;
+        dave.DecryptBuffer(davePassword, static_cast<int>(std::strlen(davePassword)), &cipherForDave[0], actualCipherForDaveSize, 0, nullptr, &davePlainSize);
+        std::vector<unsigned char> davePlain(static_cast<std::size_t>(davePlainSize));
+        int daveActualPlainSize = 0;
+        status = dave.DecryptBuffer(davePassword, static_cast<int>(std::strlen(davePassword)), &cipherForDave[0], actualCipherForDaveSize, davePlainSize, &davePlain[0], &daveActualPlainSize);
+        if (status != NO_ERROR || davePlain.size() < 4)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED dave DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const int daveSigLen = (davePlain[0] << 24) | (davePlain[1] << 16) | (davePlain[2] << 8) | davePlain[3];
+        if (static_cast<std::size_t>(4 + daveSigLen) > davePlain.size())
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED dave combined payload malformed" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::vector<unsigned char> daveSignature(davePlain.begin() + 4, davePlain.begin() + 4 + daveSigLen);
+        const std::vector<unsigned char> daveDocument(davePlain.begin() + 4 + daveSigLen, davePlain.end());
+        if (daveDocument != document)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED dave recovered document does not match original" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        bool daveIsValid = false;
+        status = dave.VerifyBuffer(&daveDocument[0], static_cast<int>(daveDocument.size()), &daveSignature[0], static_cast<int>(daveSignature.size()), &daveIsValid);
+        if (status != NO_ERROR || !daveIsValid)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED dave VerifyBuffer status=" << status << " isValid=" << daveIsValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedDaveSignature(daveSignature);
+        tamperedDaveSignature[tamperedDaveSignature.size() - 1] = static_cast<unsigned char>(tamperedDaveSignature[tamperedDaveSignature.size() - 1] ^ 0xFF);
+        bool tamperedIsValid = true;
+        status = dave.VerifyBuffer(&daveDocument[0], static_cast<int>(daveDocument.size()), &tamperedDaveSignature[0], static_cast<int>(tamperedDaveSignature.size()), &tamperedIsValid);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpWrapperAliceBobTest: FAILED tampered signature reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperAliceBobTest: PASSED bob signed once (" << actualSigSize << " bytes) and encrypted separately to alice/carol/dave via real gpg ("
+                  << actualCipherForAliceSize << "/" << actualCipherForCarolSize << "/" << actualCipherForDaveSize
+                  << " bytes); all 3 decrypted+verified the " << document.size() << "-byte document, tampered signature correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperFileEncryptDecryptTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* inputFilePath = "cryptoapi_pgp_wrapper_file_encdec_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_wrapper_file_encdec_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_wrapper_file_encdec_out.bin";
+
+        std::vector<unsigned char> inputData(327680 + 4321);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngineWrapper alice;
+        const char* bobUserId = "Bob <bob-wrapper-file-ed@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-file-ed@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.EncryptFile(inputFilePath, encryptedFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED EncryptFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        status = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED DecryptFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED to read decrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        if (outputData.size() != inputData.size() ||
+            (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED content mismatch" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperFileEncryptDecryptTest: PASSED round trip via real gpg (" << inputData.size() << " bytes)" << std::endl;
+
+        // Corrupt one ciphertext byte and confirm DecryptFile fails closed instead of producing
+        // silently-wrong output.
+        std::vector<unsigned char> encryptedData;
+        if (!ReadTesterFile(encryptedFilePath, encryptedData) || encryptedData.size() < 100)
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED to read encrypted file for corruption test" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+        std::remove(decryptedFilePath);
+        encryptedData[encryptedData.size() / 2] = static_cast<unsigned char>(encryptedData[encryptedData.size() / 2] ^ 0xFF);
+        if (!WriteTesterFile(encryptedFilePath, encryptedData))
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED to write corrupted encrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        const int corruptedStatus = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, nullptr, nullptr);
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+        if (corruptedStatus == NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileEncryptDecryptTest: FAILED corrupted ciphertext file was not rejected" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperFileEncryptDecryptTest: PASSED corrupted ciphertext correctly rejected (status=" << corruptedStatus << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperFileSignVerifyTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* inputFilePath = "cryptoapi_pgp_wrapper_file_signverify_in.bin";
+        const char* signatureFilePath = "cryptoapi_pgp_wrapper_file_signverify.sig";
+
+        std::vector<unsigned char> inputData(262144 + 987);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>((index * 2654435761u >> 24) ^ 0x5A);
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngineWrapper alice;
+        const char* bobUserId = "Bob <bob-wrapper-file-sv@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-file-sv@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.SignFile(bobPassword, static_cast<int>(std::strlen(bobPassword)), inputFilePath, signatureFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED SignFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        bool isValid = false;
+        status = alice.VerifyFile(inputFilePath, signatureFilePath, &isValid, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED VerifyFile status=" << status << " isValid=" << isValid << std::endl;
+            std::remove(inputFilePath);
+            std::remove(signatureFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperFileSignVerifyTest: PASSED signature verified via real gpg (" << inputData.size() << "-byte file)" << std::endl;
+
+        std::vector<unsigned char> signatureData;
+        if (!ReadTesterFile(signatureFilePath, signatureData) || signatureData.empty())
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED to read signature file for tamper test" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(signatureFilePath);
+            return FILE_IO_ERROR;
+        }
+        signatureData[signatureData.size() - 1] = static_cast<unsigned char>(signatureData[signatureData.size() - 1] ^ 0xFF);
+        if (!WriteTesterFile(signatureFilePath, signatureData))
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED to write tampered signature file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(signatureFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        bool tamperedIsValid = true;
+        status = alice.VerifyFile(inputFilePath, signatureFilePath, &tamperedIsValid, nullptr, nullptr);
+        std::remove(inputFilePath);
+        std::remove(signatureFilePath);
+        if (status != NO_ERROR || tamperedIsValid)
+        {
+            std::cout << "RunPgpWrapperFileSignVerifyTest: FAILED tampered signature reported valid, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperFileSignVerifyTest: PASSED tampered signature correctly rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperKeyExpirationTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper neverExpires;
+        if (!neverExpires.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperKeyExpirationTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId1 = "Never Expires <never-wrapper@example.com>";
+        const char* password1 = "never-password-1";
+        int status = neverExpires.GenerateKeyPair(userId1, static_cast<int>(std::strlen(userId1)), password1, static_cast<int>(std::strlen(password1)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyExpirationTest: FAILED neverExpires GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        if (neverExpires.GetKeyExpirationSeconds() != 0)
+        {
+            std::cout << "RunPgpWrapperKeyExpirationTest: FAILED 4-argument GenerateKeyPair should report expiration 0, got " << neverExpires.GetKeyExpirationSeconds() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        CPgpEngineWrapper expires;
+        const char* userId2 = "Expires Soon <expires-wrapper@example.com>";
+        const char* password2 = "expires-password-1";
+        const unsigned int expirationSeconds = 3600u * 24u * 30u;
+        status = expires.GenerateKeyPair(userId2, static_cast<int>(std::strlen(userId2)), password2, static_cast<int>(std::strlen(password2)), expirationSeconds);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyExpirationTest: FAILED expires GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        if (expires.GetKeyExpirationSeconds() != expirationSeconds)
+        {
+            std::cout << "RunPgpWrapperKeyExpirationTest: FAILED expected expiration " << expirationSeconds << ", got " << expires.GetKeyExpirationSeconds() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperKeyExpirationTest: PASSED (never-expires=0, expires=" << expirationSeconds << " seconds)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperKeyRevocationTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper pgp;
+        const char* userId = "Revocation Test <revoke-wrapper@example.com>";
+        const char* password = "RevokeTest-1";
+        const unsigned int expirationSeconds = 3600u * 24u * 30u;
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)), expirationSeconds);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+
+        const char* homeDir = "cryptoapi_pgp_wrapper_revoke_home";
+        const char* pubKeyPath = "cryptoapi_pgp_wrapper_revoke_pub.asc";
+        const char* revocationPath = "cryptoapi_pgp_wrapper_revoke_cert.asc";
+        const std::string absoluteHomeDir = std::filesystem::absolute(homeDir).string();
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(absoluteHomeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+        std::string primeOutput;
+        RunShellCommand(gpgBase + "--check-trustdb", primeOutput);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED gpg --import rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string listOutput;
+        rc = RunShellCommand(gpgBase + "--with-colons --list-keys " + keyId, listOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED gpg --list-keys rc=" << rc << "\n" << listOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        bool expiryFieldNonEmpty = false;
+        {
+            std::istringstream iss(listOutput);
+            std::string line;
+            while (std::getline(iss, line))
+            {
+                if (line.rfind("pub:", 0) == 0)
+                {
+                    std::vector<std::string> fields;
+                    std::istringstream fss(line);
+                    std::string field;
+                    while (std::getline(fss, field, ':'))
+                    {
+                        fields.push_back(field);
+                    }
+                    if (fields.size() > 6 && !fields[6].empty())
+                    {
+                        expiryFieldNonEmpty = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!expiryFieldNonEmpty)
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED gpg did not parse a key expiration date\n" << listOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpWrapperKeyRevocationTest: PASSED gpg parsed our key expiration date" << std::endl;
+
+        int revSize = 0;
+        pgp.RevokeKeyArmored(password, static_cast<int>(std::strlen(password)), 0, nullptr, 0, 0, nullptr, &revSize);
+        std::vector<char> revocationCert(static_cast<std::size_t>(revSize));
+        int revActualSize = 0;
+        status = pgp.RevokeKeyArmored(password, static_cast<int>(std::strlen(password)), 0, nullptr, 0, revSize, &revocationCert[0], &revActualSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED RevokeKeyArmored status=" << status << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return status;
+        }
+        if (!WriteTesterFile(revocationPath, std::vector<unsigned char>(revocationCert.begin(), revocationCert.begin() + revActualSize)))
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED to write revocation certificate file" << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(revocationPath), cmdOutput);
+        if (rc != 0 && cmdOutput.find("revocation certificate imported") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED gpg --import (revocation) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(revocationPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string listOutput2;
+        RunShellCommand(gpgBase + "--with-colons --list-keys " + keyId, listOutput2);
+
+        std::remove(pubKeyPath);
+        std::remove(revocationPath);
+        std::filesystem::remove_all(homeDir, fsError);
+
+        bool revoked = false;
+        {
+            std::istringstream iss(listOutput2);
+            std::string line;
+            while (std::getline(iss, line))
+            {
+                if (line.rfind("pub:", 0) == 0)
+                {
+                    std::vector<std::string> fields;
+                    std::istringstream fss(line);
+                    std::string field;
+                    while (std::getline(fss, field, ':'))
+                    {
+                        fields.push_back(field);
+                    }
+                    if (fields.size() > 1 && fields[1] == "r")
+                    {
+                        revoked = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!revoked)
+        {
+            std::cout << "RunPgpWrapperKeyRevocationTest: FAILED gpg did not mark the key as revoked\n" << listOutput2 << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperKeyRevocationTest: PASSED gpg marked the key as revoked after importing RevokeKeyArmored's certificate" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperMultiRecipientEncryptTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper alice;
+        CPgpEngineWrapper carol;
+        const char* bobUserId = "Bob <bob-wrapper-multi@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-multi@example.com>";
+        const char* carolUserId = "Carol <carol-wrapper-multi@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+        const char* carolPassword = "carol-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = carol.GenerateKeyPair(carolUserId, static_cast<int>(std::strlen(carolUserId)), carolPassword, static_cast<int>(std::strlen(carolPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED carol GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int carolKeySize = 0;
+        carol.ExportPublicKeyArmored(0, nullptr, &carolKeySize);
+        std::vector<char> carolPublicKey(static_cast<std::size_t>(carolKeySize));
+        int carolActualKeySize = 0;
+        carol.ExportPublicKeyArmored(carolKeySize, &carolPublicKey[0], &carolActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&carolPublicKey[0]), carolActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED bob ImportPeerPublicKey(carol) status=" << status << std::endl;
+            return status;
+        }
+        if (bob.GetImportedPeerKeyCount() != 2)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED expected 2 imported peer keys, got " << bob.GetImportedPeerKeyCount() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        char aliceKeyId[17];
+        char carolKeyId[17];
+        bob.GetImportedPeerKeyId(0, aliceKeyId, 17);
+        bob.GetImportedPeerKeyId(1, carolKeyId, 17);
+        const char* recipients[2] = { aliceKeyId, carolKeyId };
+
+        const std::vector<unsigned char> plaintext = { 'S', 'h', 'a', 'r', 'e', 'd', ' ', 's', 'e', 'c', 'r', 'e', 't', '!' };
+
+        int cipherSize = 0;
+        status = bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), recipients, 2, 0, nullptr, &cipherSize);
+        if (status != BUFFER_TOO_SMALL || cipherSize <= 0)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED EncryptBufferMultiRecipient capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> ciphertext(static_cast<std::size_t>(cipherSize));
+        int actualCipherSize = 0;
+        status = bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), recipients, 2, cipherSize, &ciphertext[0], &actualCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED EncryptBufferMultiRecipient status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceDecodedSize = 0;
+        status = alice.DecryptBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &ciphertext[0], actualCipherSize, 0, nullptr, &aliceDecodedSize);
+        if (status != BUFFER_TOO_SMALL || aliceDecodedSize != static_cast<int>(plaintext.size()))
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED alice DecryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> aliceDecoded(static_cast<std::size_t>(aliceDecodedSize));
+        int aliceActualDecodedSize = 0;
+        status = alice.DecryptBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &ciphertext[0], actualCipherSize, aliceDecodedSize, &aliceDecoded[0], &aliceActualDecodedSize);
+        if (status != NO_ERROR || aliceDecoded != plaintext)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED alice DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int carolDecodedSize = 0;
+        status = carol.DecryptBuffer(carolPassword, static_cast<int>(std::strlen(carolPassword)), &ciphertext[0], actualCipherSize, 0, nullptr, &carolDecodedSize);
+        if (status != BUFFER_TOO_SMALL || carolDecodedSize != static_cast<int>(plaintext.size()))
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED carol DecryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> carolDecoded(static_cast<std::size_t>(carolDecodedSize));
+        int carolActualDecodedSize = 0;
+        status = carol.DecryptBuffer(carolPassword, static_cast<int>(std::strlen(carolPassword)), &ciphertext[0], actualCipherSize, carolDecodedSize, &carolDecoded[0], &carolActualDecodedSize);
+        if (status != NO_ERROR || carolDecoded != plaintext)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptTest: FAILED carol DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperMultiRecipientEncryptTest: PASSED one shared ciphertext (" << actualCipherSize
+                  << " bytes) decrypted independently by both alice and carol via real gpg" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperEccKeyGenerationTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* bobUserId = "Bob <bob-wrapper-ecc@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const unsigned int expirationSeconds = 3600u * 24u * 30u;
+        int status = bob.GenerateKeyPairEcc(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)), expirationSeconds);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED bob GenerateKeyPairEcc status=" << status << std::endl;
+            return status;
+        }
+        if (bob.GetKeyExpirationSeconds() != expirationSeconds)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED expected expiration " << expirationSeconds << ", got " << bob.GetKeyExpirationSeconds() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        char bobKeyId[17];
+        status = bob.GetKeyId(bobKeyId, 17);
+        if (status != NO_ERROR || std::strlen(bobKeyId) != 16)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED GetKeyId status=" << status << " keyId=" << bobKeyId << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        status = bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+        const std::string bobPublicKeyText(bobPublicKey.begin(), bobPublicKey.end());
+        if (status != NO_ERROR || bobPublicKeyText.find("-----BEGIN PGP PUBLIC KEY BLOCK-----") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED ExportPublicKeyArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int bobSecretSize = 0;
+        bob.ExportSecretKeyArmored(0, nullptr, &bobSecretSize);
+        std::vector<char> bobSecretKey(static_cast<std::size_t>(bobSecretSize));
+        int bobActualSecretSize = 0;
+        status = bob.ExportSecretKeyArmored(bobSecretSize, &bobSecretKey[0], &bobActualSecretSize);
+        const std::string bobSecretKeyText(bobSecretKey.begin(), bobSecretKey.end());
+        if (status != NO_ERROR || bobSecretKeyText.find("-----BEGIN PGP PRIVATE KEY BLOCK-----") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED ExportSecretKeyArmored status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Interop check: an ordinary RSA identity (alice, via GenerateKeyPair) exchanges keys with
+        // the ECC identity (bob) above and both directions of encrypt/decrypt and sign/verify are
+        // exercised through the same real gpg keyring.
+        CPgpEngineWrapper alice;
+        const char* aliceUserId = "Alice <alice-wrapper-ecc@example.com>";
+        const char* alicePassword = "alice-password-1";
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED bob(ECC) ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED alice ImportPeerPublicKey(bob-ECC) status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> plaintext = { 'E', 'C', 'C', ' ', 'r', 'o', 'u', 'n', 'd', ' ', 't', 'r', 'i', 'p' };
+        int cipherSize = 0;
+        status = alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &cipherSize);
+        if (status != BUFFER_TOO_SMALL || cipherSize <= 0)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED alice EncryptBuffer(to ECC bob) capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> ciphertext(static_cast<std::size_t>(cipherSize));
+        int actualCipherSize = 0;
+        status = alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), cipherSize, &ciphertext[0], &actualCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED alice EncryptBuffer(to ECC bob) status=" << status << std::endl;
+            return status;
+        }
+
+        int plainSize = 0;
+        status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &ciphertext[0], actualCipherSize, 0, nullptr, &plainSize);
+        if (status != BUFFER_TOO_SMALL || plainSize != static_cast<int>(plaintext.size()))
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED bob(ECC) DecryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> decrypted(static_cast<std::size_t>(plainSize));
+        int actualPlainSize = 0;
+        status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &ciphertext[0], actualCipherSize, plainSize, &decrypted[0], &actualPlainSize);
+        if (status != NO_ERROR || decrypted != plaintext)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED bob(ECC) DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int sigSize = 0;
+        status = bob.SignBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &sigSize);
+        if (status != BUFFER_TOO_SMALL || sigSize <= 0)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED bob(ECC) SignBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        status = bob.SignBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), &plaintext[0], static_cast<int>(plaintext.size()), sigSize, &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED bob(ECC) SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = alice.VerifyBuffer(&plaintext[0], static_cast<int>(plaintext.size()), &signature[0], actualSigSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunPgpWrapperEccKeyGenerationTest: FAILED alice VerifyBuffer(ECC bob's signature) status=" << status << " isValid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperEccKeyGenerationTest: PASSED Ed25519/Cv25519 identity keyId=" << bobKeyId
+                  << " interoperates with an RSA identity for encrypt/decrypt and sign/verify via real gpg" << std::endl;
         return NO_ERROR;
     }
     catch (...)

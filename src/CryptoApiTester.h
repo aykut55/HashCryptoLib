@@ -438,6 +438,97 @@ public:
     // keyring, and confirms the key's validity field flips to 'r' (revoked).
     int RunPgpGnuPgRevocationInteropTest(void);
 
+    // ============================================================================================
+    // CPgpEngineWrapper -- parallel test suite for the gpg.exe-backed engine (see
+    // src/Pgp/PgpEngineWrapper.h). Every one of these is inherently a real-GnuPG interop test (the
+    // class has no cryptography of its own), so all of them SKIP (return NO_ERROR, not FAILED)
+    // when CPgpEngineWrapper::IsGnuPgAvailable() reports false -- same convention
+    // RunPgpGnuPgInteropTest/RunPgpGnuPgRevocationInteropTest already use for CPgpEngine's own
+    // optional real-GnuPG cross-checks.
+    // ============================================================================================
+
+    // Constructs a CPgpEngineWrapper and checks IsGnuPgAvailable() agrees with whether gpg.exe is
+    // actually at one of the well-known Gpg4win install paths on this machine (same two paths
+    // FindGpgExecutable in this file itself probes) -- the one test in this suite that still runs
+    // (and asserts something meaningful) even when GnuPG is NOT installed.
+    int RunPgpWrapperAvailabilityTest(void);
+
+    // Generates an identity via CPgpEngineWrapper::GenerateKeyPair (real "gpg --batch --gen-key"),
+    // checks GetKeyId reports a 16-hex-char Key ID, and round-trips ExportPublicKeyArmored/
+    // ExportSecretKeyArmored through the capacity=0 BUFFER_TOO_SMALL query convention before
+    // checking both exports carry the expected "-----BEGIN PGP ... KEY BLOCK-----" armor framing --
+    // same shape as RunPgpKeyGenerationTest, against the real gpg-backed engine instead.
+    int RunPgpWrapperKeyGenerationTest(void);
+
+    // Two CPgpEngineWrapper identities (alice/bob) exchange public keys via
+    // ExportPublicKeyArmored/ImportPeerPublicKey (real "gpg --import"), then round-trip a binary
+    // buffer through EncryptBuffer/DecryptBuffer and a UTF-8 string through
+    // EncryptStringArmored/DecryptStringArmored, both byte-exact, via real "gpg --encrypt"/
+    // "gpg --decrypt".
+    int RunPgpWrapperEncryptDecryptTest(void);
+
+    // alice signs a buffer with SignBuffer (real "gpg --detach-sign"); bob (having imported
+    // alice's public key) verifies it with VerifyBuffer (real "gpg --verify"). A bit-flipped
+    // signature is confirmed to verify as *isValid=false (not a technical error).
+    int RunPgpWrapperSignVerifyTest(void);
+
+    // alice produces a clear-signed block via ClearSignString (real "gpg --clear-sign"); bob
+    // verifies it via VerifyClearSignedString (real "gpg --verify"). Tampering with the
+    // clear-signed body text is confirmed to flip *isValid to false.
+    int RunPgpWrapperClearSignTest(void);
+
+    // Four CPgpEngineWrapper identities (bob/alice/carol/dave), same shape as RunPgpAliceBobTest but
+    // against the real gpg-backed engine: bob signs one document via SignBuffer, then encrypts the
+    // combined [signature-length][signature][document] payload SEPARATELY to alice/carol/dave via
+    // ordinary single-recipient EncryptBuffer (RunPgpWrapperMultiRecipientEncryptTest already covers
+    // real multi-recipient encryption on its own). All three independently DecryptBuffer their own
+    // ciphertext and VerifyBuffer bob's signature; dave's copy is additionally tampered with to
+    // confirm a corrupted signature is correctly rejected.
+    int RunPgpWrapperAliceBobTest(void);
+
+    // Streaming file-path CPgpEngineWrapper::EncryptFile/DecryptFile round-trip over a real file on
+    // disk (WriteTesterFile/ReadTesterFile, same convention as RunPgpFileEncryptDecryptTest), gpg
+    // operating directly on the file paths. Also re-encrypts, flips one ciphertext byte, and
+    // confirms DecryptFile fails closed (INVALID_DATA) instead of producing corrupted output.
+    int RunPgpWrapperFileEncryptDecryptTest(void);
+
+    // CPgpEngineWrapper::SignFile/VerifyFile over a real file, same size/generation pattern as
+    // RunPgpWrapperFileEncryptDecryptTest. Also flips one byte in the detached signature file and
+    // confirms VerifyFile reports it as invalid rather than erroring out.
+    int RunPgpWrapperFileSignVerifyTest(void);
+
+    // Internal round-trip of CPgpEngineWrapper's expiration API against real gpg: generates one
+    // identity with the 4-argument GenerateKeyPair (must report GetKeyExpirationSeconds()==0) and
+    // another with the 5-argument overload's expirationSeconds set to a non-zero value (must echo
+    // that exact value back) -- same shape as RunPgpKeyExpirationTest.
+    int RunPgpWrapperKeyExpirationTest(void);
+
+    // Generates an identity with a 30-day expiration (real "gpg --batch --gen-key"), exports its
+    // public key (ExportPublicKeyArmored) and a revocation certificate (RevokeKeyArmored), then
+    // imports both into a SEPARATE, external gpg homedir (same FindGpgExecutable/RunShellCommand/
+    // QuoteShellPath helpers RunPgpGnuPgRevocationInteropTest already uses) and confirms via
+    // "gpg --with-colons --list-keys" first that the parsed expiry field is non-empty and then,
+    // after importing the revocation certificate, that the key's validity field flips to 'r'
+    // (revoked) -- same external-verification shape as RunPgpGnuPgRevocationInteropTest, sourcing
+    // the key material from CPgpEngineWrapper instead of CPgpEngine.
+    int RunPgpWrapperKeyRevocationTest(void);
+
+    // Extra capability beyond CPgpEngine: real multi-recipient encryption. Three independent
+    // CPgpEngineWrapper identities (alice/bob/carol) each import each other's public keys; bob
+    // encrypts ONE buffer via EncryptBufferMultiRecipient addressed to both alice's and carol's key
+    // ids at once (one shared-session-key ciphertext, confirmed via GetImportedPeerKeyCount/
+    // GetImportedPeerKeyId), and both alice and carol independently DecryptBuffer the SAME
+    // ciphertext bytes back to the original plaintext.
+    int RunPgpWrapperMultiRecipientEncryptTest(void);
+
+    // Extra capability beyond CPgpEngine: real ECC/EdDSA identities. Generates an Ed25519/Cv25519
+    // identity via GenerateKeyPairEcc, checks GetKeyId still reports a 16-hex-char Key ID and both
+    // armored exports carry the expected framing, then exercises the SAME identity end to end:
+    // alice (RSA, via the ordinary GenerateKeyPair) and an ECC bob exchange public keys and
+    // round-trip EncryptBuffer/DecryptBuffer and SignBuffer/VerifyBuffer against each other,
+    // confirming an ECC identity interoperates with an RSA one through the same gpg keyring.
+    int RunPgpWrapperEccKeyGenerationTest(void);
+
 protected:
 
 private:

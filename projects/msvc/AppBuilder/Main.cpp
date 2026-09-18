@@ -245,5 +245,31 @@ int main()
     cryptoApiTester.RunPgpGnuPgRevocationInteropTest();
 #endif
 
+#if 1
+    cryptoApiTester.RunPgpWrapperAvailabilityTest();
+
+    cryptoApiTester.RunPgpWrapperKeyGenerationTest();
+
+    cryptoApiTester.RunPgpWrapperEncryptDecryptTest();
+
+    cryptoApiTester.RunPgpWrapperSignVerifyTest();
+
+    cryptoApiTester.RunPgpWrapperClearSignTest();
+
+    cryptoApiTester.RunPgpWrapperAliceBobTest();
+
+    cryptoApiTester.RunPgpWrapperFileEncryptDecryptTest();
+
+    cryptoApiTester.RunPgpWrapperFileSignVerifyTest();
+
+    cryptoApiTester.RunPgpWrapperKeyExpirationTest();
+
+    cryptoApiTester.RunPgpWrapperKeyRevocationTest();
+
+    cryptoApiTester.RunPgpWrapperMultiRecipientEncryptTest();
+
+    cryptoApiTester.RunPgpWrapperEccKeyGenerationTest();
+#endif
+
     return 0;
 }

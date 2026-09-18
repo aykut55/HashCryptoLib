@@ -117,6 +117,9 @@
     <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp">
       <Filter>src\Pgp</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp">
+      <Filter>src\Pgp</Filter>
+    </ClCompile>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -198,6 +201,9 @@
       <Filter>src\Providers\OpenSslProvider</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h">
+      <Filter>src\Pgp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h">
       <Filter>src\Pgp</Filter>
     </ClInclude>
   </ItemGroup>

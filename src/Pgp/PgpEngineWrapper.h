@@ -1,0 +1,289 @@
+#ifndef AYCRYPTO_PGP_ENGINE_WRAPPER_H
+#define AYCRYPTO_PGP_ENGINE_WRAPPER_H
+
+#include "Definitions/Definitions.h"
+
+#include <memory>
+
+namespace CryptoApiNS
+{
+
+// ====================================================================================================
+// CPgpEngineWrapper -- unlike CPgpEngine (which reimplements RFC 4880 itself on top of CryptoPP),
+// this class does no cryptography of its own: every method shells out to a real, locally installed
+// "gpg.exe" (GnuPG/Gpg4win) as a child process and lets it do the actual work. The public API below
+// mirrors CPgpEngine's method-for-method (same names/signatures) so the two engines are drop-in
+// interchangeable for the same call sites/tests, plus a handful of additional methods (marked below)
+// that expose real gpg capabilities CPgpEngine's own v1 engine does not have (multi-recipient
+// encryption, ECC/EdDSA keys).
+//
+// Each instance gets its OWN isolated --homedir (a fresh temporary directory created at construction
+// time and removed at destruction time on a best-effort basis) -- the real user's default GnuPG
+// keyring under %APPDATA%\gnupg is never touched. Buffer-suffixed methods (EncryptBuffer,
+// SignBuffer, etc.) round-trip through temporary files under that same homedir, since gpg operates
+// on files/stdio, not in-process buffers -- unlike CPgpEngine, which never touches disk for its own
+// Buffer-suffixed methods. File-suffixed methods hand gpg the caller's paths directly.
+//
+// gpg.exe is located at runtime by probing the same well-known Gpg4win install paths the repo's own
+// test helper (FindGpgExecutable in CryptoApiTester.cpp) already uses; this class reimplements that
+// discovery independently since it is product code and must not depend on test-file internals.
+// IsGnuPgAvailable() reports whether that discovery succeeded; every other method below returns
+// NOT_IMPLEMENTED if it did not (no existing ErrorCode value means "external tool not found", and
+// Rules.md's error-code guidance says to reuse an existing value rather than invent one).
+//
+// Child processes are spawned via CreateProcessW with fully redirected, non-inheritable stdio pipes
+// (never through cmd.exe) -- this sidesteps cmd.exe's own command-line quote-stripping quirk
+// entirely (irrelevant here since there is no shell in the middle) and also avoids the
+// "agent_genkey failed: No such file or directory" failure the original design notes for this class
+// worried about: that failure was reproduced during development and traced to gpg's homedir not
+// existing as a directory yet (gpg creates its keyring/agent-socket files under --homedir on first
+// use, but never creates the directory itself) -- this class always creates its homedir directory up
+// front in the constructor, which was sufficient to avoid the issue in every scenario exercised by
+// this class's own test suite (RunPgpWrapper*Test in CryptoApiTester.cpp/.h).
+// ====================================================================================================
+
+class CPgpEngineWrapper
+{
+public:
+    virtual ~CPgpEngineWrapper();
+             CPgpEngineWrapper();
+
+    // rsaKeyBits selects the RSA key size the RSA-flavored GenerateKeyPair() overloads below will
+    // pass to "gpg --batch --gen-key" (1024/2048/3072/4096); any other value is rejected by
+    // GenerateKeyPair() with INVALID_ARGUMENT. Does not affect GenerateKeyPairEcc() below, which
+    // always generates Ed25519/Cv25519 keys regardless of this constructor argument.
+    explicit CPgpEngineWrapper(const int rsaKeyBits);
+
+    // ============================================================================================
+    // Availability -- safe to call before anything else (does not require GenerateKeyPair/
+    // ImportPeerPublicKey to have run first). See the class comment above for what this reuses.
+    // ============================================================================================
+
+    bool IsGnuPgAvailable(void) const;
+
+    // ============================================================================================
+    // Identity (own key pair) -- delegates to "gpg --batch --gen-key" with a generated parameter
+    // file (RSA sign+certify master key, RSA encrypt-only subkey, exactly mirroring CPgpEngine's
+    // own key-flag layout) inside this instance's isolated --homedir. password becomes that gpg
+    // secret key's real S2K passphrase (gpg's own, not a value this class re-derives). Must be
+    // called once (or GenerateKeyPairEcc below) before ExportPublicKeyArmored/ExportSecretKeyArmored/
+    // DecryptBuffer/DecryptStringArmored/SignBuffer/ClearSignString; calling it again generates a
+    // fresh gpg key in the same homedir, replacing the "current identity" this instance tracks (the
+    // old key remains in gpg's keyring on disk but this instance no longer refers to it).
+    // ============================================================================================
+
+    int GenerateKeyPair( const char* userId, const int userIdSize,
+                        const char* password, const int passwordSize);
+
+    // Same as the 4-argument overload above, plus a real gpg key expiration date computed as "now +
+    // expirationSeconds"; 0 means never expires (identical behavior to the 4-argument overload).
+    int GenerateKeyPair( const char* userId, const int userIdSize,
+                        const char* password, const int passwordSize,
+                        const unsigned int expirationSeconds);
+
+    // ============================================================================================
+    // Extra capability beyond CPgpEngine: real ECC/EdDSA identities. Same contract as
+    // GenerateKeyPair above (same "current identity" slot -- calling either family overwrites what
+    // the other last set), except the master key is Ed25519 (sign+certify) and the encryption
+    // subkey is Cv25519/ECDH, both natively supported by gpg's own "--batch --gen-key" parameter
+    // file syntax (Key-Type: eddsa / Key-Curve: ed25519, Subkey-Type: ecdh / Subkey-Curve: cv25519).
+    // CPgpEngine has no ECC support at all (RSA only), so there is no elliptic-curve analogue to
+    // mirror there -- these two overloads exist only on this class.
+    // ============================================================================================
+
+    int GenerateKeyPairEcc( const char* userId, const int userIdSize,
+                           const char* password, const int passwordSize);
+
+    int GenerateKeyPairEcc( const char* userId, const int userIdSize,
+                           const char* password, const int passwordSize,
+                           const unsigned int expirationSeconds);
+
+    // What the expirationSeconds argument was last called with, across GenerateKeyPair AND
+    // GenerateKeyPairEcc (0 if neither has been called yet, or if a 4-argument overload -- always
+    // "never expires" -- was used last).
+    unsigned int GetKeyExpirationSeconds(void) const;
+
+    // Exact ASCII-armored size ExportPublicKeyArmored/ExportSecretKeyArmored would need; 0 before
+    // GenerateKeyPair()/GenerateKeyPairEcc() succeeds. capacity=0/buffer=nullptr queries the
+    // required size (see BUFFER_TOO_SMALL convention on the methods below).
+    int GetPublicKeyArmoredSize(void) const;
+    int GetSecretKeyArmoredSize(void) const;
+
+    // "-----BEGIN PGP PUBLIC KEY BLOCK-----" as produced by "gpg --armor --export", captured once
+    // right after key generation and cached (mirrors CPgpEngine's own ownPublicKeyArmored cache).
+    int ExportPublicKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // "-----BEGIN PGP PRIVATE KEY BLOCK-----" as produced by "gpg --armor --export-secret-keys"
+    // (captured once right after key generation, using the password GenerateKeyPair/
+    // GenerateKeyPairEcc was called with, and cached -- same no-password-parameter contract as
+    // CPgpEngine's own ExportSecretKeyArmored, for the same reason: the password was already
+    // consumed once at generation/export time).
+    int ExportSecretKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // Hex Key ID (8 bytes / 16 hex chars + null terminator) of this instance's own master key, as
+    // reported by gpg itself; empty string before GenerateKeyPair()/GenerateKeyPairEcc() succeeds.
+    // outputBufferCapacity must be >= 17.
+    int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const;
+
+    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
+    // it was called with. Delegates to "gpg --generate-revocation" (scripted via --command-fd/
+    // --status-fd), armored under "-----BEGIN PGP PUBLIC KEY BLOCK-----" (gpg's own convention for
+    // a standalone revocation certificate, same as CPgpEngine's own RevokeKeyArmored). reasonCode
+    // uses the SAME RFC 4880 5.2.3.23 numbering CPgpEngine's own RevokeKeyArmored documents (0 = no
+    // reason, 1 = key superseded, 2 = key compromised, 3 = key retired) -- internally translated to
+    // gpg's own interactive menu order (0/1/2/3 = no reason/compromised/superseded/retired, verified
+    // empirically against this machine's gpg.exe while building this class) so callers of either
+    // engine pass the same reasonCode values for the same meaning. reasonText may be nullptr/
+    // 0-length for no human-readable reason.
+    int RevokeKeyArmored( const char* password, const int passwordSize,
+                         const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
+                         const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // ============================================================================================
+    // Peer key(s) (the other party's public key) -- imported into this instance's own isolated gpg
+    // keyring via "gpg --import". Unlike CPgpEngine (which tracks exactly one peer identity at a
+    // time), this class keeps every successfully imported peer key id, in import order, so the
+    // extra multi-recipient methods below can address any of them; GetPeerKeyId still mirrors
+    // CPgpEngine's single-peer convention by reporting the MOST RECENTLY imported one.
+    // ============================================================================================
+
+    int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize);
+
+    // Hex Key ID of the most recently imported peer master key; empty string before
+    // ImportPeerPublicKey() succeeds at least once.
+    int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const;
+
+    // Extra capability beyond CPgpEngine: how many distinct peer keys ImportPeerPublicKey has
+    // successfully imported into this instance's keyring so far (0 if none).
+    int GetImportedPeerKeyCount(void) const;
+
+    // Extra capability beyond CPgpEngine: hex Key ID of the peerIndex-th imported peer key (0-based,
+    // in import order); INVALID_ARGUMENT if peerIndex is out of range. outputBufferCapacity must be
+    // >= 17.
+    int GetImportedPeerKeyId(const int peerIndex, char* outputBuffer, const int outputBufferCapacity) const;
+
+    // ============================================================================================
+    // Encrypt (to the imported peer's key) / Decrypt (with this instance's own secret key) --
+    // delegates to "gpg --encrypt"/"gpg --decrypt" through a temporary input/output file pair under
+    // this instance's homedir (removed afterwards on a best-effort basis).
+    // ============================================================================================
+
+    // ImportPeerPublicKey() must have succeeded first (encrypts to the MOST RECENTLY imported peer,
+    // same single-recipient convention as CPgpEngine's own EncryptBuffer -- see
+    // EncryptBufferMultiRecipient below for more than one recipient at once).
+    int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
+    // Same as EncryptBuffer, ASCII-armored ("-----BEGIN PGP MESSAGE-----") text output instead of
+    // raw binary (gpg's own "--armor --encrypt").
+    int EncryptStringArmored( const char* inputString, const int inputStringSize,
+                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // ============================================================================================
+    // Extra capability beyond CPgpEngine: real multi-recipient encryption -- one shared session key,
+    // one ciphertext, decryptable by ANY of the listed recipients' own secret key (real gpg "-r
+    // <id1> -r <id2> ... --encrypt", not N independent single-recipient ciphertexts). Every id in
+    // recipientKeyIds must be a key id ImportPeerPublicKey has already imported into this instance
+    // (see GetImportedPeerKeyCount/GetImportedPeerKeyId above to enumerate them).
+    // ============================================================================================
+
+    int EncryptBufferMultiRecipient( const unsigned char* inputBuffer, const int inputBufferSize,
+                                    const char* const* recipientKeyIds, const int recipientCount,
+                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
+    // Same as EncryptBufferMultiRecipient, ASCII-armored text output instead of raw binary.
+    int EncryptStringArmoredMultiRecipient( const char* inputString, const int inputStringSize,
+                                           const char* const* recipientKeyIds, const int recipientCount,
+                                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
+    // it was called with. Delegates to "gpg --decrypt"; decompresses whatever compression (if any)
+    // the sender used, since real gpg handles that transparently.
+    int DecryptBuffer( const char* password, const int passwordSize,
+                      const unsigned char* inputBuffer, const int inputBufferSize,
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
+    // Same as DecryptBuffer, ASCII-armored input instead of raw binary.
+    int DecryptStringArmored( const char* password, const int passwordSize,
+                            const char* inputString, const int inputStringSize,
+                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
+    // ============================================================================================
+    // Sign (with this instance's own key) / Verify (against an imported peer's key) -- delegates to
+    // "gpg --detach-sign" / "gpg --verify" through temporary files.
+    // ============================================================================================
+
+    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
+    // it was called with.
+    int SignBuffer( const char* password, const int passwordSize,
+                   const unsigned char* inputBuffer, const int inputBufferSize,
+                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
+    // ImportPeerPublicKey() must have succeeded first. Returns NO_ERROR when "gpg --verify" ran
+    // (isValid then reports whether it reported a good signature) or an error code when it could
+    // not run at all; *isValid is only meaningful when the return value is NO_ERROR (same
+    // convention as CCryptoApi::VerifyBuffer and CPgpEngine::VerifyBuffer).
+    int VerifyBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
+                     const unsigned char* signatureBuffer, const int signatureBufferSize, bool* isValid);
+
+    // ============================================================================================
+    // Clear-sign -- delegates to "gpg --clear-sign" / "gpg --verify".
+    // ============================================================================================
+
+    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
+    // it was called with.
+    int ClearSignString( const char* password, const int passwordSize,
+                        const char* inputString, const int inputStringSize,
+                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
+    // VerifyBuffer above.
+    int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid);
+
+    // ============================================================================================
+    // File-based variants -- unlike CPgpEngine's own streaming chunked implementation (needed there
+    // because the engine itself has to bound its memory use), these simply hand the caller's file
+    // paths straight to gpg, which does its own I/O; onProgress is invoked once with 0% immediately
+    // before the gpg process is started (returning false there aborts with OPERATION_CANCELLED
+    // before gpg even runs) and once with 100% after it exits successfully -- real gpg's CLI does
+    // not expose fine-grained byte-level progress the way CPgpEngine's own chunk loop does, so this
+    // is a deliberately coarser (but still real and honest) progress contract, documented here
+    // rather than pretending to a granularity this backend cannot provide.
+    // ============================================================================================
+
+    // ImportPeerPublicKey() must have succeeded first (encrypts to the most recently imported peer,
+    // same convention as EncryptBuffer).
+    int EncryptFile( const char* inputFilePath, const char* outputFilePath,
+                    ProgressCallback onProgress, void* progressUserData);
+
+    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
+    // it was called with.
+    int DecryptFile( const char* password, const int passwordSize,
+                    const char* inputFilePath, const char* outputFilePath,
+                    ProgressCallback onProgress, void* progressUserData);
+
+    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
+    // it was called with. signatureFilePath receives gpg's raw (non-armored) detached signature.
+    int SignFile( const char* password, const int passwordSize,
+                 const char* inputFilePath, const char* signatureFilePath,
+                 ProgressCallback onProgress, void* progressUserData);
+
+    // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
+    // VerifyBuffer above.
+    int VerifyFile( const char* inputFilePath, const char* signatureFilePath,
+                   bool* isValid, ProgressCallback onProgress, void* progressUserData);
+
+protected:
+
+private:
+
+    // Windows/subprocess/gpg-CLI details are kept out of this header so callers never need
+    // Windows.h or any gpg-specific include path; only PgpEngineWrapper.cpp does.
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+};
+
+} // namespace CryptoApiNS
+
+#endif
