@@ -306,6 +306,8 @@ int main()
 
     cryptoApiTester.RunPgpGnuPgBzip2InteropTest();
 
+    cryptoApiTester.RunPgpGnuPgBzip2DecryptBufferInteropTest();
+
     cryptoApiTester.RunPgpGnuPgPartialBodyLengthInteropTest();
 
     cryptoApiTester.RunPgpInspectionEncryptedMessageTest();

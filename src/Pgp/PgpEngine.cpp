@@ -2177,6 +2177,10 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
 }
 // -----------------------------------------------------------------------------
 
+// Forward declaration -- defined much further below (alongside the rest of the hand-written BZip2
+// decoder); parseAndDecryptMessage's buffer-path Compressed Data dispatch needs it here.
+bool bzip2DecompressBuffer(const std::vector<unsigned char>& input, std::vector<unsigned char>& output);
+
 // Scans one or more leading PKESK (tag 1) packets in `message`, looking for the one addressed to
 // THIS recipient's own Key ID (ownAlgorithm/ownRsaSubkey/ownX25519PrivateKey/ownSubkeyKeyId --
 // only the fields matching ownAlgorithm are used), decrypts that one PKESK's session key, and
@@ -2422,6 +2426,20 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
                 CryptoPP::ZlibDecompressor inflator(new CryptoPP::StringSink(decompressed));
                 inflator.Put(compData, compDataLength);
                 inflator.MessageEnd();
+            }
+            else if (compAlgo == 3)
+            {
+                // Same hand-written decode-only BZip2 decoder the streaming DecryptFile path uses
+                // (bzip2DecompressBuffer, defined further below) -- CryptoPP has no BZip2 support at
+                // all, this is the only decoder in the codebase. Unlike the streaming path, the
+                // whole compressed body is already in memory here, so no accumulator is needed.
+                const std::vector<unsigned char> bzip2Input(compData, compData + compDataLength);
+                std::vector<unsigned char> bzip2Output;
+                if (!bzip2DecompressBuffer(bzip2Input, bzip2Output))
+                {
+                    return false;
+                }
+                decompressed.assign(reinterpret_cast<const char*>(bzip2Output.data()), bzip2Output.size());
             }
             else
             {
@@ -5986,9 +6004,20 @@ int CPgpEngine::EncryptBuffer(const unsigned char* inputBuffer, const int inputB
             return UNEXPECTED_ERROR;
         }
 
+        // Capacity-query callers (outputBuffer == nullptr) and the follow-up real call are two
+        // INDEPENDENT invocations of buildEncryptedMessageMultiRecipient above, each generating its
+        // own fresh random session key/RSA-PKCS1v1.5 padding -- RFC 4880's MPI encoding drops any
+        // leading all-zero byte from the encrypted value, so the two calls' PKESK packets can
+        // legitimately differ in length by a byte or two per recipient (observed directly via
+        // RunPgpMixedRecipientEncryptDecryptTest). A capacity-query answer measured from ONE random
+        // sample is therefore not a reliable upper bound for a SECOND, independently-randomized
+        // build. Padding the reported size by a small per-recipient margin (never triggered by a
+        // real byte-count mismatch, since real recipients never exceed it) keeps the two calls
+        // consistent without having to cache/reuse the first build's exact bytes.
+        const std::size_t capacityMargin = recipients.size() * 2;
         if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(message.size()))
         {
-            *outputBufferSize = static_cast<int>(message.size());
+            *outputBufferSize = static_cast<int>(message.size() + (outputBuffer == nullptr ? capacityMargin : 0));
             return BUFFER_TOO_SMALL;
         }
         std::memcpy(outputBuffer, message.data(), message.size());
@@ -6041,9 +6070,13 @@ int CPgpEngine::EncryptStringArmored(const char* inputString, const int inputStr
         }
 
         const std::string armored = armorEncode("PGP MESSAGE", message);
+        // Same independent-random-build capacity-query caveat as EncryptBuffer above (see its
+        // comment) -- the margin is applied post-Base64 here (~4/3 expansion of the raw-byte
+        // margin, rounded up generously) since armored.size() is what's actually compared/reported.
+        const std::size_t capacityMargin = recipients.size() * 4;
         if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armored.size()))
         {
-            *outputBufferSize = static_cast<int>(armored.size());
+            *outputBufferSize = static_cast<int>(armored.size() + (outputBuffer == nullptr ? capacityMargin : 0));
             return BUFFER_TOO_SMALL;
         }
         std::memcpy(outputBuffer, armored.data(), armored.size());

@@ -623,6 +623,11 @@ public:
     // our DecryptFile" direction, with bzip2 in place of zlib.
     int RunPgpGnuPgBzip2InteropTest(void);
 
+    // Same scenario as RunPgpGnuPgBzip2InteropTest, through DecryptBuffer instead of DecryptFile --
+    // regression test for a real bug: DecryptBuffer's buffer-path Compressed Data dispatch had no
+    // BZip2 case at all until this was fixed, even though it was documented as already supported.
+    int RunPgpGnuPgBzip2DecryptBufferInteropTest(void);
+
     // Cross-checks CPgpEngine's reader against real GnuPG's new-format PARTIAL BODY LENGTH framing
     // (RFC 4880 section 4.2.2.4) -- SKIPPED (not FAILED) when gpg.exe isn't found, same convention
     // as RunPgpGnuPgInteropTest. GnuPG switches to that framing for any message that outgrows its

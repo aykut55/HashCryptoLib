@@ -17489,6 +17489,129 @@ int CCryptoApiTester::RunPgpGnuPgBzip2InteropTest(void)
 }
 // -----------------------------------------------------------------------------
 
+// Same scenario as RunPgpGnuPgBzip2InteropTest, but through DecryptBuffer instead of DecryptFile --
+// added specifically to verify the fix for a real bug found during review: parseAndDecryptMessage
+// (DecryptBuffer's buffer-path Compressed Data dispatch) previously had no BZip2 case at all even
+// though PgpEngine.h's own doc comment claimed DecryptBuffer could already read it back; only the
+// streaming decryptSeipBodyStreaming (used by DecryptFile) actually had algorithm==3 wired up.
+int CCryptoApiTester::RunPgpGnuPgBzip2DecryptBufferInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* homeDir = "cryptoapi_pgp_gnupg_bzip2_buf_home";
+        const char* pubKeyPath = "cryptoapi_pgp_gnupg_bzip2_buf_pub.asc";
+        const char* plainPath = "cryptoapi_pgp_gnupg_bzip2_buf_plain.bin";
+        const char* compressedPath = "cryptoapi_pgp_gnupg_bzip2_buf.pgp";
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(homeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        CPgpEngine pgp;
+        const char* userId = "GnuPG BZip2 DecryptBuffer Interop Test <interop-bzip2-buf@example.com>";
+        const char* password = "InteropTest-1";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED gpg --import rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        // Same compressible, large-enough-to-engage-BZip2 plaintext shape as RunPgpGnuPgBzip2InteropTest.
+        std::vector<unsigned char> bzip2Plaintext(16384);
+        for (std::size_t index = 0; index < bzip2Plaintext.size(); ++index)
+        {
+            bzip2Plaintext[index] = static_cast<unsigned char>('a' + (index % 11));
+        }
+        if (!WriteTesterFile(plainPath, bzip2Plaintext))
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED to write plaintext file" << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--compress-algo bzip2 -r " + keyId + " --output " + QuoteShellPath(compressedPath) + " --encrypt " + QuoteShellPath(plainPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED gpg BZip2 encryption rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> compressedMessage;
+        const bool readCompressedOk = ReadTesterFile(compressedPath, compressedMessage);
+
+        std::remove(pubKeyPath);
+        std::remove(plainPath);
+        std::remove(compressedPath);
+        std::filesystem::remove_all(homeDir, fsError);
+
+        if (!readCompressedOk || compressedMessage.empty())
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED to read gpg-encrypted BZip2 message" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int plainSize = 0;
+        status = pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &compressedMessage[0], static_cast<int>(compressedMessage.size()), 0, nullptr, &plainSize);
+        if (status != BUFFER_TOO_SMALL || plainSize != static_cast<int>(bzip2Plaintext.size()))
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED DecryptBuffer capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> bzip2Decrypted(static_cast<std::size_t>(plainSize));
+        int actualPlainSize = 0;
+        status = pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &compressedMessage[0], static_cast<int>(compressedMessage.size()), plainSize, &bzip2Decrypted[0], &actualPlainSize);
+        if (status != NO_ERROR || bzip2Decrypted != bzip2Plaintext)
+        {
+            std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGnuPgBzip2DecryptBufferInteropTest: PASSED gpg BZip2 message -> our DecryptBuffer" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunPgpGnuPgPartialBodyLengthInteropTest(void)
 {
     try
