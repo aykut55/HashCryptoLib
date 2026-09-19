@@ -1014,3 +1014,202 @@ Bu belge bir tasarım önerisidir; kaynaklar platform/API özelliklerini destekl
 - [RNP](https://github.com/rnpgp/rnp): OpenPGP motor adayı.
 - [GPGME](https://gnupg.org/documentation/manuals/gpgme/Features.html): GnuPG engine adaptörü ve dağıtım değerlendirmesi.
 - [Lua manual](https://www.lua.org/manual/5.4/manual.html): gömülü scripting ve C API.
+
+## 29. TODO — açık işler
+
+Bu bölüm, ayrı bir `TODO.md` dosyasında tutulan işlerin buraya taşınmış hâlidir (2026-09-20).
+Tasarım önerisi olan yukarıdaki bölümlerden farklı olarak burası **canlı bir durum takibi** —
+tamamlanan işler ✅ ile işaretli kalır (silinmez), açık olanlar öyle kalır.
+
+### 29.1 CPgpEngine
+
+- ✅ **TAMAMLANDI (2026-09-19):** Sıkıştırmalı `EncryptFile` — yeni `EncryptFileCompressed` metodu
+  eklendi (mevcut `EncryptFile` değişmeden, sıkıştırmasız kaldı). ZIP/ZLIB round-trip, boş/büyük
+  dosya, iptal, bozuk çıktı testleri PASSED.
+- ✅ **TAMAMLANDI (2026-09-19):** BZip2 decompress desteği — CryptoPP/Botan'da hiç yokmuş, sıfırdan
+  bir decode-only decoder yazıldı, gerçek GnuPG çıktısıyla test edildi (PASSED). Not: bu decoder'ın
+  kendi iç doğrulaması yok (dış SEIP/MDC'ye güveniyor) — ileride gözden geçirilmesi iyi olur, bkz.
+  memory `pgp_engine_known_format_gaps.md`.
+- ✅ **TAMAMLANDI (2026-09-19):** Partial-body-length paket desteği — hem buffer (`DecryptBuffer`)
+  hem streaming (`DecryptFile`) yolunda eklendi. Önemli bulgu: gerçek GnuPG 2.5.21, sadece pipe'tan
+  değil, **yeterince büyük her dosya için** partial-body-length SEIP çerçevesi üretiyor — bu düzeltme
+  öncesinde motor birkaç KB'den büyük gerçek gpg dosyalarının çoğunu okuyamıyordu. Negatif kontrolle
+  doğrulandı (düzeltme geri alınınca yeni test gerçekten FAIL veriyor). BZip2+partial-body-length
+  kombinasyonu dahil tüm testler PASSED.
+- ✅ **TAMAMLANDI (2026-09-20):** `EncryptBuffer`/`EncryptStringArmored` (multi-recipient)
+  capacity-query bug'ı düzeltildi — kök neden, capacity-query ile gerçek çağrının bağımsız rastgele
+  oturum anahtarlarıyla çalışıp RFC 4880 MPI encoding yüzünden nadiren 1 byte'lık boyut farkı
+  üretebilmesiydi; alıcı sayısına göre ölçeklenen bir güvenlik payı eklendi.
+- ✅ **TAMAMLANDI (2026-09-20):** `DecryptBuffer` artık BZip2 okuyabiliyor — `parseAndDecryptMessage`
+  (buffer yolu) hiç BZip2 case'i içermiyordu, mevcut `bzip2DecompressBuffer`'a bağlandı. Yeni test:
+  `RunPgpGnuPgBzip2DecryptBufferInteropTest`.
+- ✅ **TAMAMLANDI (2026-09-19):** İnceleme (inspection) API'si — hem `CPgpEngine` hem
+  `CPgpEngineWrapper`'da: `IsPublicKeyEncrypted`, `IsPasswordEncrypted`, `IsIntegrityProtected`,
+  `GetCompression`, `ListEncryptionKeyIds`, `ListSigningKeyIds`, `ListSignatures` — decrypt/verify
+  denemeden mesaj/dosya hakkında bilgi alınabiliyor. Gerçek GnuPG ile karşılaştırılıp doğrulandı.
+  (Dosya-yolu varyantları ve `ListOpenPgpFile`/`IsSignedOnly`/`GetEncryptionCypher` bilinçli olarak
+  eklenmedi.)
+
+### 29.2 DidiSoft.Pgp karşılaştırması — kalan eksik yetenekler
+
+DidiSoft.Pgp (.NET, ticari, `D:\Temp\OpenPGP Library for .NET...`) public API'siyle karşılaştırıldı;
+aşağıdakiler `CPgpEngine`/`CPgpEngineWrapper`'da yok, **ileride ele alınacak**:
+
+Karşılaştırma, DidiSoft'un ticari kütüphanesinin **public API yüzeyi** okunarak yapıldı (kod
+kopyalanmadı/alıntılanmadı, sadece method/enum adları yetenek listesi çıkarmak için kullanıldı).
+
+**Yüksek öncelik:**
+- Encrypt tarafında simetrik algoritma seçimi (3DES/CAST5/Blowfish/AES-128/192/256/Twofish/
+  Camellia) — native motorun `EncryptBuffer`'ı her zaman AES-256 üretiyor (decrypt tarafı zaten
+  oturum-anahtarı paketindeki algoritma octet'ine göre dallanabiliyor, sadece encrypt seçemiyor).
+  SEIP'in CFB çerçevelemesi şu an AES'in 16 byte'lık blok boyutuna göre sabit, 3DES/CAST5/Blowfish/
+  IDEA'nın 8 byte'lık bloğuna genelleştirilmesi gerekir — orta ölçekli bir iş.
+- NIST P-256/384/521 + Brainpool eğrileri — bizde sadece Ed25519/X25519 (Curve25519 ailesi) var,
+  P-curve/Brainpool PGP kimliği üretilemiyor.
+- Designated revoker (RFC 4880'in gerçek bir özelliği: başka birinin anahtarınızı iptal etmesine
+  önceden yetki vermek) — hiç implement edilmedi.
+- ADK / Additional Decryption Key (kurumsal "arka kapı" decrypt anahtarı) — hiç implement edilmedi.
+- V3 (eski format) imza üretimi — düşük değerli, biz her zaman v4 üretiyoruz.
+
+**Orta öncelik — kalıcı keyring/yönetim** (ikimizde de gerçek bir keyring kavramı yok):
+Şifreli keystore dosyası, userId/keyId ile arama yapılabilen çoklu-anahtar barındırma, var olan
+kimliğe sonradan subkey ekleme, üretim sonrası expiration değiştirme/temizleme, çoklu User ID
+yönetimi, **key signing/web-of-trust** (`SignPublicKey`, trust seviyeleri), User ID'ye özel imza
+iptali, var olan bir revocation sertifikasının sebebini okuma (biz sadece üretebiliyoruz, okuyamı-
+yoruz), var olan secret key'in parolasını değiştirme, JPEG foto-ID paketleri, KBX (GnuPG keybox)
+import, ElGamal/DH-DSS anahtar üretimi.
+
+**Düşük öncelik — sadece ergonomik sarmalayıcılar, yeni bir kriptografik yetenek değil:**
+Tek çağrıda sign+encrypt / decrypt+verify (şu an iki ayrı çağrı + elle payload birleştirme
+gerekiyor, AliceBob testlerindeki desen), imzalı içerikten imzayı çıkarmadan sadece metni alma,
+klasör/toplu dosya şifreleme.
+
+Listeye dahil edilmeyenler: .NET'e özgü API-şekli farkları (async/await, Stream vs buffer,
+IDisposable) — dil özelliği, yetenek farkı değil.
+
+### 29.3 Libgcrypt provider — TAMAMLANDI (2026-09-19)
+
+- `CLibgcryptProvider` eklendi, planlanandan daha geniş kapsamla: tek seferde AEAD (17/17),
+  Legacy (22/22), Hash (14/14), Signature (9/9), KeyAgreement (2/2), Asymmetric/RSA-OAEP (4/4).
+  Desteklenmeyen kombinasyonlar (3 DRBG değeri, Win32) factory/provider tarafından dürüstçe
+  unsupported olarak bildiriliyor. Bkz. `3rdParty/LIBGCRYPT_BUNDLE.md`.
+- Kalan (bilinçli olarak kapsam dışı): Win32/x86 binary yok; libgcrypt'in bu SDK'nın enum'larının
+  modellemediği fazladan yüzeyi (SM4/ARIA/SEED/Blowfish/CAST5/IDEA/GOST, XTS, AES-Key-Wrap,
+  SM3/Whirlpool/Tiger/Streebog, CMAC/GMAC/Poly1305, scrypt/Argon2/HKDF, ElGamal, ML-KEM/ML-DSA/
+  SNTRUP761/McEliece) — eklemek önce paylaşılan enum'ları genişletmeyi gerektirir, ayrı bir iş.
+
+## 30. AES Online Tool Araştırması — Kullanıcı Tarafından Girilebilen Opsiyonlar
+
+Tarih: 14 Eylül 2026. Amaç: `CryptoApiTester::RunAESTests()` tasarımına (TAMAMLANDI, 2026-09-16 —
+112/112 kombinasyon PASSED) girdi olarak, popüler online AES şifreleme/çözme araçlarının
+kullanıcıya sunduğu tüm konfigürasyon parametrelerini çıkarmak. 39 site tarandı (kullanıcının
+verdiği liste, tekrarlar hariç); 34'ünden kullanılabilir veri elde edildi. Ayrı bir
+`AesOnlineToolsResearch.md` dosyasında tutuluyordu, buraya taşındı (2026-09-20).
+
+### 30.1 Erişilemeyen siteler (5)
+
+| Site | Sorun |
+| --- | --- |
+| https://inventivehq.com/tools/security/aes-encryption-tool | HTTP 403 Forbidden |
+| https://codeshack.io/aes-encrypt-decrypt/ | HTTP 403 Forbidden |
+| http://aes.online-domain-tools.com/ | SSL sertifikası süresi dolmuş |
+| https://www.calcnationtools.com/developer/aes-encrypt | HTTP 403 Forbidden |
+| https://devgearbox.com/tools/aes-encryption | HTTP 403 Forbidden |
+
+Ayrıca **https://encode-decode.com/aes-256-cbc-encrypt-online/** erişildi ama sayfa içeriğinde
+gerçek araç arayüzü (form elemanları) yoktu, sadece tanıtım metni döndü — kullanılabilir veri
+çıkarılamadı.
+
+**Önemli metodolojik not:** Bu tarama statik HTML üzerinden yapıldı (JavaScript çalıştırılmadı).
+Bazı siteler (ör. yoyotools, tulz.org, encipherr, snoq.io, w3schools, devtools.tools) form
+elemanlarını tamamen JS ile render ediyor olabilir — bu yüzden "minimal/opsiyon yok" görünen bazı
+sonuçlar aslında "JS render edilmediği için görülemedi" anlamına gelebilir, gerçekten opsiyon
+eksikliği olmayabilir. Kesinleştirmek için tarayıcı otomasyonuyla (claude-in-chrome) tekrar
+bakılması gerekir.
+
+### 30.2 Tüm sitelerde gözlemlenen opsiyonların birleşik (union) listesi
+
+**1. Key Size (anahtar boyutu):** 128 / 192 / 256 bit (en yaygın üçlü — neredeyse her zengin
+araçta var); bazı basit araçlarda sabit (genelde 256 bit'e sabitlenmiş).
+
+**2. Cipher Mode** (gözlemlenen tüm mod değerleri): **ECB**, **CBC** (en yaygın ikili); **CFB**,
+**OFB**, **CTR** (ikinci en yaygın grup); **GCM**, **CCM** (authenticated modes — zengin
+araçlarda); **CTS** (Cipher Text Stealing — sadece toolhelper.cn'de görüldü); **KCV** (Key Check
+Value — sadece hsmkit'te, aslında bir "mode" değil ama dropdown'da mode gibi sunulmuş); **EAX**
+(sadece infyways.com'un açıklama metninde geçti, gerçek dropdown'da görülmedi).
+
+**3. Padding Scheme:** **PKCS7**/**PKCS5Padding** (evrensel); **NoPadding**/**None**;
+**ZeroPadding**/**Zeros**; **ANSIX923**/**AnsiX923**; **ISO10126**/**Iso10126**;
+**ISO97971**/**Iso97971**.
+
+**4. IV / Nonce:** Manuel giriş (metin kutusu) veya otomatik üretim ("Generate"/"New IV" butonu);
+format seçimi Hex/Base64/UTF-8; mode'a göre boyut farkı (GCM için 12 byte, CBC/CTR için 16 byte,
+ECB için gereksiz); CCM/GCM'de ayrıca **AAD (Additional Authenticated Data)** alanı.
+
+**5. Authenticated Encryption (GCM/CCM) ekstra parametreleri:** Tag Length (96/104/112/120/128
+bit, gözlemlenen değerler); AAD alanı (opsiyonel, hex/base64/utf8); Append Tag toggle'ı.
+
+**6. Key Girişi / Key Derivation:** Raw key (Hex/Base64/UTF-8) veya Passphrase+KDF — en zengin
+araçlarda (emn178, toolmatic.net) PBKDF2 (iterasyon+salt+hash algoritması: MD5/SHA1/SHA224/
+SHA256/SHA384/SHA512/RIPEMD160/KECCAK512), EvpKDF (OpenSSL'in eski KDF'i), HKDF (info/context
+alanıyla), Scrypt (Cost N/Block Size r/Parallelism p/Memory Size), Argon2 (2i/2d/2id modu)
+seçenekleri var. Basit araçların çoğu sabit PBKDF2-SHA256 kullanıyor (100.000–250.000 iterasyon).
+
+**7. Salt:** Manuel giriş (hex) veya otomatik random üretim (16 byte tipik); çıktıya gömülü format
+`salt || iv || ciphertext` (base64) — birkaç sitede (base64.sh, w3schools, devtools.tools) sabit.
+
+**8. Input (girdi) formatı:** Plain text/UTF-8, Hex, Base64; zengin araçlarda ayrıca UTF-16LE/BE,
+ISO-8859 varyantları, Windows code page'leri, Doğu Asya kodlamaları (emn178, testmuai); file
+upload (toolkk, infyways, aesencryptiondecryption.tool-kit.dev); URL'den içerik çekme (emn178,
+testmuai).
+
+**9. Output (çıktı) formatı:** Hex (bazen Lower/Upper Case ayrımı), Base64; bazı araçlarda çift
+yönlü "swap" butonu (hex↔base64).
+
+**10. Diğer/nadir opsiyonlar:** Algoritma seçimi (AES dışında: TripleDES/Rabbit/RC4/DES, qr9.net)
+— bu SDK'nın kapsamı dışında ama "provider seçimi" fikrini destekliyor; "OpenSSL format" toggle'ı
+(Salted__ prefix'i ekleyip eklememe — emn178, toolmatic.net); preset seçimi ("OpenSSL (CBC)",
+"Node crypto (GCM)", "Web Crypto (GCM)", "CryptoJS (CBC)", "Custom" — coderstool.com).
+
+### 30.3 Site bazlı özet tablo
+
+| Site | Zenginlik | Mode | Key Size | Padding | IV | Encoding | Not |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| devglan.com | Yüksek | ECB/CBC/CTR/GCM | 128/192/256 | NoPadding/PKCS5 | ✓ (+format) | Base64/Hex | GCM tag length 96-128 |
+| emn178.github.io (encrypt/decrypt) | **En yüksek** | CBC/CTR/CFB/OFB/ECB/GCM/CCM | 128/192/256 | 7 çeşit | ✓ + AAD + nonce | 20+ encoding | 5 farklı KDF, OpenSSL format toggle |
+| coderstool.com | Yüksek | CBC/CCM/CFB/CTR/GCM/OFB | 128/192/256 | — | ✓ | — | Preset seçimi (OpenSSL/Node/WebCrypto/CryptoJS) |
+| qr9.net | Orta-Yüksek | CBC/CFB/CTR/OFB/ECB | Auto/128/192/256 | 6 çeşit | ✓ | Utf8/Hex/Base64 | Algoritma seçimi de var (AES/3DES/Rabbit/RC4/DES) |
+| hsmkit.com | Orta-Yüksek | ECB/CBC/CFB/OFB/KCV | 128/192/256 | — | ✓ | ASCII/Hex | — |
+| anycript.com | Orta | CBC/ECB | 128/192/256 | — | ✓ | Base64/Hex | — |
+| javainuse.com | Orta | CBC/ECB | 128/192/256 | — | ✓ | Base64/Hex | — |
+| base64.sh | Düşük-Orta | GCM/CBC | 128/256 | — | otomatik | Base64/Hex | Parola tabanlı, PBKDF2 sabit |
+| toolhelper.cn | Yüksek | CBC/ECB/OFB/CFB/CTS/CTR | 128/192/256 | 5 çeşit | ✓+nonce+AAD | Utf8/Hex/Base64 | CTS moduna sahip nadir site |
+| testmuai.com | **Çok Yüksek** | EBC/CBC/CTR/GCM (+CCM ima) | 128/192/256 | Pkcs5/NoPadding | ✓ | çok sayıda encoding | emn178 ile aynı motor gibi |
+| toolkk.com | Orta | ECB/CBC | 128/192/256 | dropdown var (detay yok) | ✓ auto-gen | Hex/Base64 | — |
+| angrytools.com | Orta-Yüksek | ECB/GCM/CFB/OFB/CTR/CBC | key uzunluğuna göre | — | ✓ | Hex/Base64 | Snippet/kod üretimi de var |
+| credenshare.io | Düşük | GCM/CBC | 256 sabit | — | otomatik | Base64 | Parola tabanlı |
+| aesencryptiondecryption.tool-kit.dev | Orta | ECB/CBC/CFB/OFB | 128/192/256 | — | ✓ opsiyonel | Base64/Hex | — |
+| h.markbuild.com | Orta | CBC/ECB/CFB/OFB/CTR | — | 6 çeşit | ✓ zorunlu | — | Key size dropdown'u görünmedi |
+| infyways.com | Orta-Yüksek | CBC/CFB/OFB/ECB | 128/192/256 | dropdown var | ✓ toggle+generate | Base64/Hex | — |
+| toolmatic.net | **Çok Yüksek** | GCM/CBC/CTR/ECB | 128/192/256 | PKCS7 (oto) | ✓ mode'a göre boyut | Base64/Hex | PBKDF2 iterasyon+salt, AAD, tag length 96/112/128 |
+| monkeydev.net | Orta | CBC/ECB/CFB/CTR/OFB | — | PKCS7/Zero/NoPadding+ | ✓ hex | — | — |
+| toolswise.com | Orta-Yüksek | CBC/ECB/CTR | 128/192/256 | 5 çeşit | ✓ opsiyonel+generate | Base64/Hex | — |
+| testprotect.com (AEScalc) | Çok Düşük | — (sadece 128-bit) | 128 sabit | — | — | Hex sabit | FIPS-197 test vektörü hesaplayıcı |
+| diğerleri (yoyotools, encipherr, tulz.org, snoq.io, w3schools, devtools.tools, cryptii.com, alvandsoft, encode-decode.com) | Düşük/Minimal | çoğunlukla sabit (GCM veya CBC) | çoğunlukla 256 sabit | görünmüyor | otomatik | Base64 çoğunlukla | Basit "metin + parola" arayüzü; JS-render nedeniyle eksik olabilir |
+
+### 30.4 `RunAESTests()` tasarımı için çıkarımlar (uygulandı, 2026-09-16)
+
+1. **Key size**: 128/192/256 (`AeadAlgorithm`/`LegacySymmetricAlgorithm` enum'larında var).
+2. **Mode**: ECB/CBC/CFB/OFB/CTR (Legacy) + GCM/CCM/EAX/SIV (AEAD) — enum'larda var.
+3. **Padding**: PKCS7 vs NoPadding vs ZeroPadding — SDK'da seçilemiyor, Legacy cipher'lar sabit
+   padding kullanıyor (CBC/ECB PKCS7-benzeri, stream modları padding'siz).
+4. **IV/Nonce**: manuel vs otomatik üretim — SDK zaten otomatik üretiyor (`IRandomSource`), manuel
+   IV girişi desteklenmiyor.
+5. **Key girişi**: raw key vs passphrase+KDF — SDK'da ikisi de var (`EncryptBuffer` parola,
+   Factory seviyesinde `SetKey` raw key).
+6. **KDF çeşitliliği**: PBKDF2 dışında Scrypt/Argon2/HKDF — SDK şu an sadece PBKDF2-SHA256
+   kullanıyor, kapsam dışı bırakıldı.
+7. **Encoding**: input/output Hex/Base64/UTF-8 — SDK ham byte buffer kullanıyor, encoding SDK'nın
+   işi değil (çağıran taraf hallediyor).
+8. **GCM tag length**: değişken (96-128 bit) — SDK şu an sabit 128-bit tag kullanıyor, bir
+   genişletme fırsatı olarak not düşüldü.
