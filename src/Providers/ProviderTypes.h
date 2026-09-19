@@ -11,7 +11,13 @@ enum ProviderKind
     PROVIDER_MICROSOFT = 0,
     PROVIDER_CRYPTOPP = 1,
     PROVIDER_BOTAN = 2,
-    PROVIDER_OPENSSL = 3
+    PROVIDER_OPENSSL = 3,
+
+    // libgcrypt (GnuPG's crypto library). x64 only -- the vendored bundle
+    // (3rdParty/libgcryptbundle11241) has no Win32/x86 binary, so under a Win32 configuration this
+    // provider still exists and is still selectable, but reports every algorithm as unsupported
+    // (see CLibgcryptProvider's own header comment).
+    PROVIDER_LIBGCRYPT = 4
 };
 
 // Authenticated (AEAD) cipher/mode/key-size combinations. Not every ProviderKind supports every

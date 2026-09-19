@@ -686,6 +686,19 @@ const char* HashAlgorithmName(HashAlgorithm algorithm)
 }
 // -----------------------------------------------------------------------------
 
+// True when PROVIDER_LIBGCRYPT has a real libgcrypt behind it on this build. The vendored bundle
+// (3rdParty/libgcryptbundle11241) is x64 only, so on a Win32 build CLibgcryptProvider compiles to an
+// all-unsupported stub and every Libgcrypt-specific test below SKIPs (returns NO_ERROR) instead of
+// FAILing -- the same convention RunPgpGnuPgInteropTest uses for an optional, machine-specific
+// dependency the repo's own build cannot provide. HASH_SHA256 is the probe because libgcrypt
+// supports it unconditionally whenever the library itself loaded and initialized.
+bool LibgcryptProviderAvailable(void)
+{
+    std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_LIBGCRYPT);
+    return factory && factory->SupportsHashAlgorithm(HASH_SHA256);
+}
+// -----------------------------------------------------------------------------
+
 int RunProviderFactoryInMemoryRoundTrip(const char* testName, const unsigned char* inputData, std::size_t inputSize)
 {
     struct ProviderCase
@@ -699,7 +712,8 @@ int RunProviderFactoryInMemoryRoundTrip(const char* testName, const unsigned cha
         { PROVIDER_MICROSOFT, "Microsoft" },
         { PROVIDER_CRYPTOPP,  "CryptoPP" },
         { PROVIDER_BOTAN,     "Botan" },
-        { PROVIDER_OPENSSL,   "OpenSSL" }
+        { PROVIDER_OPENSSL,   "OpenSSL" },
+        { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
     };
 
     int failures = 0;
@@ -780,7 +794,7 @@ int RunProviderFactoryInMemoryRoundTrip(const char* testName, const unsigned cha
         return UNEXPECTED_ERROR;
     }
 
-    std::cout << testName << ": PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+    std::cout << testName << ": PASSED (Microsoft, CryptoPP, Botan, OpenSSL, Libgcrypt)" << std::endl;
     return NO_ERROR;
 }
 // -----------------------------------------------------------------------------
@@ -798,7 +812,8 @@ int HashViaFactoryInMemory(const char* testName, const unsigned char* inputData,
         { PROVIDER_MICROSOFT, "Microsoft" },
         { PROVIDER_CRYPTOPP,  "CryptoPP" },
         { PROVIDER_BOTAN,     "Botan" },
-        { PROVIDER_OPENSSL,   "OpenSSL" }
+        { PROVIDER_OPENSSL,   "OpenSSL" },
+        { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
     };
 
     int failures = 0;
@@ -851,7 +866,7 @@ int HashViaFactoryInMemory(const char* testName, const unsigned char* inputData,
         return UNEXPECTED_ERROR;
     }
 
-    std::cout << testName << ": PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+    std::cout << testName << ": PASSED (Microsoft, CryptoPP, Botan, OpenSSL, Libgcrypt)" << std::endl;
     return NO_ERROR;
 }
 // -----------------------------------------------------------------------------
@@ -3211,6 +3226,427 @@ int CCryptoApiTester::RunOpenSslProviderEncryptDecryptBytesTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunLibgcryptProviderEncryptDecryptFileTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* password = "T\xC3\xBCst P\xC3\xA4ssw0rd!";
+        const char* inputFilePath = "cryptoapi_encfile_test_in_gcrypt.bin";
+        const char* encryptedFilePath = "cryptoapi_encfile_test_enc_gcrypt.bin";
+        const char* decryptedFilePath = "cryptoapi_encfile_test_out_gcrypt.bin";
+
+        std::vector<unsigned char> inputData(64 * 1024 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM);
+        const int encryptStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                        nullptr, nullptr);
+        if (encryptStatus != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED EncryptFile status=" << encryptStatus << std::endl;
+            std::remove(inputFilePath);
+            return encryptStatus;
+        }
+
+        const int decryptStatus = cryptoApi.DecryptFile(password, encryptedFilePath, decryptedFilePath,
+                                                        nullptr, nullptr);
+        if (decryptStatus != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED DecryptFile status=" << decryptStatus << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return decryptStatus;
+        }
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED to read output file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData.size() != inputData.size() ||
+            (!inputData.empty() && std::memcmp(&outputData[0], &inputData[0], inputData.size()) != 0))
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: PASSED (" << inputData.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptFile must
+        // stop at the next chunk boundary with OPERATION_CANCELLED and remove the partial output.
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED to write cancel-test input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int callCount = 0;
+        const int cancelStatus = cryptoApi.EncryptFile(password, inputFilePath, encryptedFilePath,
+                                                       &CancelAfterThirdChunk, &callCount);
+        std::remove(inputFilePath);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED cancel status=" << cancelStatus << std::endl;
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ifstream leftoverCheck(encryptedFilePath, std::ios::binary);
+        if (leftoverCheck.good())
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: FAILED cancelled output file was not removed" << std::endl;
+            leftoverCheck.close();
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptFileTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunLibgcryptProviderEncryptDecryptStringTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* password = "Str\xC3\xADng T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<char> inputText(8 * 1024 + 321);
+        for (std::size_t index = 0; index < inputText.size(); ++index)
+        {
+            inputText[index] = static_cast<char>('A' + (index % 26));
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptString(password, passwordSize,
+                                             &inputText[0], static_cast<int>(inputText.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedData(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptString(password, passwordSize,
+                                         &inputText[0], static_cast<int>(inputText.size()),
+                                         requiredEncryptSize, &encryptedData[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: FAILED EncryptString status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<char> outputText(requiredDecryptSize);
+        int outputTextSize = 0;
+        status = cryptoApi.DecryptString(password, passwordSize,
+                                         &encryptedData[0], encryptedSize,
+                                         requiredDecryptSize, outputText.empty() ? nullptr : &outputText[0], &outputTextSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: FAILED DecryptString status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputTextSize != static_cast<int>(inputText.size()) ||
+            std::memcmp(&outputText[0], &inputText[0], inputText.size()) != 0)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: PASSED (" << inputText.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptString must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptString(password, passwordSize,
+                                                         &inputText[0], static_cast<int>(inputText.size()),
+                                                         requiredEncryptSize, &encryptedData[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptStringTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunLibgcryptProviderEncryptDecryptBufferTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* password = "B\xC3\xBC" "ffer T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 555);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                             &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                             0, nullptr, &requiredEncryptSize,
+                                             nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBuffer(password, passwordSize,
+                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                         requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         0, nullptr, &requiredDecryptSize,
+                                         nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBuffer(password, passwordSize,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                         nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail authentication, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptBuffer("WrongPassword!", 14,
+                                         &encryptedBuffer[0], encryptedSize,
+                                         static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize,
+                                         nullptr, nullptr);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBuffer must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBuffer(password, passwordSize,
+                                                         &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                         requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                         &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptBufferTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunLibgcryptProviderEncryptDecryptBytesTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* password = "Byt\xC3\xA9s T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(8 * 1024 + 999);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM);
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptBytes(password, passwordSize,
+                                            &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                            0, nullptr, &requiredEncryptSize,
+                                            nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptBytes(password, passwordSize,
+                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                        requiredEncryptSize, &encryptedBuffer[0], &encryptedSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: FAILED EncryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        0, nullptr, &requiredDecryptSize,
+                                        nullptr, nullptr);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptBytes(password, passwordSize,
+                                        &encryptedBuffer[0], encryptedSize,
+                                        requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize,
+                                        nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: FAILED DecryptBytes status=" << status << std::endl;
+            return status;
+        }
+
+        if (outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(&outputBuffer[0], &inputBuffer[0], inputBuffer.size()) != 0)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Cancellation: the callback returns false starting from its 3rd call, EncryptBytes must
+        // stop at the next chunk boundary with OPERATION_CANCELLED.
+        int callCount = 0;
+        int cancelledSize = 0;
+        const int cancelStatus = cryptoApi.EncryptBytes(password, passwordSize,
+                                                        &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                        requiredEncryptSize, &encryptedBuffer[0], &cancelledSize,
+                                                        &CancelAfterThirdChunk, &callCount);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: FAILED cancel status=" << cancelStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderEncryptDecryptBytesTest: PASSED cancellation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunMicrosoftProviderAsymmetricTest(void)
 {
     try
@@ -3558,6 +3994,104 @@ int CCryptoApiTester::RunOpenSslProviderAsymmetricTest(void)
         }
 
         std::cout << "RunOpenSslProviderAsymmetricTest: PASSED tampered ciphertext rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunLibgcryptProviderAsymmetricTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048);
+
+        const int keyPairStatus = cryptoApi.GenerateAsymmetricKeyPair();
+        if (keyPairStatus != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED GenerateAsymmetricKeyPair status=" << keyPairStatus << std::endl;
+            return keyPairStatus;
+        }
+
+        const int maxPlaintextSize = cryptoApi.GetMaxAsymmetricPlaintextSize();
+        const int ciphertextSize = cryptoApi.GetAsymmetricCiphertextSize();
+        if (maxPlaintextSize <= 0 || ciphertextSize <= 0)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED sizes maxPlaintext=" << maxPlaintextSize
+                      << " ciphertext=" << ciphertextSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char plaintext[] = "RSA round trip via CCryptoApi";
+        const int plaintextSize = static_cast<int>(sizeof(plaintext) - 1);
+        if (plaintextSize > maxPlaintextSize)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED plaintext exceeds max" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int requiredCiphertextSize = 0;
+        int status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, 0, nullptr, &requiredCiphertextSize);
+        if (status != BUFFER_TOO_SMALL || requiredCiphertextSize != ciphertextSize)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> ciphertext(requiredCiphertextSize);
+        int actualCiphertextSize = 0;
+        status = cryptoApi.EncryptWithPublicKey(plaintext, plaintextSize, requiredCiphertextSize, &ciphertext[0], &actualCiphertextSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED EncryptWithPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredPlaintextSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, 0, nullptr, &requiredPlaintextSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> decrypted(requiredPlaintextSize);
+        int decryptedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&ciphertext[0], actualCiphertextSize, requiredPlaintextSize, decrypted.empty() ? nullptr : &decrypted[0], &decryptedSize);
+        if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(decrypted.data(), plaintext, plaintextSize) != 0)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderAsymmetricTest: PASSED (maxPlaintext=" << maxPlaintextSize
+                  << " ciphertext=" << ciphertextSize << ")" << std::endl;
+
+        // Tampered ciphertext must fail OAEP integrity, not silently return garbage. This is the
+        // check that would catch libgcrypt's "(enc-val ...) loses the padding flags" quirk (see
+        // CLibgcryptProvider::Decrypt): without the explicitly rebuilt enc-val, gcry_pk_decrypt would
+        // hand back the raw padded block for ANY ciphertext instead of rejecting a tampered one.
+        std::vector<unsigned char> tampered(ciphertext.begin(), ciphertext.begin() + actualCiphertextSize);
+        tampered[0] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(requiredPlaintextSize);
+        int tamperedSize = 0;
+        status = cryptoApi.DecryptWithPrivateKey(&tampered[0], actualCiphertextSize, requiredPlaintextSize, tamperedOutput.empty() ? nullptr : &tamperedOutput[0], &tamperedSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderAsymmetricTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderAsymmetricTest: PASSED tampered ciphertext rejected" << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -4007,6 +4541,122 @@ int CCryptoApiTester::RunOpenSslProviderLegacyTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunLibgcryptProviderLegacyTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC);
+
+        const char* password = "L\xC3\xA9gacy T\xC3\xA9st P\xC3\xA4ss!";
+        const int passwordSize = static_cast<int>(std::strlen(password));
+
+        std::vector<unsigned char> inputBuffer(5000 + 777);
+        for (std::size_t index = 0; index < inputBuffer.size(); ++index)
+        {
+            inputBuffer[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+
+        int requiredEncryptSize = 0;
+        int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                                   &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                                   0, nullptr, &requiredEncryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: FAILED encrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> encryptedBuffer(requiredEncryptSize);
+        int encryptedSize = 0;
+        status = cryptoApi.EncryptLegacyBuffer(password, passwordSize,
+                                               &inputBuffer[0], static_cast<int>(inputBuffer.size()),
+                                               requiredEncryptSize, &encryptedBuffer[0], &encryptedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: FAILED EncryptLegacyBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int requiredDecryptSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               0, nullptr, &requiredDecryptSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: FAILED decrypt size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> outputBuffer(requiredDecryptSize);
+        int outputBufferSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               requiredDecryptSize, outputBuffer.empty() ? nullptr : &outputBuffer[0], &outputBufferSize);
+        if (status != NO_ERROR || outputBufferSize != static_cast<int>(inputBuffer.size()) ||
+            std::memcmp(outputBuffer.data(), inputBuffer.data(), inputBuffer.size()) != 0)
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: FAILED Decrypt/mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderLegacyTest: PASSED (" << inputBuffer.size() << " bytes)" << std::endl;
+
+        // Wrong password must fail the MAC check, not silently return garbage.
+        std::vector<unsigned char> wrongOutput(outputBuffer.size());
+        int wrongOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer("WrongPassword!", 14,
+                                               &encryptedBuffer[0], encryptedSize,
+                                               static_cast<int>(wrongOutput.size()), &wrongOutput[0], &wrongOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: FAILED wrong password accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered ciphertext must fail the MAC check (fail-closed: never reaches the cipher).
+        std::vector<unsigned char> tamperedCiphertext(encryptedBuffer);
+        tamperedCiphertext[tamperedCiphertext.size() / 2] ^= 0xFF;
+        std::vector<unsigned char> tamperedOutput(outputBuffer.size());
+        int tamperedOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedCiphertext[0], static_cast<int>(tamperedCiphertext.size()),
+                                               static_cast<int>(tamperedOutput.size()), &tamperedOutput[0], &tamperedOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: FAILED tampered ciphertext accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Tampered MAC tag (last byte) must also fail.
+        std::vector<unsigned char> tamperedMac(encryptedBuffer);
+        tamperedMac[tamperedMac.size() - 1] ^= 0xFF;
+        std::vector<unsigned char> tamperedMacOutput(outputBuffer.size());
+        int tamperedMacOutputSize = 0;
+        status = cryptoApi.DecryptLegacyBuffer(password, passwordSize,
+                                               &tamperedMac[0], static_cast<int>(tamperedMac.size()),
+                                               static_cast<int>(tamperedMacOutput.size()), &tamperedMacOutput[0], &tamperedMacOutputSize);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderLegacyTest: FAILED tampered MAC accepted" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderLegacyTest: PASSED wrong password / tampered ciphertext / tampered MAC all rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunLegacyAlgorithmsTest(void)
 {
     try
@@ -4022,7 +4672,8 @@ int CCryptoApiTester::RunLegacyAlgorithmsTest(void)
             { PROVIDER_MICROSOFT, "Microsoft" },
             { PROVIDER_CRYPTOPP,  "CryptoPP" },
             { PROVIDER_BOTAN,     "Botan" },
-            { PROVIDER_OPENSSL,   "OpenSSL" }
+            { PROVIDER_OPENSSL,   "OpenSSL" },
+            { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
         };
 
         const LegacySymmetricAlgorithm legacyAlgorithms[] =
@@ -5814,6 +6465,130 @@ int CCryptoApiTester::RunOpenSslProviderHashTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunLibgcryptProviderHashTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderHashTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM, ASYMMETRIC_RSA_2048, LEGACY_AES_256_CBC, HASH_SHA256);
+
+        const int hashSize = cryptoApi.GetHashSize();
+        if (hashSize != 32)
+        {
+            std::cout << "RunLibgcryptProviderHashTest: FAILED GetHashSize expected 32 got " << hashSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        struct KnownVector
+        {
+            const char* text;
+            const char* expectedHex;
+        };
+
+        const KnownVector knownVectors[] =
+        {
+            { "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+            { "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+        };
+
+        for (std::size_t index = 0; index < sizeof(knownVectors) / sizeof(knownVectors[0]); ++index)
+        {
+            const char* text = knownVectors[index].text;
+            const char* expectedHex = knownVectors[index].expectedHex;
+            const int textSize = static_cast<int>(std::strlen(text));
+
+            int requiredSize = 0;
+            int status = cryptoApi.ComputeHashString(text, textSize, 0, nullptr, &requiredSize, nullptr, nullptr);
+            if (status != BUFFER_TOO_SMALL || requiredSize != hashSize)
+            {
+                std::cout << "RunLibgcryptProviderHashTest: FAILED size query status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::vector<unsigned char> digest(requiredSize);
+            int digestSize = 0;
+            status = cryptoApi.ComputeHashString(text, textSize, requiredSize, &digest[0], &digestSize, nullptr, nullptr);
+            if (status != NO_ERROR || digestSize != hashSize)
+            {
+                std::cout << "RunLibgcryptProviderHashTest: FAILED ComputeHashString status=" << status << std::endl;
+                return status;
+            }
+
+            int requiredHexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, 0, nullptr, &requiredHexSize);
+            std::vector<char> hexText(requiredHexSize);
+            int hexSize = 0;
+            CUtils::HexEncode(&digest[0], digestSize, false, requiredHexSize, &hexText[0], &hexSize);
+            const std::string hexString(hexText.begin(), hexText.end());
+
+            if (hexString != expectedHex)
+            {
+                std::cout << "RunLibgcryptProviderHashTest: FAILED SHA-256(\"" << text << "\") = " << hexString
+                          << " expected " << expectedHex << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            std::cout << "RunLibgcryptProviderHashTest: PASSED SHA-256(\"" << text << "\") = " << hexString << std::endl;
+        }
+
+        const char* consistencyText = "The quick brown fox jumps over the lazy dog";
+        const int consistencyTextSize = static_cast<int>(std::strlen(consistencyText));
+        const unsigned char* consistencyBytes = reinterpret_cast<const unsigned char*>(consistencyText);
+
+        std::vector<unsigned char> stringDigest(hashSize);
+        int stringDigestSize = 0;
+        int status = cryptoApi.ComputeHashString(consistencyText, consistencyTextSize, hashSize, &stringDigest[0], &stringDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderHashTest: FAILED consistency ComputeHashString status=" << status << std::endl;
+            return status;
+        }
+
+        std::vector<unsigned char> bufferDigest(hashSize);
+        int bufferDigestSize = 0;
+        status = cryptoApi.ComputeHashBuffer(consistencyBytes, consistencyTextSize, hashSize, &bufferDigest[0], &bufferDigestSize, nullptr, nullptr);
+        if (status != NO_ERROR || bufferDigestSize != stringDigestSize ||
+            std::memcmp(&bufferDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunLibgcryptProviderHashTest: FAILED ComputeHashBuffer mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* tempFilePath = "cryptoapi_gcrypt_hash_test.bin";
+        std::vector<unsigned char> fileContent(consistencyBytes, consistencyBytes + consistencyTextSize);
+        if (!WriteTesterFile(tempFilePath, fileContent))
+        {
+            std::cout << "RunLibgcryptProviderHashTest: FAILED to write temp file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> fileDigest(hashSize);
+        int fileDigestSize = 0;
+        status = cryptoApi.ComputeHashFile(tempFilePath, hashSize, &fileDigest[0], &fileDigestSize, nullptr, nullptr);
+        std::remove(tempFilePath);
+
+        if (status != NO_ERROR || fileDigestSize != stringDigestSize ||
+            std::memcmp(&fileDigest[0], &stringDigest[0], static_cast<std::size_t>(stringDigestSize)) != 0)
+        {
+            std::cout << "RunLibgcryptProviderHashTest: FAILED ComputeHashFile mismatch status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderHashTest: PASSED Buffer/String/File consistency" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunHashAlgorithmsTest(void)
 {
     try
@@ -5829,7 +6604,8 @@ int CCryptoApiTester::RunHashAlgorithmsTest(void)
             { PROVIDER_MICROSOFT, "Microsoft" },
             { PROVIDER_CRYPTOPP,  "CryptoPP" },
             { PROVIDER_BOTAN,     "Botan" },
-            { PROVIDER_OPENSSL,   "OpenSSL" }
+            { PROVIDER_OPENSSL,   "OpenSSL" },
+            { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
         };
 
         struct HashCase
@@ -6274,6 +7050,97 @@ int CCryptoApiTester::RunOpenSslProviderSignatureTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunLibgcryptProviderSignatureTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, SIGNATURE_DSA_SHA256_2048);
+
+        int status = cryptoApi.GenerateSignatureKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: FAILED GenerateSignatureKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        // Classic DSA's raw r||s is 64 bytes at both L=2048 and L=3072, because N (qbits) is
+        // pinned to 256 bits at key generation time -- see SignatureAlgorithm in ProviderTypes.h.
+        const int signatureSize = cryptoApi.GetSignatureSize();
+        if (signatureSize != 64)
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: FAILED GetSignatureSize expected 64 got " << signatureSize << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* message = "RunLibgcryptProviderSignatureTest message to sign";
+        const int messageSize = static_cast<int>(std::strlen(message));
+        const unsigned char* messageBytes = reinterpret_cast<const unsigned char*>(message);
+
+        int requiredSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, 0, nullptr, &requiredSize);
+        if (status != BUFFER_TOO_SMALL || requiredSize != signatureSize)
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: FAILED sign size query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> signature(requiredSize);
+        int actualSignatureSize = 0;
+        status = cryptoApi.SignBuffer(messageBytes, messageSize, requiredSize, &signature[0], &actualSignatureSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isValid = false;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || !isValid)
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: FAILED round-trip verify status=" << status << " valid=" << isValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderSignatureTest: PASSED sign+verify round-trip (" << actualSignatureSize << " bytes)" << std::endl;
+
+        std::string tamperedMessage(message);
+        tamperedMessage[0] = static_cast<char>(tamperedMessage[0] ^ 0xFF);
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(reinterpret_cast<const unsigned char*>(tamperedMessage.data()), messageSize,
+                                        &signature[0], actualSignatureSize, &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: FAILED tampered-message not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> tamperedSignature(signature);
+        tamperedSignature[tamperedSignature.size() - 1] ^= 0xFF;
+        isValid = true;
+        status = cryptoApi.VerifyBuffer(messageBytes, messageSize, &tamperedSignature[0],
+                                        static_cast<int>(tamperedSignature.size()), &isValid);
+        if (status != NO_ERROR || isValid)
+        {
+            std::cout << "RunLibgcryptProviderSignatureTest: FAILED tampered-signature not rejected status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderSignatureTest: PASSED tampered message / tampered signature both rejected" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunSignatureAlgorithmsTest(void)
 {
     try
@@ -6289,7 +7156,8 @@ int CCryptoApiTester::RunSignatureAlgorithmsTest(void)
             { PROVIDER_MICROSOFT, "Microsoft" },
             { PROVIDER_CRYPTOPP,  "CryptoPP" },
             { PROVIDER_BOTAN,     "Botan" },
-            { PROVIDER_OPENSSL,   "OpenSSL" }
+            { PROVIDER_OPENSSL,   "OpenSSL" },
+            { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
         };
 
         struct SignatureCase
@@ -6828,6 +7696,119 @@ int CCryptoApiTester::RunOpenSslProviderKeyAgreementTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunLibgcryptProviderKeyAgreementTest(void)
+{
+    try
+    {
+        if (!LibgcryptProviderAvailable())
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: SKIPPED (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CCryptoApi alice(PROVIDER_LIBGCRYPT, KEYAGREEMENT_ECDH_P256);
+        CCryptoApi bob(PROVIDER_LIBGCRYPT, KEYAGREEMENT_ECDH_P256);
+
+        int status = alice.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED alice GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.GenerateKeyAgreementKeyPair();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED bob GenerateKeyAgreementKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        // SEC1 uncompressed point: 0x04 || X(32) || Y(32).
+        const int publicKeySize = alice.GetKeyAgreementPublicKeySize();
+        if (publicKeySize != 65 || bob.GetKeyAgreementPublicKeySize() != publicKeySize)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED GetKeyAgreementPublicKeySize expected 65 alice=" << publicKeySize
+                      << " bob=" << bob.GetKeyAgreementPublicKeySize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const int sharedSecretSize = alice.GetSharedSecretSize();
+        if (sharedSecretSize != 32 || bob.GetSharedSecretSize() != sharedSecretSize)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED GetSharedSecretSize expected 32 alice=" << sharedSecretSize
+                      << " bob=" << bob.GetSharedSecretSize() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> alicePublicKey(static_cast<std::size_t>(publicKeySize));
+        int aliceActualPublicKeySize = 0;
+        status = alice.ExportKeyAgreementPublicKey(publicKeySize, &alicePublicKey[0], &aliceActualPublicKeySize);
+        if (status != NO_ERROR || aliceActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED alice ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobPublicKey(static_cast<std::size_t>(publicKeySize));
+        int bobActualPublicKeySize = 0;
+        status = bob.ExportKeyAgreementPublicKey(publicKeySize, &bobPublicKey[0], &bobActualPublicKeySize);
+        if (status != NO_ERROR || bobActualPublicKeySize != publicKeySize)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED bob ExportKeyAgreementPublicKey status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> aliceSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int aliceSharedSecretSize = 0;
+        status = alice.DeriveSharedSecret(&bobPublicKey[0], bobActualPublicKeySize, sharedSecretSize, &aliceSharedSecret[0], &aliceSharedSecretSize);
+        if (status != NO_ERROR || aliceSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED alice DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> bobSharedSecret(static_cast<std::size_t>(sharedSecretSize));
+        int bobSharedSecretSize = 0;
+        status = bob.DeriveSharedSecret(&alicePublicKey[0], aliceActualPublicKeySize, sharedSecretSize, &bobSharedSecret[0], &bobSharedSecretSize);
+        if (status != NO_ERROR || bobSharedSecretSize != sharedSecretSize)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED bob DeriveSharedSecret status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        if (aliceSharedSecret != bobSharedSecret)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED alice/bob shared secrets do not match" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderKeyAgreementTest: PASSED alice/bob agree on shared secret (" << sharedSecretSize << " bytes)" << std::endl;
+
+        // Flipping a byte of the peer's SEC1 point normally moves it off the curve entirely, which
+        // CLibgcryptProvider::DeriveSharedSecret rejects outright (gcry_mpi_ec_curve_point) rather
+        // than deriving a secret from a bogus point -- an invalid-curve attack guard.
+        std::vector<unsigned char> tamperedBobPublicKey(bobPublicKey);
+        tamperedBobPublicKey[1] = static_cast<unsigned char>(tamperedBobPublicKey[1] ^ 0xFF);
+        std::vector<unsigned char> aliceSharedSecretWithTamperedPeer(static_cast<std::size_t>(sharedSecretSize));
+        int aliceTamperedSize = 0;
+        const int tamperedStatus = alice.DeriveSharedSecret(&tamperedBobPublicKey[0], static_cast<int>(tamperedBobPublicKey.size()),
+                                                             sharedSecretSize, &aliceSharedSecretWithTamperedPeer[0], &aliceTamperedSize);
+        if (tamperedStatus == NO_ERROR && aliceSharedSecretWithTamperedPeer == aliceSharedSecret)
+        {
+            std::cout << "RunLibgcryptProviderKeyAgreementTest: FAILED tampered peer public key produced identical shared secret" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderKeyAgreementTest: PASSED tampered peer public key rejected or yields a different secret" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunKeyAgreementAlgorithmsTest(void)
 {
     try
@@ -6843,7 +7824,8 @@ int CCryptoApiTester::RunKeyAgreementAlgorithmsTest(void)
             { PROVIDER_MICROSOFT, "Microsoft" },
             { PROVIDER_CRYPTOPP,  "CryptoPP" },
             { PROVIDER_BOTAN,     "Botan" },
-            { PROVIDER_OPENSSL,   "OpenSSL" }
+            { PROVIDER_OPENSSL,   "OpenSSL" },
+            { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
         };
 
         struct KeyAgreementCase
@@ -7002,12 +7984,14 @@ int CCryptoApiTester::RunAESTests(void)
     {
         // Written deliberately WITHOUT a for/while loop over the algorithm lists (unlike
         // RunSignatureAlgorithmsTest/RunKeyAgreementAlgorithmsTest above): every one of the 28 AES
-        // algorithm/mode/key-size combinations (13 AEAD + 15 Legacy) x 4 providers = 112 literal
+        // algorithm/mode/key-size combinations (13 AEAD + 15 Legacy) x 5 providers = 140 literal
         // blocks below, each showing exactly which CCryptoApi constructor argument selects that
         // combination. Support/non-support per block is taken directly from each
         // C*Provider.cpp's own AeadAlgorithmName/LegacyAlgorithmName switch (not guessed) -- see
         // AlgorithmCapabilityMatrix.h and ccryptoapi_key_agreement_support memory for the same
-        // matrix cross-checked independently.
+        // matrix cross-checked independently. The Libgcrypt section (the 5th, all 28 supported) is
+        // additionally guarded on libgcrypt actually being present: the vendored bundle is x64
+        // only, so a Win32 build skips it rather than reporting 28 bogus "unsupported" results.
         const char* password = "RunAESTests P@ssw0rd!";
         const int passwordSize = static_cast<int>(std::strlen(password));
 
@@ -9761,9 +10745,754 @@ int CCryptoApiTester::RunAESTests(void)
             }
         }
 
+        // ============================================================================
+        // Libgcrypt (libgcrypt) -- AEAD + Legacy (AES only). libgcrypt is the one provider of the
+        // five that supports ALL 28 of these combinations, so every block below is a real
+        // round-trip -- there is no "correctly unsupported" Libgcrypt row in this matrix. The whole
+        // section is guarded because the vendored bundle is x64 only: on a Win32 build there is
+        // no libgcrypt binary at all, and reporting 28 "correctly unsupported" results there
+        // would be misleading (the algorithms are not missing, the library is).
+        // ============================================================================
+
+        const bool gcryptAvailable = LibgcryptProviderAvailable();
+        if (!gcryptAvailable)
+        {
+            std::cout << "RunAESTests: SKIPPED [Libgcrypt/*] all 28 combinations (libgcrypt is x64 only; no x86 binary in the vendored bundle)" << std::endl;
+        }
+        else
+        {
+            // Libgcrypt/AEAD_AES_128_GCM -- AES-128-GCM (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_128_GCM);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_128_GCM] key=128 mode=GCM status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_128_GCM] key=128 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_192_GCM -- AES-192-GCM (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_192_GCM);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_192_GCM] key=192 mode=GCM status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_192_GCM] key=192 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_256_GCM -- AES-256-GCM (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_256_GCM] key=256 mode=GCM status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_256_GCM] key=256 mode=GCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_128_CCM -- AES-128-CCM (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_128_CCM);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_128_CCM] key=128 mode=CCM status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_128_CCM] key=128 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_192_CCM -- AES-192-CCM (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_192_CCM);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_192_CCM] key=192 mode=CCM status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_192_CCM] key=192 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_256_CCM -- AES-256-CCM (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_CCM);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_256_CCM] key=256 mode=CCM status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_256_CCM] key=256 mode=CCM round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_128_EAX -- AES-128-EAX (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_128_EAX);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_128_EAX] key=128 mode=EAX status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_128_EAX] key=128 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_192_EAX -- AES-192-EAX (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_192_EAX);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_192_EAX] key=192 mode=EAX status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_192_EAX] key=192 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_256_EAX -- AES-256-EAX (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_EAX);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_256_EAX] key=256 mode=EAX status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_256_EAX] key=256 mode=EAX round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_128_SIV -- AES-128-SIV (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_128_SIV);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_128_SIV] key=128 mode=SIV status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_128_SIV] key=128 mode=SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_256_SIV -- AES-256-SIV (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_SIV);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_256_SIV] key=256 mode=SIV status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_256_SIV] key=256 mode=SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_128_GCM_SIV -- AES-128-GCM-SIV (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_128_GCM_SIV);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_128_GCM_SIV] key=128 mode=GCM-SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/AEAD_AES_256_GCM_SIV -- AES-256-GCM-SIV (AEAD)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, AEAD_AES_256_GCM_SIV);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                     static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize,
+                                                     nullptr, nullptr);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                     static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize,
+                                                     nullptr, nullptr);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/AEAD_AES_256_GCM_SIV] key=256 mode=GCM-SIV round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_128_CBC -- AES-128-CBC (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_128_CBC);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_128_CBC] key=128 mode=CBC status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_128_CBC] key=128 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_192_CBC -- AES-192-CBC (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_192_CBC);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_192_CBC] key=192 mode=CBC status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_192_CBC] key=192 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_256_CBC -- AES-256-CBC (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_256_CBC);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_256_CBC] key=256 mode=CBC status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_256_CBC] key=256 mode=CBC round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_128_CTR -- AES-128-CTR (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_128_CTR);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_128_CTR] key=128 mode=CTR status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_128_CTR] key=128 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_192_CTR -- AES-192-CTR (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_192_CTR);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_192_CTR] key=192 mode=CTR status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_192_CTR] key=192 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_256_CTR -- AES-256-CTR (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_256_CTR);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_256_CTR] key=256 mode=CTR status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_256_CTR] key=256 mode=CTR round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_128_CFB -- AES-128-CFB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_128_CFB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_128_CFB] key=128 mode=CFB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_128_CFB] key=128 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_192_CFB -- AES-192-CFB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_192_CFB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_192_CFB] key=192 mode=CFB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_192_CFB] key=192 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_256_CFB -- AES-256-CFB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_256_CFB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_256_CFB] key=256 mode=CFB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_256_CFB] key=256 mode=CFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_128_OFB -- AES-128-OFB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_128_OFB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_128_OFB] key=128 mode=OFB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_128_OFB] key=128 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_192_OFB -- AES-192-OFB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_192_OFB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_192_OFB] key=192 mode=OFB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_192_OFB] key=192 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_256_OFB -- AES-256-OFB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_256_OFB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_256_OFB] key=256 mode=OFB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_256_OFB] key=256 mode=OFB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_128_ECB -- AES-128-ECB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_128_ECB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_128_ECB] key=128 mode=ECB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_128_ECB] key=128 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_192_ECB -- AES-192-ECB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_192_ECB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_192_ECB] key=192 mode=ECB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_192_ECB] key=192 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+
+            // Libgcrypt/LEGACY_AES_256_ECB -- AES-256-ECB (Legacy)
+            {
+                CCryptoApi cryptoApi(PROVIDER_LIBGCRYPT, LEGACY_AES_256_ECB);
+                std::vector<unsigned char> ciphertext(plaintextSize + 128);
+                int ciphertextSize = 0;
+                int status = cryptoApi.EncryptLegacyBuffer(password, passwordSize, plaintext, plaintextSize,
+                                                           static_cast<int>(ciphertext.size()), &ciphertext[0], &ciphertextSize);
+                std::vector<unsigned char> decrypted(plaintextSize + 128);
+                int decryptedSize = 0;
+                if (status == NO_ERROR)
+                {
+                    status = cryptoApi.DecryptLegacyBuffer(password, passwordSize, &ciphertext[0], ciphertextSize,
+                                                           static_cast<int>(decrypted.size()), &decrypted[0], &decryptedSize);
+                }
+                if (status != NO_ERROR || decryptedSize != plaintextSize || std::memcmp(&decrypted[0], plaintext, plaintextSize) != 0)
+                {
+                    std::cout << "RunAESTests: FAILED [Libgcrypt/LEGACY_AES_256_ECB] key=256 mode=ECB status=" << status << std::endl;
+                    ++failures;
+                }
+                else
+                {
+                    std::cout << "RunAESTests: PASSED [Libgcrypt/LEGACY_AES_256_ECB] key=256 mode=ECB round-trip (" << ciphertextSize << " bytes)" << std::endl;
+                }
+            }
+        }
+
         if (failures == 0)
         {
-            std::cout << "RunAESTests: PASSED (112 combinations checked, 87 supported+round-tripped, 25 correctly-unsupported)" << std::endl;
+            std::cout << "RunAESTests: PASSED (" << (gcryptAvailable ? 140 : 112) << " combinations checked, "
+                      << (gcryptAvailable ? 115 : 87) << " supported+round-tripped, 25 correctly-unsupported"
+                      << (gcryptAvailable ? "" : ", 28 Libgcrypt combinations skipped") << ")" << std::endl;
             return NO_ERROR;
         }
 
@@ -9873,7 +11602,8 @@ int CCryptoApiTester::RunRandomAlgorithmsTest(void)
             { PROVIDER_MICROSOFT, "Microsoft" },
             { PROVIDER_CRYPTOPP,  "CryptoPP" },
             { PROVIDER_BOTAN,     "Botan" },
-            { PROVIDER_OPENSSL,   "OpenSSL" }
+            { PROVIDER_OPENSSL,   "OpenSSL" },
+            { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
         };
 
         struct RandomCase
@@ -10611,13 +12341,34 @@ int CCryptoApiTester::RunProviderFactoryTest(void)
             }
         }
 
+        {
+            // libgcrypt covers every AeadAlgorithm and every LegacySymmetricAlgorithm this SDK
+            // defines on x64, so unlike the four blocks above there is no "known unsupported"
+            // symmetric combination to assert against here -- the expectation is instead taken from
+            // the factory itself, which is exactly what makes the Win32 build (where every value is
+            // unsupported, no libgcrypt binary exists for x86) pass this test unchanged.
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_LIBGCRYPT);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryTest: FAILED CreateProviderFactory(PROVIDER_LIBGCRYPT)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_256_GCM, "Libgcrypt", "AES-256-GCM", factory->SupportsAeadAlgorithm(AEAD_AES_256_GCM))) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_CBC, "Libgcrypt", "AES-256-CBC", factory->SupportsLegacyAlgorithm(LEGACY_AES_256_CBC))) ++failures;
+                if (!RoundTripAeadViaFactory("RunProviderFactoryTest", *factory, AEAD_AES_128_SIV, "Libgcrypt", "AES-128-SIV", factory->SupportsAeadAlgorithm(AEAD_AES_128_SIV))) ++failures;
+                if (!RoundTripLegacyViaFactory("RunProviderFactoryTest", *factory, LEGACY_AES_256_ECB, "Libgcrypt", "AES-256-ECB", factory->SupportsLegacyAlgorithm(LEGACY_AES_256_ECB))) ++failures;
+            }
+        }
+
         if (failures != 0)
         {
             std::cout << "RunProviderFactoryTest: " << failures << " FAILURE(S)" << std::endl;
             return UNEXPECTED_ERROR;
         }
 
-        std::cout << "RunProviderFactoryTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        std::cout << "RunProviderFactoryTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL, Libgcrypt)" << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -10642,7 +12393,8 @@ int CCryptoApiTester::RunProviderFactoryFileTest(void)
             { PROVIDER_MICROSOFT, "Microsoft" },
             { PROVIDER_CRYPTOPP,  "CryptoPP" },
             { PROVIDER_BOTAN,     "Botan" },
-            { PROVIDER_OPENSSL,   "OpenSSL" }
+            { PROVIDER_OPENSSL,   "OpenSSL" },
+            { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
         };
 
         const char* inputFilePath = "cryptoapi_factory_filetest_in.bin";
@@ -10773,7 +12525,7 @@ int CCryptoApiTester::RunProviderFactoryFileTest(void)
             return UNEXPECTED_ERROR;
         }
 
-        std::cout << "RunProviderFactoryFileTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        std::cout << "RunProviderFactoryFileTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL, Libgcrypt)" << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -10904,13 +12656,30 @@ int CCryptoApiTester::RunProviderFactoryHashTest(void)
             }
         }
 
+        {
+            // libgcrypt implements all 14 HashAlgorithm values on x64 and none on Win32 (no x86
+            // libgcrypt binary), so the expectation comes from the factory rather than a hardcoded
+            // true/false -- same reasoning as the Libgcrypt block in RunProviderFactoryTest.
+            std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_LIBGCRYPT);
+            if (!factory)
+            {
+                std::cout << "RunProviderFactoryHashTest: FAILED CreateProviderFactory(PROVIDER_LIBGCRYPT)" << std::endl;
+                ++failures;
+            }
+            else
+            {
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_SHA256, "Libgcrypt", "SHA256", factory->SupportsHashAlgorithm(HASH_SHA256))) ++failures;
+                if (!RoundTripHashViaFactory("RunProviderFactoryHashTest", *factory, HASH_RIPEMD160, "Libgcrypt", "RIPEMD160", factory->SupportsHashAlgorithm(HASH_RIPEMD160))) ++failures;
+            }
+        }
+
         if (failures != 0)
         {
             std::cout << "RunProviderFactoryHashTest: " << failures << " FAILURE(S)" << std::endl;
             return UNEXPECTED_ERROR;
         }
 
-        std::cout << "RunProviderFactoryHashTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        std::cout << "RunProviderFactoryHashTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL, Libgcrypt)" << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -10935,7 +12704,8 @@ int CCryptoApiTester::RunProviderFactoryHashFileTest(void)
             { PROVIDER_MICROSOFT, "Microsoft" },
             { PROVIDER_CRYPTOPP,  "CryptoPP" },
             { PROVIDER_BOTAN,     "Botan" },
-            { PROVIDER_OPENSSL,   "OpenSSL" }
+            { PROVIDER_OPENSSL,   "OpenSSL" },
+            { PROVIDER_LIBGCRYPT,    "Libgcrypt" }
         };
 
         const char* inputFilePath = "cryptoapi_factory_hashfiletest_in.bin";
@@ -11028,7 +12798,7 @@ int CCryptoApiTester::RunProviderFactoryHashFileTest(void)
             return UNEXPECTED_ERROR;
         }
 
-        std::cout << "RunProviderFactoryHashFileTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL)" << std::endl;
+        std::cout << "RunProviderFactoryHashFileTest: PASSED (Microsoft, CryptoPP, Botan, OpenSSL, Libgcrypt)" << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -11521,6 +13291,115 @@ int CCryptoApiTester::RunOpenSslProviderAllAlgorithmsTest(void)
         }
 
         std::cout << "RunOpenSslProviderAllAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and round-tripped, "
+                  << (totalCount - static_cast<std::size_t>(supportedCount))
+                  << " correctly rejected)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunLibgcryptProviderAllAlgorithmsTest(void)
+{
+    try
+    {
+        std::unique_ptr<ICryptoProviderFactory> factory = CreateProviderFactory(PROVIDER_LIBGCRYPT);
+        if (!factory)
+        {
+            std::cout << "RunLibgcryptProviderAllAlgorithmsTest: FAILED CreateProviderFactory(PROVIDER_LIBGCRYPT)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const AeadAlgorithm aeadAlgorithms[] =
+        {
+            AEAD_AES_128_GCM, AEAD_AES_192_GCM, AEAD_AES_256_GCM,
+            AEAD_AES_128_CCM, AEAD_AES_192_CCM, AEAD_AES_256_CCM,
+            AEAD_AES_128_EAX, AEAD_AES_192_EAX, AEAD_AES_256_EAX,
+            AEAD_AES_128_SIV, AEAD_AES_256_SIV,
+            AEAD_AES_128_GCM_SIV, AEAD_AES_256_GCM_SIV,
+            AEAD_CHACHA20_POLY1305, AEAD_TWOFISH_GCM, AEAD_SERPENT_GCM, AEAD_CAMELLIA_GCM
+        };
+
+        const LegacySymmetricAlgorithm legacyAlgorithms[] =
+        {
+            LEGACY_AES_128_CBC, LEGACY_AES_192_CBC, LEGACY_AES_256_CBC,
+            LEGACY_AES_128_CTR, LEGACY_AES_192_CTR, LEGACY_AES_256_CTR,
+            LEGACY_AES_128_CFB, LEGACY_AES_192_CFB, LEGACY_AES_256_CFB,
+            LEGACY_AES_128_OFB, LEGACY_AES_192_OFB, LEGACY_AES_256_OFB,
+            LEGACY_AES_128_ECB, LEGACY_AES_192_ECB, LEGACY_AES_256_ECB,
+            LEGACY_RC2_CBC, LEGACY_RC2_ECB,
+            LEGACY_DES_CBC, LEGACY_DES_ECB,
+            LEGACY_3DES_CBC, LEGACY_3DES_ECB,
+            LEGACY_RC4
+        };
+
+        const AsymmetricAlgorithm asymmetricAlgorithms[] =
+        {
+            ASYMMETRIC_RSA_1024, ASYMMETRIC_RSA_2048, ASYMMETRIC_RSA_3072, ASYMMETRIC_RSA_4096
+        };
+
+        int failures = 0;
+        int supportedCount = 0;
+
+        for (std::size_t index = 0; index < sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]); ++index)
+        {
+            const AeadAlgorithm algorithm = aeadAlgorithms[index];
+            const bool supported = factory->SupportsAeadAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAeadViaFactory("RunLibgcryptProviderAllAlgorithmsTest", *factory, algorithm, "Libgcrypt", AeadAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]); ++index)
+        {
+            const LegacySymmetricAlgorithm algorithm = legacyAlgorithms[index];
+            const bool supported = factory->SupportsLegacyAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripLegacyViaFactory("RunLibgcryptProviderAllAlgorithmsTest", *factory, algorithm, "Libgcrypt", LegacyAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        for (std::size_t index = 0; index < sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]); ++index)
+        {
+            const AsymmetricAlgorithm algorithm = asymmetricAlgorithms[index];
+            const bool supported = factory->SupportsAsymmetricAlgorithm(algorithm);
+            if (supported)
+            {
+                ++supportedCount;
+            }
+
+            if (!RoundTripAsymmetricViaFactory("RunLibgcryptProviderAllAlgorithmsTest", *factory, algorithm, "Libgcrypt", AsymmetricAlgorithmName(algorithm), supported))
+            {
+                ++failures;
+            }
+        }
+
+        const std::size_t totalCount = sizeof(aeadAlgorithms) / sizeof(aeadAlgorithms[0]) +
+                                       sizeof(legacyAlgorithms) / sizeof(legacyAlgorithms[0]) +
+                                       sizeof(asymmetricAlgorithms) / sizeof(asymmetricAlgorithms[0]);
+
+        if (failures != 0)
+        {
+            std::cout << "RunLibgcryptProviderAllAlgorithmsTest: " << failures << " FAILURE(S)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLibgcryptProviderAllAlgorithmsTest: PASSED (" << supportedCount << " algorithms actually supported and round-tripped, "
                   << (totalCount - static_cast<std::size_t>(supportedCount))
                   << " correctly rejected)" << std::endl;
         return NO_ERROR;

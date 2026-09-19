@@ -1,0 +1,13 @@
+Downloaded
+https://dev-libs.wireshark.org/windows/packages/libgcrypt/
+
+Downloaded from MSYS2:
+https://mirror.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libgcrypt-1.12.4-1-any.pkg.tar.zst
+https://mirror.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libgpg-error-1.61-1-any.pkg.tar.zst
+https://mirror.msys2.org/mingw/clang64/mingw-w64-clang-x86_64-libgcrypt-1.12.4-1-any.pkg.tar.zst
+https://mirror.msys2.org/mingw/clang64/mingw-w64-clang-x86_64-libgpg-error-1.61-1-any.pkg.tar.zst
+
+Other comments:
+- libgcrypt was compiled with the --disable-asm flags
+- the ssize_t typedef was commented out in gcrypt.h; we define it elsewhere
+- lib/*.dll.a files were moved to bin/*.lib (including a version number based on the lib/*.dll file)

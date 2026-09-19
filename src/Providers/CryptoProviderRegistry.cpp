@@ -4,6 +4,7 @@
 #include "Providers/CryptoPPProvider/CryptoPPProviderFactory.h"
 #include "Providers/BotanProvider/BotanProviderFactory.h"
 #include "Providers/OpenSslProvider/OpenSslProviderFactory.h"
+#include "Providers/LibgcryptProvider/LibgcryptProviderFactory.h"
 
 namespace CryptoApiNS
 {
@@ -22,6 +23,8 @@ std::unique_ptr<ICryptoProviderFactory> CreateProviderFactory(const ProviderKind
                 return std::unique_ptr<ICryptoProviderFactory>(new CBotanProviderFactory());
             case PROVIDER_OPENSSL:
                 return std::unique_ptr<ICryptoProviderFactory>(new COpenSslProviderFactory());
+            case PROVIDER_LIBGCRYPT:
+                return std::unique_ptr<ICryptoProviderFactory>(new CLibgcryptProviderFactory());
             default:
                 return nullptr;
         }

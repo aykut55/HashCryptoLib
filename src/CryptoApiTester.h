@@ -72,6 +72,20 @@ public:
 
     int RunOpenSslProviderEncryptDecryptBytesTest(void);
 
+    // PROVIDER_LIBGCRYPT (libgcrypt) counterparts. These four behave exactly like the Microsoft/
+    // CryptoPP/Botan/OpenSSL ones above on x64; on a Win32 build there is no libgcrypt binary at
+    // all (see CLibgcryptProvider's header comment), so each one SKIPs -- returns NO_ERROR after
+    // reporting that PROVIDER_LIBGCRYPT is unavailable on this platform -- rather than FAILing, the
+    // same convention RunPgpGnuPgInteropTest already uses for an optional, machine-specific
+    // dependency it cannot provide itself.
+    int RunLibgcryptProviderEncryptDecryptFileTest(void);
+
+    int RunLibgcryptProviderEncryptDecryptStringTest(void);
+
+    int RunLibgcryptProviderEncryptDecryptBufferTest(void);
+
+    int RunLibgcryptProviderEncryptDecryptBytesTest(void);
+
     // Exercises CCryptoApi's RSA surface (GenerateAsymmetricKeyPair/EncryptWithPublicKey/
     // DecryptWithPrivateKey/GetMaxAsymmetricPlaintextSize/GetAsymmetricCiphertextSize) via the
     // 3-argument constructor, one full independent method per provider (no shared helper).
@@ -82,6 +96,8 @@ public:
     int RunBotanProviderAsymmetricTest(void);
 
     int RunOpenSslProviderAsymmetricTest(void);
+
+    int RunLibgcryptProviderAsymmetricTest(void);
 
     // Exercises CCryptoApi's Legacy+MAC surface (EncryptLegacyBuffer/DecryptLegacyBuffer, LEGACY_
     // AES_256_CBC via the 4-argument constructor) -- round-trip, wrong password, tampered
@@ -94,6 +110,8 @@ public:
     int RunBotanProviderLegacyTest(void);
 
     int RunOpenSslProviderLegacyTest(void);
+
+    int RunLibgcryptProviderLegacyTest(void);
 
     // Breadth companion to RunMicrosoftProviderLegacyTest/CryptoPP/Botan/OpenSsl (which each cover
     // one algorithm, LEGACY_AES_256_CBC, in depth including tamper rejection): this one loops over
@@ -162,7 +180,9 @@ public:
 
     int RunOpenSslProviderHashTest(void);
 
-    // Breadth companion to the 4 Run<Vendor>ProviderHashTest methods (which each cover HASH_SHA256
+    int RunLibgcryptProviderHashTest(void);
+
+    // Breadth companion to the 5 Run<Vendor>ProviderHashTest methods (which each cover HASH_SHA256
     // in depth): loops every ProviderKind x every HashAlgorithm value via CCryptoApi's 5-argument
     // constructor + ComputeHashBuffer, cross-checked against
     // ICryptoProviderFactory::SupportsHashAlgorithm() as ground truth -- supported combinations
@@ -173,7 +193,7 @@ public:
     // SignBuffer/VerifyBuffer via the 6-argument or Signature-only 2-argument constructor) --
     // sign+verify round-trip, tampered-message rejection, and tampered-signature rejection. Each
     // method exercises a different SignatureAlgorithm for coverage diversity (breadth of all 5
-    // values x all 4 providers is RunSignatureAlgorithmsTest's job, not this one's): Microsoft/
+    // values x all 5 providers is RunSignatureAlgorithmsTest's job, not this one's): Microsoft/
     // OpenSSL use ECDSA-P256 (supported everywhere), CryptoPP uses RSA-PSS-2048, Botan uses
     // Ed25519. One full independent method per provider (no shared helper).
     int RunMicrosoftProviderSignatureTest(void);
@@ -184,7 +204,12 @@ public:
 
     int RunOpenSslProviderSignatureTest(void);
 
-    // Breadth companion to the 4 Run<Vendor>ProviderSignatureTest methods: loops every
+    // libgcrypt's own diversity pick: SIGNATURE_DSA_SHA256_2048, the one SignatureAlgorithm value
+    // none of the other four dedicated per-provider signature tests exercises (Microsoft/OpenSSL
+    // take ECDSA-P256, CryptoPP RSA-PSS-2048, Botan Ed25519) -- and one CNG cannot do at all.
+    int RunLibgcryptProviderSignatureTest(void);
+
+    // Breadth companion to the 5 Run<Vendor>ProviderSignatureTest methods: loops every
     // ProviderKind x every SignatureAlgorithm value via CCryptoApi's Signature-only 2-argument
     // constructor + GenerateSignatureKeyPair/SignBuffer/VerifyBuffer, cross-checked against
     // ICryptoProviderFactory::SupportsSignatureAlgorithm() as ground truth -- supported
@@ -202,7 +227,7 @@ public:
     // exported public keys, and asserts both sides derive a byte-identical shared secret -- plus
     // that substituting a tampered peer public key does not silently reproduce the same secret.
     // Each method exercises a different KeyAgreementAlgorithm for coverage diversity (breadth of
-    // both values x all 4 providers is RunKeyAgreementAlgorithmsTest's job, not this one's):
+    // both values x all 5 providers is RunKeyAgreementAlgorithmsTest's job, not this one's):
     // Microsoft/CryptoPP use ECDH-P256 (Microsoft's only supported value -- see
     // ccryptoapi_factory_unification_goal memory on CNG's lack of standard X25519), Botan/OpenSSL
     // use X25519. One full independent method per provider (no shared helper).
@@ -214,7 +239,13 @@ public:
 
     int RunOpenSslProviderKeyAgreementTest(void);
 
-    // Breadth companion to the 4 Run<Vendor>ProviderKeyAgreementTest methods: loops every
+    // Libgcrypt takes KEYAGREEMENT_ECDH_P256 here: unlike Botan/OpenSSL (which use libgcrypt-style
+    // high-level ECDH), this provider derives P-256 through libgcrypt's LOW-LEVEL gcry_mpi_ec_*
+    // point arithmetic (its gcry_pk_encrypt "ecdh" path is an ephemeral ECIES construction, not a
+    // static-static agreement), so this is the path most worth covering in depth for it.
+    int RunLibgcryptProviderKeyAgreementTest(void);
+
+    // Breadth companion to the 5 Run<Vendor>ProviderKeyAgreementTest methods: loops every
     // ProviderKind x every KeyAgreementAlgorithm value, each iteration creating a fresh alice/bob
     // pair via CCryptoApi's Key-agreement-only 2-argument constructor +
     // GenerateKeyAgreementKeyPair/ExportKeyAgreementPublicKey/DeriveSharedSecret, cross-checked
@@ -224,8 +255,8 @@ public:
     int RunKeyAgreementAlgorithmsTest(void);
 
     // Full AES parameter matrix: 13 AEAD (GCM/CCM/EAX/SIV/GCM-SIV x supported key sizes) + 15
-    // Legacy (CBC/CTR/CFB/OFB/ECB x 128/192/256) = 28 algorithm/mode/key-size combinations, x 4
-    // providers = 112 literal blocks. Deliberately written WITHOUT a for/while loop over the
+    // Legacy (CBC/CTR/CFB/OFB/ECB x 128/192/256) = 28 algorithm/mode/key-size combinations, x 5
+    // providers = 140 literal blocks. Deliberately written WITHOUT a for/while loop over the
     // algorithm lists (unlike RunSignatureAlgorithmsTest/RunKeyAgreementAlgorithmsTest above) --
     // user explicitly asked to see each combination's CCryptoApi constructor argument spelled out
     // on its own, not abstracted into a cases[] loop. Each block round-trips (or, for a provider
@@ -244,7 +275,7 @@ public:
     // built, not silently reused.
     int RunSharedInstanceTest(void);
 
-    // Loops every ProviderKind x every RandomAlgorithm value (4x4=16 combinations) via
+    // Loops every ProviderKind x every RandomAlgorithm value (5x4=20 combinations) via
     // CCryptoApi::GenerateRandomBytes(algorithm, ...), cross-checked against
     // ICryptoProviderFactory::SupportsRandomAlgorithm() as ground truth -- supported combinations
     // must succeed AND produce different output across two independent calls (a same-output check
@@ -333,6 +364,12 @@ public:
 
     // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_OPENSSL instead.
     int RunOpenSslProviderAllAlgorithmsTest(void);
+
+    // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_LIBGCRYPT instead. On x64
+    // this is the widest of the five (libgcrypt supports every AeadAlgorithm, every
+    // LegacySymmetricAlgorithm and every AsymmetricAlgorithm value the enums define); on Win32 all
+    // of them are verified as correctly rejected instead, since no x86 libgcrypt binary exists.
+    int RunLibgcryptProviderAllAlgorithmsTest(void);
 
     // Demonstrates that CCryptoApi's blocking calls can be driven from a background thread the
     // caller owns; CCryptoApi itself stays synchronous by design (see Rules.md/Plan.md ABI notes).

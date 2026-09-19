@@ -108,6 +108,30 @@
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
+  <!-- libgcrypt (CLibgcryptProvider, PROVIDER_LIBGCRYPT) is x64 ONLY: the vendored bundle
+       3rdParty\libgcryptbundle11241 ships an x64 DLL plus libgcrypt-20-msvc.lib, an MSVC-native
+       COFF import library generated from that DLL's export table. (The bundle's own
+       lib\libgcrypt-20.lib / lib\libgpg-error-0.lib are GNU-ar-format .dll.a files renamed to
+       .lib, which link.exe cannot consume; do NOT reference those.) No Win32/x86 libgcrypt build
+       exists, so nothing here is applied to the Win32 configurations; LibgcryptProvider.cpp compiles
+       to an all-unsupported stub there (its ARCH_X64/ARCH_WIN64 guard), keeping all 4
+       configurations buildable per Rules.md. libgpg-error-0.dll is a runtime dependency of
+       libgcrypt-20.dll only (no code here calls gpg-error directly), so it is copied next to the
+       executable but never linked. -->
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libgcrypt-20-msvc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Message>Copying the libgcrypt runtime DLLs next to the output executable</Message>
+      <Command>xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgcrypt-20.dll" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-error-0.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -190,6 +214,8 @@
     <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.h" />
     <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h" />
   </ItemGroup>
@@ -216,6 +242,8 @@
     <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.cpp" />
     <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp" />
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for

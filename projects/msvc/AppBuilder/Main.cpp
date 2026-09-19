@@ -16,7 +16,7 @@ int main()
     cryptoApiTester.RunEncryptDecryptBytesTest();
 #endif
 
-#if 0
+#if 1
     cryptoApiTester.RunMicrosoftProviderEncryptDecryptFileTest();
 
     cryptoApiTester.RunMicrosoftProviderEncryptDecryptStringTest();
@@ -48,6 +48,14 @@ int main()
     cryptoApiTester.RunOpenSslProviderEncryptDecryptBufferTest();
 
     cryptoApiTester.RunOpenSslProviderEncryptDecryptBytesTest();
+
+    cryptoApiTester.RunLibgcryptProviderEncryptDecryptFileTest();
+
+    cryptoApiTester.RunLibgcryptProviderEncryptDecryptStringTest();
+
+    cryptoApiTester.RunLibgcryptProviderEncryptDecryptBufferTest();
+
+    cryptoApiTester.RunLibgcryptProviderEncryptDecryptBytesTest();
 #endif
 
 #if 0
@@ -58,6 +66,8 @@ int main()
     cryptoApiTester.RunBotanProviderAsymmetricTest();
 
     cryptoApiTester.RunOpenSslProviderAsymmetricTest();
+
+    cryptoApiTester.RunLibgcryptProviderAsymmetricTest();
 #endif
 
 #if 0
@@ -68,6 +78,8 @@ int main()
     cryptoApiTester.RunBotanProviderLegacyTest();
 
     cryptoApiTester.RunOpenSslProviderLegacyTest();
+
+    cryptoApiTester.RunLibgcryptProviderLegacyTest();
 #endif
 
 #if 0
@@ -116,6 +128,8 @@ int main()
     cryptoApiTester.RunBotanProviderAllAlgorithmsTest();
 
     cryptoApiTester.RunOpenSslProviderAllAlgorithmsTest();
+
+    cryptoApiTester.RunLibgcryptProviderAllAlgorithmsTest();
 #endif
 
 #if 0
@@ -140,6 +154,8 @@ int main()
     cryptoApiTester.RunBotanProviderHashTest();
 
     cryptoApiTester.RunOpenSslProviderHashTest();
+
+    cryptoApiTester.RunLibgcryptProviderHashTest();
 #endif
 
 #if 0
@@ -193,6 +209,8 @@ int main()
 
     cryptoApiTester.RunOpenSslProviderSignatureTest();
 
+    cryptoApiTester.RunLibgcryptProviderSignatureTest();
+
     cryptoApiTester.RunSignatureAlgorithmsTest();
 #endif
 
@@ -204,6 +222,8 @@ int main()
     cryptoApiTester.RunBotanProviderKeyAgreementTest();
 
     cryptoApiTester.RunOpenSslProviderKeyAgreementTest();
+
+    cryptoApiTester.RunLibgcryptProviderKeyAgreementTest();
 
     cryptoApiTester.RunKeyAgreementAlgorithmsTest();
 #endif

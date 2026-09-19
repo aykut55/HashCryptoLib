@@ -20,7 +20,7 @@ namespace CryptoApiNS
 // Abstract Factory: given a ProviderKind (see CreateProviderFactory() in
 // CryptoProviderRegistry.h), produces IAeadCipher/ILegacyCipher instances already bound to a
 // specific algorithm. Callers never need to know which underlying crypto library (CryptoPP,
-// Botan, OpenSSL, Windows CNG) actually implements the returned instance.
+// Botan, OpenSSL, Windows CNG, libgcrypt) actually implements the returned instance.
 class ICryptoProviderFactory
 {
 public:
