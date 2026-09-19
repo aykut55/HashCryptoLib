@@ -13887,6 +13887,176 @@ int CCryptoApiTester::RunPgpGnuPgMultiRecipientInteropTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpGnuPgMixedAlgorithmRecipientInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* homeDir1 = "cryptoapi_pgp_gnupg_mixed_home1";
+        const char* homeDir2 = "cryptoapi_pgp_gnupg_mixed_home2";
+        const char* pubKeyPath1 = "cryptoapi_pgp_gnupg_mixed_pub1.asc";
+        const char* pubKeyPath2 = "cryptoapi_pgp_gnupg_mixed_pub2.asc";
+        const char* encryptedPath = "cryptoapi_pgp_gnupg_mixed_encrypted.asc";
+        const char* decryptedPath1 = "cryptoapi_pgp_gnupg_mixed_dec1.txt";
+        const char* decryptedPath2 = "cryptoapi_pgp_gnupg_mixed_dec2.txt";
+        const char* passphrase1 = "Recipient1Pass";
+        const char* passphrase2 = "Recipient2Pass";
+        const std::string absoluteHomeDir1 = std::filesystem::absolute(homeDir1).string();
+        const std::string absoluteHomeDir2 = std::filesystem::absolute(homeDir2).string();
+        const std::string gpgBase1 = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(absoluteHomeDir1) + " --batch --yes --trust-model always ";
+        const std::string gpgBase2 = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(absoluteHomeDir2) + " --batch --yes --trust-model always ";
+        std::error_code fsError;
+        std::string cmdOutput;
+
+        std::filesystem::create_directories(homeDir1, fsError);
+        std::filesystem::create_directories(homeDir2, fsError);
+        // Same trustdb-priming workaround as RunPgpGnuPgRevocationInteropTest.
+        std::string primeOutput;
+        RunShellCommand(gpgBase1 + "--check-trustdb", primeOutput);
+        RunShellCommand(gpgBase2 + "--check-trustdb", primeOutput);
+
+        // Recipient 1: ordinary RSA identity. Recipient 2: real gpg's "future-default" algorithm,
+        // which is Ed25519 (signing) + Cv25519 (encryption) -- the same shape CPgpEngine's own
+        // PGP_KEY_ALGORITHM_ED25519_X25519 produces (see RunPgpGnuPgEd25519InteropTest). Same
+        // _popen/gpg-agent exit-code quirk noted on RunPgpGnuPgMultiRecipientInteropTest applies to
+        // key generation here too -- success is judged by the follow-up --list-secret-keys check.
+        RunShellCommand(gpgBase1 + "--pinentry-mode loopback --passphrase " + QuoteShellPath(passphrase1) +
+                         " --quick-generate-key " + QuoteShellPath("Mixed Recipient RSA <mixed-rsa@example.com>") + " default default 0", cmdOutput);
+        RunShellCommand(gpgBase2 + "--pinentry-mode loopback --passphrase " + QuoteShellPath(passphrase2) +
+                         " --quick-generate-key " + QuoteShellPath("Mixed Recipient Ed25519 <mixed-ed25519@example.com>") + " future-default default 0", cmdOutput);
+
+        std::string listSecret1;
+        std::string listSecret2;
+        RunShellCommand(gpgBase1 + "--with-colons --list-secret-keys", listSecret1);
+        RunShellCommand(gpgBase2 + "--with-colons --list-secret-keys", listSecret2);
+        if (listSecret1.find("sec:") == std::string::npos || listSecret2.find("sec:") == std::string::npos)
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: SKIPPED (gpg --quick-generate-key did not produce a usable secret key in this environment -- known piped/_popen gpg-agent quirk documented on RunPgpGnuPgInteropTest, not a CPgpEngine issue)" << std::endl;
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return NO_ERROR;
+        }
+
+        int rc = RunShellCommand(gpgBase1 + "--armor --output " + QuoteShellPath(pubKeyPath1) + " --export " + QuoteShellPath("Mixed Recipient RSA"), cmdOutput);
+        std::vector<unsigned char> pub1Bytes;
+        if (rc != 0 || !ReadTesterFile(pubKeyPath1, pub1Bytes) || pub1Bytes.empty())
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED gpg --export (RSA recipient) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        rc = RunShellCommand(gpgBase2 + "--armor --output " + QuoteShellPath(pubKeyPath2) + " --export " + QuoteShellPath("Mixed Recipient Ed25519"), cmdOutput);
+        std::vector<unsigned char> pub2Bytes;
+        if (rc != 0 || !ReadTesterFile(pubKeyPath2, pub2Bytes) || pub2Bytes.empty())
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED gpg --export (Ed25519 recipient) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath1);
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        CPgpEngine sender;
+        const char* senderUserId = "Mixed Sender <mixed-sender@example.com>";
+        const char* senderPassword = "sender-password-1";
+        int status = sender.GenerateKeyPair(senderUserId, static_cast<int>(std::strlen(senderUserId)), senderPassword, static_cast<int>(std::strlen(senderPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED sender GenerateKeyPair status=" << status << std::endl;
+            std::remove(pubKeyPath1);
+            std::remove(pubKeyPath2);
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return status;
+        }
+
+        status = sender.ImportPeerPublicKey(&pub1Bytes[0], static_cast<int>(pub1Bytes.size()));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED ImportPeerPublicKey(RSA recipient) status=" << status << std::endl;
+            std::remove(pubKeyPath1);
+            std::remove(pubKeyPath2);
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return status;
+        }
+        status = sender.ImportAdditionalRecipientPublicKey(&pub2Bytes[0], static_cast<int>(pub2Bytes.size()));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED ImportAdditionalRecipientPublicKey(Ed25519 recipient) status=" << status << std::endl;
+            std::remove(pubKeyPath1);
+            std::remove(pubKeyPath2);
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return status;
+        }
+
+        const char* plaintext = "Mixed-algorithm multi-recipient GnuPG interop message.";
+        int armoredSize = 0;
+        sender.EncryptStringArmored(plaintext, static_cast<int>(std::strlen(plaintext)), 0, nullptr, &armoredSize);
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize));
+        int actualArmoredSize = 0;
+        status = sender.EncryptStringArmored(plaintext, static_cast<int>(std::strlen(plaintext)), armoredSize, &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            std::remove(pubKeyPath1);
+            std::remove(pubKeyPath2);
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return status;
+        }
+        if (!WriteTesterFile(encryptedPath, std::vector<unsigned char>(armored.begin(), armored.begin() + actualArmoredSize)))
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED to write encrypted message file" << std::endl;
+            std::remove(pubKeyPath1);
+            std::remove(pubKeyPath2);
+            std::filesystem::remove_all(homeDir1, fsError);
+            std::filesystem::remove_all(homeDir2, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        RunShellCommand(gpgBase1 + "--pinentry-mode loopback --passphrase " + QuoteShellPath(passphrase1) +
+                         " --output " + QuoteShellPath(decryptedPath1) + " --decrypt " + QuoteShellPath(encryptedPath), cmdOutput);
+        RunShellCommand(gpgBase2 + "--pinentry-mode loopback --passphrase " + QuoteShellPath(passphrase2) +
+                         " --output " + QuoteShellPath(decryptedPath2) + " --decrypt " + QuoteShellPath(encryptedPath), cmdOutput);
+
+        std::vector<unsigned char> decrypted1;
+        std::vector<unsigned char> decrypted2;
+        const bool ok1 = ReadTesterFile(decryptedPath1, decrypted1) && std::string(decrypted1.begin(), decrypted1.end()) == plaintext;
+        const bool ok2 = ReadTesterFile(decryptedPath2, decrypted2) && std::string(decrypted2.begin(), decrypted2.end()) == plaintext;
+
+        std::remove(pubKeyPath1);
+        std::remove(pubKeyPath2);
+        std::remove(encryptedPath);
+        std::remove(decryptedPath1);
+        std::remove(decryptedPath2);
+        std::filesystem::remove_all(homeDir1, fsError);
+        std::filesystem::remove_all(homeDir2, fsError);
+
+        if (!ok1 || !ok2)
+        {
+            std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: FAILED RSA recipient decrypted=" << ok1 << " Ed25519 recipient decrypted=" << ok2 << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGnuPgMixedAlgorithmRecipientInteropTest: PASSED real gpg decrypted the SAME ciphertext with EITHER the RSA or the Ed25519 recipient's secret key" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunPgpEd25519KeyGenerationTest(void)
 {
     try

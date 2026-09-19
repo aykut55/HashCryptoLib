@@ -256,6 +256,8 @@ int main()
 
     cryptoApiTester.RunPgpGnuPgMultiRecipientInteropTest();
 
+    cryptoApiTester.RunPgpGnuPgMixedAlgorithmRecipientInteropTest();
+
     cryptoApiTester.RunPgpEd25519KeyGenerationTest();
 
     cryptoApiTester.RunPgpEd25519EncryptDecryptTest();
