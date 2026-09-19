@@ -15,6 +15,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -582,6 +583,309 @@ std::string sanitizeSingleLine(const std::string& text)
 }
 // -----------------------------------------------------------------------------
 
+// ================================================================================================
+// Read-only message inspection -- everything behind this class's IsPublicKeyEncrypted/
+// IsPasswordEncrypted/IsIntegrityProtected/GetCompression/ListEncryptionKeyIds/ListSigningKeyIds/
+// ListSignatures methods (see PgpEngineWrapper.h for the contract each one promises). The single
+// source of truth is real "gpg --list-packets" output, parsed here; the two negative
+// GetCompression sentinels below carry the same values CPgpEngine's own
+// PgpCompressionInspectionResult enum names, deliberately restated as file-local constants rather
+// than re-declared in the header (both headers share one namespace and are commonly included
+// together, so a second declaration of those enumerator names would collide).
+//
+// gpg's listing looks like this (GnuPG 2.5.21, verified while building these methods):
+//
+//   # off=0 ctb=85 tag=1 hlen=3 plen=268
+//   :pubkey enc packet: version 3, algo 1, keyid C059281C41AACF0C
+//   	data: [2046 bits]
+//   # off=271 ctb=d4 tag=20 hlen=2 plen=91 new-ctb
+//   :aead encrypted packet: cipher=9 aead=2 cb=16
+//
+// The "# off=... tag=N ..." comment line preceding every packet is what the packet-presence
+// questions key off -- deliberately the numeric tag rather than the prose on the ":..." line,
+// because gpg prints the very same ":encrypted data packet:" text for both the integrity-protected
+// (tag 18) and the obsolete unprotected (tag 9) packet, and only the tag tells them apart. The
+// ":..." detail lines are then used for the values gpg spells out there (key ids, sigclass, digest
+// algorithm, compression algorithm). Note the tag comment is NOT always at the start of its own
+// line -- gpg's own control-packet output runs it onto the end of the previous line -- so it is
+// searched for anywhere in the line.
+// ================================================================================================
+
+const int PGP_WRAPPER_COMPRESSION_NOT_PRESENT              = -1;
+const int PGP_WRAPPER_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION = -2;
+const int PGP_WRAPPER_KEY_ID_RECORD_SIZE                   = 17;
+const int PGP_WRAPPER_SIGNATURE_RECORD_SIZE                = 23;
+
+struct GpgInspectedSignature
+{
+    std::string issuerKeyId; // 16 uppercase hex chars, or "????????????????" when gpg named none.
+    int signatureType;       // gpg's own "sigclass 0xNN", or -1 when the listing did not carry one.
+    int hashAlgorithm;       // gpg's own "digest algo N" / one-pass "digest N", or -1.
+
+    GpgInspectedSignature() : issuerKeyId("????????????????"), signatureType(-1), hashAlgorithm(-1) {}
+};
+// -----------------------------------------------------------------------------
+
+struct GpgInspectedListing
+{
+    bool sawAnyPacket;
+    bool hasPkesk;
+    bool hasSkesk;
+    bool hasIntegrityProtectedData;   // tag 18 (SEIP) or tag 20 (AEAD).
+    bool hasUnprotectedEncryptedData; // tag 9 (SED).
+    bool hasCompressedData;
+    int compressionAlgorithm;
+    std::vector<std::string> recipientKeyIds;
+    std::vector<GpgInspectedSignature> signatures;
+
+    GpgInspectedListing() : sawAnyPacket(false), hasPkesk(false), hasSkesk(false),
+                            hasIntegrityProtectedData(false), hasUnprotectedEncryptedData(false),
+                            hasCompressedData(false), compressionAlgorithm(0) {}
+};
+// -----------------------------------------------------------------------------
+
+// Reads the decimal integer starting at `pos` in `line`; returns false when there is no digit
+// there at all (which is how a marker that matched the wrong line gets rejected instead of
+// silently contributing a 0).
+bool parseDecimalAt(const std::string& line, const std::size_t pos, int& valueOut)
+{
+    try
+    {
+        std::size_t i = pos;
+        if (i >= line.size() || std::isdigit(static_cast<unsigned char>(line[i])) == 0)
+        {
+            return false;
+        }
+        int value = 0;
+        while (i < line.size() && std::isdigit(static_cast<unsigned char>(line[i])) != 0)
+        {
+            value = value * 10 + (line[i] - '0');
+            ++i;
+        }
+        valueOut = value;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Reads the 16-hex-char Key ID that follows the first "keyid " in `line`, uppercased. Returns
+// false when the line carries no such field (gpg always prints one for the packet types this
+// parser cares about, but a foreign/garbled line must not be turned into a bogus Key ID).
+bool parseKeyIdAfterMarker(const std::string& line, std::string& keyIdOut)
+{
+    try
+    {
+        const std::size_t markerPos = line.find("keyid ");
+        if (markerPos == std::string::npos)
+        {
+            return false;
+        }
+        const std::size_t idStart = markerPos + 6;
+        if (idStart + 16 > line.size())
+        {
+            return false;
+        }
+        std::string id = line.substr(idStart, 16);
+        for (std::size_t i = 0; i < id.size(); ++i)
+        {
+            if (std::isxdigit(static_cast<unsigned char>(id[i])) == 0)
+            {
+                return false;
+            }
+            id[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[i])));
+        }
+        keyIdOut = id;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+void parseGpgPacketListing(const std::string& listing, GpgInspectedListing& out)
+{
+    try
+    {
+        GpgInspectedSignature pendingSignature;
+        bool havePendingSignature = false;
+
+        std::istringstream lineStream(listing);
+        std::string line;
+        while (std::getline(lineStream, line))
+        {
+            const std::size_t offsetMarkerPos = line.find("# off=");
+            if (offsetMarkerPos != std::string::npos)
+            {
+                // A new packet starts here, so whatever signature the previous packet's detail
+                // lines were still filling in is complete now.
+                if (havePendingSignature)
+                {
+                    out.signatures.push_back(pendingSignature);
+                    havePendingSignature = false;
+                    pendingSignature = GpgInspectedSignature();
+                }
+
+                const std::size_t tagMarkerPos = line.find("tag=", offsetMarkerPos);
+                int tag = 0;
+                if (tagMarkerPos != std::string::npos && parseDecimalAt(line, tagMarkerPos + 4, tag))
+                {
+                    out.sawAnyPacket = true;
+                    if (tag == 1)
+                    {
+                        out.hasPkesk = true;
+                    }
+                    else if (tag == 3)
+                    {
+                        out.hasSkesk = true;
+                    }
+                    else if (tag == 18 || tag == 20)
+                    {
+                        out.hasIntegrityProtectedData = true;
+                    }
+                    else if (tag == 9)
+                    {
+                        out.hasUnprotectedEncryptedData = true;
+                    }
+                }
+            }
+
+            if (line.find(":pubkey enc packet:") != std::string::npos)
+            {
+                std::string keyId;
+                if (parseKeyIdAfterMarker(line, keyId))
+                {
+                    out.recipientKeyIds.push_back(keyId);
+                }
+                else
+                {
+                    out.recipientKeyIds.push_back(std::string(16, '?'));
+                }
+                continue;
+            }
+
+            if (line.find(":signature packet:") != std::string::npos || line.find(":onepass_sig packet:") != std::string::npos)
+            {
+                pendingSignature = GpgInspectedSignature();
+                std::string keyId;
+                if (parseKeyIdAfterMarker(line, keyId))
+                {
+                    pendingSignature.issuerKeyId = keyId;
+                }
+                havePendingSignature = true;
+                continue;
+            }
+
+            if (line.find(":compressed packet:") != std::string::npos)
+            {
+                const std::size_t algoMarkerPos = line.find("algo=");
+                int algorithm = 0;
+                if (algoMarkerPos != std::string::npos && parseDecimalAt(line, algoMarkerPos + 5, algorithm) && !out.hasCompressedData)
+                {
+                    out.hasCompressedData = true;
+                    out.compressionAlgorithm = algorithm;
+                }
+                continue;
+            }
+
+            if (havePendingSignature)
+            {
+                const std::size_t sigClassMarkerPos = line.find("sigclass 0x");
+                if (sigClassMarkerPos != std::string::npos && sigClassMarkerPos + 13 <= line.size())
+                {
+                    const std::string hexPair = line.substr(sigClassMarkerPos + 11, 2);
+                    if (std::isxdigit(static_cast<unsigned char>(hexPair[0])) != 0 && std::isxdigit(static_cast<unsigned char>(hexPair[1])) != 0)
+                    {
+                        pendingSignature.signatureType = static_cast<int>(std::strtol(hexPair.c_str(), nullptr, 16));
+                    }
+                }
+
+                // "digest algo 8, begin of digest fa d8" on a signature packet's detail line, but
+                // plain "digest 8," on a one-pass signature's -- and the former also contains the
+                // word "digest" a second time, so the longer marker has to be tried first.
+                int hashAlgorithm = 0;
+                const std::size_t digestAlgoMarkerPos = line.find("digest algo ");
+                if (digestAlgoMarkerPos != std::string::npos)
+                {
+                    if (parseDecimalAt(line, digestAlgoMarkerPos + 12, hashAlgorithm))
+                    {
+                        pendingSignature.hashAlgorithm = hashAlgorithm;
+                    }
+                }
+                else
+                {
+                    const std::size_t digestMarkerPos = line.find("digest ");
+                    if (digestMarkerPos != std::string::npos && parseDecimalAt(line, digestMarkerPos + 7, hashAlgorithm))
+                    {
+                        pendingSignature.hashAlgorithm = hashAlgorithm;
+                    }
+                }
+            }
+        }
+
+        if (havePendingSignature)
+        {
+            out.signatures.push_back(pendingSignature);
+        }
+    }
+    catch (...)
+    {
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::string formatWrapperOctetHex(const int value)
+{
+    try
+    {
+        static const char* hexDigits = "0123456789ABCDEF";
+        const unsigned char octet = (value < 0 || value > 255) ? static_cast<unsigned char>(0) : static_cast<unsigned char>(value);
+        std::string hex;
+        hex.push_back(hexDigits[(octet >> 4) & 0xF]);
+        hex.push_back(hexDigits[octet & 0xF]);
+        return hex;
+    }
+    catch (...)
+    {
+        return std::string("00");
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Shared tail of this class's three List* methods -- identical convention (including the empty
+// list being NO_ERROR with *outputBufferSize = 0 rather than BUFFER_TOO_SMALL) to the one
+// CPgpEngine's own List* methods use, so callers can treat the two engines the same way.
+int writeWrapperInspectionRecords(const std::string& records, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        const int neededSize = static_cast<int>(records.size());
+        if (neededSize == 0)
+        {
+            *outputBufferSize = 0;
+            return NO_ERROR;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < neededSize)
+        {
+            *outputBufferSize = neededSize;
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, records.data(), records.size());
+        *outputBufferSize = neededSize;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // anonymous namespace
 
 // ================================================================================================
@@ -650,6 +954,8 @@ struct CPgpEngineWrapper::Impl
     int revokeKeyCommon( const char* password, const int passwordSize,
                         const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
                         std::string& outArmored);
+
+    int listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing);
 };
 // -----------------------------------------------------------------------------
 
@@ -1480,6 +1786,84 @@ int CPgpEngineWrapper::Impl::revokeKeyCommon( const char* password, const int pa
             return UNEXPECTED_ERROR;
         }
         outArmored.assign(outBytes.begin(), outBytes.end());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing)
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // A clear-signed message is mostly plain text, and gpg's own --list-packets reports only
+        // its literal-text framing for the whole thing, never mentioning the signature -- so the
+        // trailing armored signature block, which IS ordinary OpenPGP packets, is what gets handed
+        // to gpg instead (verified against GnuPG 2.5.21: listing the extracted block reports the
+        // signature packet with its sigclass and digest algorithm exactly as for a detached one).
+        const unsigned char* listInput = inputBuffer;
+        int listInputSize = inputBufferSize;
+        std::string extractedSignatureBlock;
+        if (inputBufferSize >= 34 && std::memcmp(inputBuffer, "-----BEGIN PGP SIGNED MESSAGE-----", 34) == 0)
+        {
+            const std::string text(reinterpret_cast<const char*>(inputBuffer), static_cast<std::size_t>(inputBufferSize));
+            const std::size_t signatureBeginPos = text.find("-----BEGIN PGP SIGNATURE-----");
+            if (signatureBeginPos == std::string::npos)
+            {
+                return INVALID_DATA;
+            }
+            extractedSignatureBlock = text.substr(signatureBeginPos);
+            listInput = reinterpret_cast<const unsigned char*>(extractedSignatureBlock.data());
+            listInputSize = static_cast<int>(extractedSignatureBlock.size());
+        }
+
+        const std::string inputPath = makeTempPath(".inspect");
+        if (!writeAllBytesToFile(inputPath, listInput, static_cast<std::size_t>(listInputSize)))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<std::string> args = baseArgs();
+        // Refusing the passphrase prompt up front is what keeps this genuinely read-only and fast;
+        // see this method's section comment in the anonymous namespace above for the full
+        // reasoning and the one unavoidable exception (an unprotected secret key in the keyring).
+        args.push_back("--pinentry-mode");
+        args.push_back("cancel");
+        args.push_back("--list-packets");
+        args.push_back(inputPath);
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        std::remove(inputPath.c_str());
+        if (!result.started)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // Not checking result.exitCode, same reasoning as listKeyringColonOutput above and with an
+        // extra reason of its own here: gpg exits non-zero whenever it could not decrypt the
+        // message it just listed (which is the NORMAL, intended outcome for these read-only
+        // methods), yet still prints the complete outer packet listing. The listing text is the
+        // verdict.
+        parseGpgPacketListing(result.output, outListing);
+        if (!outListing.sawAnyPacket)
+        {
+            return INVALID_DATA;
+        }
         return NO_ERROR;
     }
     catch (...)
@@ -2848,6 +3232,213 @@ int CPgpEngineWrapper::VerifyFile( const char* inputFilePath, const char* signat
             onProgress(1, 1, 100.0, progressUserData);
         }
         return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::IsPublicKeyEncrypted(const unsigned char* inputBuffer, const int inputBufferSize, bool* isPublicKeyEncrypted) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || isPublicKeyEncrypted == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        *isPublicKeyEncrypted = listing.hasPkesk;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::IsPasswordEncrypted(const unsigned char* inputBuffer, const int inputBufferSize, bool* isPasswordEncrypted) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || isPasswordEncrypted == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        *isPasswordEncrypted = listing.hasSkesk;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::IsIntegrityProtected(const unsigned char* inputBuffer, const int inputBufferSize, bool* isIntegrityProtected) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || isIntegrityProtected == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        *isIntegrityProtected = listing.hasIntegrityProtectedData;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::GetCompression(const unsigned char* inputBuffer, const int inputBufferSize, int* compressionAlgorithm) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || compressionAlgorithm == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (listing.hasCompressedData)
+        {
+            *compressionAlgorithm = listing.compressionAlgorithm;
+        }
+        else if (listing.hasIntegrityProtectedData || listing.hasUnprotectedEncryptedData)
+        {
+            *compressionAlgorithm = PGP_WRAPPER_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION;
+        }
+        else
+        {
+            *compressionAlgorithm = PGP_WRAPPER_COMPRESSION_NOT_PRESENT;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::ListEncryptionKeyIds(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize, int* keyIdCount) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr || keyIdCount == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+
+        std::string records;
+        records.reserve(listing.recipientKeyIds.size() * static_cast<std::size_t>(PGP_WRAPPER_KEY_ID_RECORD_SIZE));
+        for (std::size_t i = 0; i < listing.recipientKeyIds.size(); ++i)
+        {
+            records += listing.recipientKeyIds[i];
+            records.push_back('\0');
+        }
+        *keyIdCount = static_cast<int>(listing.recipientKeyIds.size());
+        return writeWrapperInspectionRecords(records, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::ListSigningKeyIds(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize, int* keyIdCount) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr || keyIdCount == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+
+        std::string records;
+        records.reserve(listing.signatures.size() * static_cast<std::size_t>(PGP_WRAPPER_KEY_ID_RECORD_SIZE));
+        for (std::size_t i = 0; i < listing.signatures.size(); ++i)
+        {
+            records += listing.signatures[i].issuerKeyId;
+            records.push_back('\0');
+        }
+        *keyIdCount = static_cast<int>(listing.signatures.size());
+        return writeWrapperInspectionRecords(records, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::ListSignatures(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize, int* signatureCount) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr || signatureCount == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+
+        std::string records;
+        records.reserve(listing.signatures.size() * static_cast<std::size_t>(PGP_WRAPPER_SIGNATURE_RECORD_SIZE));
+        for (std::size_t i = 0; i < listing.signatures.size(); ++i)
+        {
+            records += listing.signatures[i].issuerKeyId;
+            records.push_back(':');
+            records += formatWrapperOctetHex(listing.signatures[i].signatureType);
+            records.push_back(':');
+            records += formatWrapperOctetHex(listing.signatures[i].hashAlgorithm);
+            records.push_back('\0');
+        }
+        *signatureCount = static_cast<int>(listing.signatures.size());
+        return writeWrapperInspectionRecords(records, outputBufferCapacity, outputBuffer, outputBufferSize);
     }
     catch (...)
     {

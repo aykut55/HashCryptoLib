@@ -43,13 +43,17 @@ namespace
 {
     const unsigned char PGP_TAG_PKESK           = 1;
     const unsigned char PGP_TAG_SIGNATURE       = 2;
+    const unsigned char PGP_TAG_SKESK           = 3;
+    const unsigned char PGP_TAG_ONE_PASS_SIG    = 4;
     const unsigned char PGP_TAG_SECRET_KEY      = 5;
     const unsigned char PGP_TAG_PUBLIC_KEY      = 6;
     const unsigned char PGP_TAG_SECRET_SUBKEY   = 7;
     const unsigned char PGP_TAG_COMPRESSED_DATA = 8;
+    const unsigned char PGP_TAG_SED             = 9;
     const unsigned char PGP_TAG_LITERAL_DATA    = 11;
     const unsigned char PGP_TAG_PUBLIC_SUBKEY   = 14;
     const unsigned char PGP_TAG_SEIP            = 18;
+    const unsigned char PGP_TAG_AEAD            = 20;
 }
 
 // One encryption-only recipient (RFC 4880 Public-Key Encrypted Session Key, tag 1) -- either an
@@ -297,12 +301,27 @@ std::vector<unsigned char> writePacket(const unsigned char tag, const std::vecto
 // length" header (length-type 3, RFC 4880 section 4.2.1) -- no length field at all, the body
 // simply runs to the end of the enclosing context. dataEnd supplies that context boundary (the
 // caller's own end-of-buffer, or an inner boundary like the byte just before the MDC trailer);
-// it defaults to data.size() for ordinary top-level parsing. New-format partial-body lengths
-// (first length byte 224-254) are still not supported -- out of scope for this v1 engine.
-bool readPacketHeader(const std::vector<unsigned char>& data, std::size_t& pos, unsigned char& tag, std::size_t& bodyLength, const std::size_t dataEnd = static_cast<std::size_t>(-1))
+// it defaults to data.size() for ordinary top-level parsing.
+//
+// New-format PARTIAL body lengths (first length byte 224-254, RFC 4880 section 4.2.2.4 -- a body
+// split into a sequence of power-of-two-sized chunks, each preceded by its own length octet(s),
+// terminated by one final chunk carrying an ordinary definite length) are reported ONLY to callers
+// that opt in by passing a non-null isPartialLength. Those callers get bodyLength = the FIRST
+// chunk's size together with *isPartialLength = true, and take on the job of walking the rest of
+// the chunk sequence themselves (see decodeNewFormatBodyLength/reassemblePartialBodyLengthRange/
+// dechunkPartialBody below, which do exactly that). Every caller that passes nullptr -- i.e. every
+// caller that wants one already-contiguous packet body -- keeps the original behavior of rejecting
+// such a header outright, so definite-length and old-format input is parsed byte-for-byte the way
+// it always was.
+bool readPacketHeader(const std::vector<unsigned char>& data, std::size_t& pos, unsigned char& tag, std::size_t& bodyLength, const std::size_t dataEnd = static_cast<std::size_t>(-1), bool* isPartialLength = nullptr)
 {
     try
     {
+        if (isPartialLength != nullptr)
+        {
+            *isPartialLength = false;
+        }
+
         const std::size_t effectiveEnd = (dataEnd == static_cast<std::size_t>(-1)) ? data.size() : dataEnd;
         if (pos >= data.size() || (data[pos] & 0x80) == 0)
         {
@@ -336,7 +355,19 @@ bool readPacketHeader(const std::vector<unsigned char>& data, std::size_t& pos, 
                 bodyLength = (static_cast<std::size_t>(lenFirst - 192) << 8) + data[pos + 1] + 192;
                 pos += 2;
             }
-            else if (lenFirst == 255)
+            else if (lenFirst < 255)
+            {
+                // Partial body length (RFC 4880 section 4.2.2.4) -- opt-in only, see the comment
+                // above: bodyLength is just this FIRST chunk, not the whole packet body.
+                if (isPartialLength == nullptr)
+                {
+                    return false;
+                }
+                bodyLength = static_cast<std::size_t>(1) << (lenFirst & 0x1F);
+                *isPartialLength = true;
+                pos += 1;
+            }
+            else
             {
                 if (pos + 4 >= data.size())
                 {
@@ -345,10 +376,6 @@ bool readPacketHeader(const std::vector<unsigned char>& data, std::size_t& pos, 
                 bodyLength = (static_cast<std::size_t>(data[pos + 1]) << 24) | (static_cast<std::size_t>(data[pos + 2]) << 16) |
                              (static_cast<std::size_t>(data[pos + 3]) << 8)  |  static_cast<std::size_t>(data[pos + 4]);
                 pos += 5;
-            }
-            else
-            {
-                return false;
             }
         }
         else
@@ -395,6 +422,247 @@ bool readPacketHeader(const std::vector<unsigned char>& data, std::size_t& pos, 
             }
         }
         return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// How many octets the new-format body-length header starting with `first` occupies (RFC 4880
+// section 4.2.2): 1 for a one-octet length (0-191) or a partial length (224-254), 2 for a
+// two-octet length (192-223), 5 for the five-octet form (255).
+std::size_t newFormatBodyLengthHeaderSize(const unsigned char first)
+{
+    try
+    {
+        if (first < 192)
+        {
+            return 1;
+        }
+        if (first < 224)
+        {
+            return 2;
+        }
+        if (first < 255)
+        {
+            return 1;
+        }
+        return 5;
+    }
+    catch (...)
+    {
+        return 5;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Decodes ONE new-format body-length header (RFC 4880 section 4.2.2) from `header` -- the bare
+// length octet(s) with no packet tag octet in front, which is exactly what precedes every partial
+// body chunk after the first one (section 4.2.2.4). Returns false when availableSize is smaller
+// than the encoding the first octet announces, so an incremental caller can simply wait for more
+// bytes. isPartial says whether yet another chunk follows this one (first octet 224-254) or this
+// is the packet's final, definite-length chunk.
+bool decodeNewFormatBodyLength(const unsigned char* header, const std::size_t availableSize, std::size_t& headerSize, std::size_t& chunkLength, bool& isPartial)
+{
+    try
+    {
+        if (header == nullptr || availableSize == 0)
+        {
+            return false;
+        }
+
+        const unsigned char first = header[0];
+        if (first < 192)
+        {
+            headerSize = 1;
+            chunkLength = first;
+            isPartial = false;
+            return true;
+        }
+        if (first < 224)
+        {
+            if (availableSize < 2)
+            {
+                return false;
+            }
+            headerSize = 2;
+            chunkLength = (static_cast<std::size_t>(first - 192) << 8) + static_cast<std::size_t>(header[1]) + 192;
+            isPartial = false;
+            return true;
+        }
+        if (first < 255)
+        {
+            headerSize = 1;
+            chunkLength = static_cast<std::size_t>(1) << (first & 0x1F);
+            isPartial = true;
+            return true;
+        }
+        if (availableSize < 5)
+        {
+            return false;
+        }
+        headerSize = 5;
+        chunkLength = (static_cast<std::size_t>(header[1]) << 24) | (static_cast<std::size_t>(header[2]) << 16) |
+                      (static_cast<std::size_t>(header[3]) << 8)  |  static_cast<std::size_t>(header[4]);
+        isPartial = false;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Strips the per-chunk length headers of a new-format partial-body-length packet body (RFC 4880
+// section 4.2.2.4) out of `raw`, appending the de-framed content octets to `content`. Consumes as
+// much of `raw` as it can and leaves any incomplete trailing chunk header in place for the next
+// call, so a streaming reader can keep feeding it whatever bytes have arrived so far. chunkRemaining
+// / finalChunk carry the chunk-sequence state across calls: the caller seeds them from the packet's
+// own (first) header, and finalChunk turns true once the terminating definite-length chunk has been
+// entered.
+bool dechunkPartialBody(std::vector<unsigned char>& raw, std::size_t& chunkRemaining, bool& finalChunk, std::vector<unsigned char>& content)
+{
+    try
+    {
+        std::size_t pos = 0;
+        while (pos < raw.size())
+        {
+            if (chunkRemaining > 0)
+            {
+                const std::size_t available = raw.size() - pos;
+                const std::size_t take = (chunkRemaining < available) ? chunkRemaining : available;
+                content.insert(content.end(), raw.begin() + pos, raw.begin() + pos + take);
+                pos += take;
+                chunkRemaining -= take;
+                continue;
+            }
+            if (finalChunk)
+            {
+                break;
+            }
+            const std::size_t needed = newFormatBodyLengthHeaderSize(raw[pos]);
+            if (raw.size() - pos < needed)
+            {
+                break;
+            }
+            std::size_t headerSize = 0;
+            std::size_t chunkLength = 0;
+            bool isPartial = false;
+            if (!decodeNewFormatBodyLength(&raw[pos], raw.size() - pos, headerSize, chunkLength, isPartial))
+            {
+                return false;
+            }
+            pos += headerSize;
+            chunkRemaining = chunkLength;
+            finalChunk = !isPartial;
+        }
+        raw.erase(raw.begin(), raw.begin() + pos);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Rewrites data[begin, end) -- a sequence of whole OpenPGP packets already held in one contiguous
+// buffer -- into `out`, splicing every new-format partial-body-length packet (RFC 4880 section
+// 4.2.2.4) back together into a single ordinary definite-length new-format packet, so all the
+// buffer-based readers in this file can keep treating a packet body as one contiguous range.
+// Packets that are not partial-length framed are copied through byte-for-byte, header included.
+// Returns true ONLY when at least one partial-length packet was actually found and rewritten; on
+// false `out` is meaningless and the caller must keep using the original bytes -- that is what
+// guarantees definite-length/old-format input never even sees a copy, let alone a behavior change.
+bool reassemblePartialBodyLengthRange(const std::vector<unsigned char>& data, const std::size_t begin, const std::size_t end, std::vector<unsigned char>& out)
+{
+    try
+    {
+        if (begin > end || end > data.size())
+        {
+            return false;
+        }
+
+        out.clear();
+        bool rewroteAny = false;
+        std::size_t pos = begin;
+        while (pos < end)
+        {
+            const std::size_t headerStart = pos;
+            unsigned char tag = 0;
+            std::size_t bodyLength = 0;
+            bool isPartial = false;
+            if (!readPacketHeader(data, pos, tag, bodyLength, end, &isPartial))
+            {
+                // Trailing bytes that are not a packet header at all (the armor decoder's own
+                // padding, a truncated tail, ...): pass them through untouched, exactly as the
+                // original buffer would have presented them.
+                out.insert(out.end(), data.begin() + headerStart, data.begin() + end);
+                pos = end;
+                break;
+            }
+
+            if (!isPartial)
+            {
+                const std::size_t remaining = end - pos;
+                const std::size_t bodyEnd = (bodyLength > remaining) ? end : (pos + bodyLength);
+                out.insert(out.end(), data.begin() + headerStart, data.begin() + bodyEnd);
+                pos = bodyEnd;
+                continue;
+            }
+
+            std::vector<unsigned char> body;
+            std::size_t chunkLength = bodyLength;
+            bool moreChunks = true;
+            while (true)
+            {
+                if (chunkLength > end - pos)
+                {
+                    return false;
+                }
+                body.insert(body.end(), data.begin() + pos, data.begin() + pos + chunkLength);
+                pos += chunkLength;
+                if (!moreChunks)
+                {
+                    break;
+                }
+                if (pos >= end)
+                {
+                    return false;
+                }
+                std::size_t headerSize = 0;
+                bool nextPartial = false;
+                if (!decodeNewFormatBodyLength(&data[pos], end - pos, headerSize, chunkLength, nextPartial))
+                {
+                    return false;
+                }
+                pos += headerSize;
+                moreChunks = nextPartial;
+            }
+
+            out.push_back(static_cast<unsigned char>(0xC0 | tag));
+            appendNewFormatLength(out, body.size());
+            appendAll(out, body);
+            rewroteAny = true;
+        }
+        return rewroteAny;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Whole-buffer convenience form of reassemblePartialBodyLengthRange above.
+bool reassemblePartialBodyLengths(const std::vector<unsigned char>& data, std::vector<unsigned char>& out)
+{
+    try
+    {
+        return reassemblePartialBodyLengthRange(data, 0, data.size(), out);
     }
     catch (...)
     {
@@ -1915,10 +2183,21 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
 // keeps scanning to the start of the following SEIP packet regardless of which one matched -- a
 // real multi-recipient message may carry PKESKs for OTHER recipients before or after ours, all of
 // which must be skipped, not just the first.
-bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::RSA::PrivateKey& ownRsaSubkey, const unsigned char ownX25519PrivateKey[32], const unsigned char ownSubkeyFingerprint[20], const unsigned char ownSubkeyKeyId[8], const std::vector<unsigned char>& message, std::vector<unsigned char>& outPlaintext)
+bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::RSA::PrivateKey& ownRsaSubkey, const unsigned char ownX25519PrivateKey[32], const unsigned char ownSubkeyFingerprint[20], const unsigned char ownSubkeyKeyId[8], const std::vector<unsigned char>& inputMessage, std::vector<unsigned char>& outPlaintext)
 {
     try
     {
+        // Real GnuPG wraps the SEIP packet in new-format partial-body-length framing (RFC 4880
+        // section 4.2.2.4) as soon as the message is larger than its own output buffer -- verified
+        // against GnuPG 2.5.21, which does it both for piped input and for an ordinary input file
+        // of a few hundred KB. Splice any such packet back into one contiguous body up front so
+        // every step below still sees the single-definite-length packet layout it was written for;
+        // when there is nothing to splice (every message this engine itself produces, and every
+        // small GnuPG message) this is a no-op and the original buffer is used unchanged.
+        std::vector<unsigned char> reassembledMessage;
+        const bool messageReassembled = reassemblePartialBodyLengths(inputMessage, reassembledMessage);
+        const std::vector<unsigned char>& message = messageReassembled ? reassembledMessage : inputMessage;
+
         std::size_t pos = 0;
         std::vector<unsigned char> sessionPlain;
         bool found = false;
@@ -2094,11 +2373,21 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
             return false;
         }
 
-        std::size_t innerPos = 18;
-        const std::size_t innerEnd = mdcTagOffset;
+        // The packet nested inside the SEIP body (a Compressed Data or Literal Data packet) may use
+        // partial-body-length framing of its own, independently of the SEIP's -- GnuPG does exactly
+        // that for the Literal Data packet when its own input size is unknown (piped stdin). Splice
+        // that one back together too, over the body region only (18-byte CFB prefix skipped, MDC
+        // trailer excluded); when nothing needs splicing the decrypted buffer is parsed in place as
+        // before.
+        std::vector<unsigned char> reassembledInner;
+        const bool innerReassembled = reassemblePartialBodyLengthRange(plainForCfb, 18, mdcTagOffset, reassembledInner);
+        const std::vector<unsigned char>& innerData = innerReassembled ? reassembledInner : plainForCfb;
+
+        std::size_t innerPos = innerReassembled ? 0 : 18;
+        const std::size_t innerEnd = innerReassembled ? reassembledInner.size() : mdcTagOffset;
         unsigned char innerTag = 0;
         std::size_t innerLength = 0;
-        if (!readPacketHeader(plainForCfb, innerPos, innerTag, innerLength, innerEnd) || innerPos + innerLength > innerEnd)
+        if (!readPacketHeader(innerData, innerPos, innerTag, innerLength, innerEnd) || innerPos + innerLength > innerEnd)
         {
             return false;
         }
@@ -2113,8 +2402,8 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
             {
                 return false;
             }
-            const unsigned char compAlgo = plainForCfb[innerPos];
-            const unsigned char* compData = &plainForCfb[innerPos + 1];
+            const unsigned char compAlgo = innerData[innerPos];
+            const unsigned char* compData = &innerData[innerPos + 1];
             const std::size_t compDataLength = innerLength - 1;
 
             std::string decompressed;
@@ -2140,6 +2429,15 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
             }
             decompressedPacket.assign(decompressed.begin(), decompressed.end());
 
+            // The Literal Data packet that comes back out of the decompressor carries its own
+            // framing, which GnuPG also splits into partial-body-length chunks when it streamed the
+            // plaintext in from a source of unknown size -- splice it back together the same way.
+            std::vector<unsigned char> reassembledLiteralPacket;
+            if (reassemblePartialBodyLengths(decompressedPacket, reassembledLiteralPacket))
+            {
+                decompressedPacket.swap(reassembledLiteralPacket);
+            }
+
             std::size_t lp = 0;
             unsigned char lt = 0;
             std::size_t ll = 0;
@@ -2152,7 +2450,7 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
         }
         else if (innerTag == PGP_TAG_LITERAL_DATA)
         {
-            literalBody = &plainForCfb[innerPos];
+            literalBody = &innerData[innerPos];
             literalBodyLength = innerLength;
         }
         else
@@ -2303,6 +2601,299 @@ int encryptFileStreaming(const std::vector<PgpEncryptionRecipient>& recipients, 
             {
                 const double percentage = fileSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(fileSize)) * 100.0 : 0.0;
                 if (!onProgress(processedBytes, fileSize, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+
+        unsigned char trailerPlain[22];
+        trailerPlain[0] = 0xD3;
+        trailerPlain[1] = 0x14;
+        mdc.Update(trailerPlain, 2);
+        unsigned char mdcDigest[20];
+        mdc.Final(mdcDigest);
+        std::memcpy(trailerPlain + 2, mdcDigest, 20);
+
+        unsigned char trailerCipher[22];
+        cfb.ProcessData(trailerCipher, trailerPlain, 22);
+        if (!writeFileExact(outputFileHandle, trailerCipher, 22))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Streams inputFileHandle's plaintext, wrapped as a Literal Data packet (tag 11, header+prefix
+// built upfront exactly like encryptFileStreaming's own literalHeader/literalPrefix -- fileSize is
+// known, so this part's length is still exactly known even though the compressed size that follows
+// is not), into compressionAlgorithmOctet's Deflator (ZIP, octet 1) or ZlibCompressor (ZLIB, octet
+// 2), draining compressed bytes out to tempFilePath as they are produced so peak memory never
+// holds more than one chunk plus Crypto++'s own small internal deflate buffer. Once fully drained,
+// reopens the temp file just to read back its exact size (outCompressedSize) -- the whole reason
+// this two-pass split exists, see EncryptFileCompressed's own .h comment. Always creates
+// tempFilePath (even on failure) so the caller can unconditionally attempt cleanup.
+int compressLiteralToTempFile(HANDLE inputFileHandle, const unsigned long long fileSize, const unsigned char compressionAlgorithmOctet, const std::wstring& tempFilePath, ProgressCallback onProgress, void* progressUserData, unsigned long long& outCompressedSize)
+{
+    try
+    {
+        const HANDLE rawTempHandle = CreateFileW(tempFilePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawTempHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> tempHandle(rawTempHandle, &CloseHandle);
+
+        std::vector<unsigned char> literalHeader;
+        literalHeader.push_back(static_cast<unsigned char>(0xC0 | PGP_TAG_LITERAL_DATA));
+        appendNewFormatLength(literalHeader, 6 + static_cast<std::size_t>(fileSize));
+
+        std::vector<unsigned char> literalPrefix;
+        literalPrefix.push_back('b');
+        literalPrefix.push_back(0);
+        appendBigEndian32(literalPrefix, 0);
+
+        CryptoPP::ByteQueue* compressedQueue = new CryptoPP::ByteQueue();
+        std::unique_ptr<CryptoPP::BufferedTransformation> compressor;
+        if (compressionAlgorithmOctet == 2)
+        {
+            compressor.reset(new CryptoPP::ZlibCompressor(compressedQueue));
+        }
+        else
+        {
+            compressor.reset(new CryptoPP::Deflator(compressedQueue));
+        }
+
+        auto drainToTemp = [&]() -> bool
+        {
+            const std::size_t available = static_cast<std::size_t>(compressedQueue->MaxRetrievable());
+            if (available == 0)
+            {
+                return true;
+            }
+            std::vector<unsigned char> drainBuf(available);
+            compressedQueue->Get(drainBuf.data(), available);
+            return writeFileExact(rawTempHandle, drainBuf.data(), static_cast<DWORD>(drainBuf.size()));
+        };
+
+        try
+        {
+            compressor->Put(literalHeader.data(), literalHeader.size());
+            compressor->Put(literalPrefix.data(), literalPrefix.size());
+        }
+        catch (const CryptoPP::Exception&)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        if (!drainToTemp())
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> chunk(PGP_FILE_CHUNK_SIZE);
+        unsigned long long processedBytes = 0;
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(inputFileHandle, chunk.data(), static_cast<DWORD>(chunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+            if (bytesRead == 0)
+            {
+                break;
+            }
+            try
+            {
+                compressor->Put(chunk.data(), bytesRead);
+            }
+            catch (const CryptoPP::Exception&)
+            {
+                return UNEXPECTED_ERROR;
+            }
+            if (!drainToTemp())
+            {
+                return FILE_IO_ERROR;
+            }
+
+            processedBytes += bytesRead;
+            if (onProgress)
+            {
+                const double percentage = fileSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(fileSize)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, fileSize, percentage, progressUserData))
+                {
+                    return OPERATION_CANCELLED;
+                }
+            }
+        }
+
+        try
+        {
+            compressor->MessageEnd();
+        }
+        catch (const CryptoPP::Exception&)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        if (!drainToTemp())
+        {
+            return FILE_IO_ERROR;
+        }
+
+        tempHandle.reset(); // close so every buffered byte is flushed before the size query below.
+
+        const HANDLE rawSizeHandle = CreateFileW(tempFilePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawSizeHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        LARGE_INTEGER tempSize;
+        tempSize.QuadPart = 0;
+        const bool sizeOk = GetFileSizeEx(rawSizeHandle, &tempSize) != 0 && tempSize.QuadPart >= 0;
+        CloseHandle(rawSizeHandle);
+        if (!sizeOk)
+        {
+            return FILE_IO_ERROR;
+        }
+        outCompressedSize = static_cast<unsigned long long>(tempSize.QuadPart);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// The compressed counterpart of encryptFileStreaming above: identical PKESK-per-recipient and
+// SEIP/MDC/CFB framing, except the SEIP body wraps a Compressed Data packet (tag 8, holding
+// compressionAlgorithmOctet + the already-compressed bytes sitting in tempFilePath, compressedSize
+// long -- produced by compressLiteralToTempFile above) instead of wrapping the Literal Data packet
+// directly. compressedSize is exact by the time this runs, so -- exactly like encryptFileStreaming
+// -- every packet length here is still fully known before a single output byte is written.
+int encryptFileStreamingCompressed(const std::vector<PgpEncryptionRecipient>& recipients, const std::wstring& tempFilePath, const unsigned long long compressedSize, const unsigned char compressionAlgorithmOctet, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (recipients.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        CryptoPP::AutoSeededRandomPool rng;
+
+        unsigned char sessionKey[32];
+        rng.GenerateBlock(sessionKey, 32);
+        for (std::size_t r = 0; r < recipients.size(); ++r)
+        {
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[r], sessionKey, 32);
+            if (pkeskPacket.empty())
+            {
+                return UNEXPECTED_ERROR;
+            }
+            if (!writeFileExact(outputFileHandle, pkeskPacket.data(), static_cast<DWORD>(pkeskPacket.size())))
+            {
+                return FILE_IO_ERROR;
+            }
+        }
+
+        const std::size_t compressedBodyLength = 1 + static_cast<std::size_t>(compressedSize);
+        std::vector<unsigned char> compressedHeader;
+        compressedHeader.push_back(static_cast<unsigned char>(0xC0 | PGP_TAG_COMPRESSED_DATA));
+        appendNewFormatLength(compressedHeader, compressedBodyLength);
+
+        const std::size_t innerContentLength = compressedHeader.size() + compressedBodyLength;
+        const std::size_t plainForCfbLength = 18 + innerContentLength + 2 + 20;
+        const std::size_t seipBodyLength = 1 + plainForCfbLength;
+
+        std::vector<unsigned char> seipHeader;
+        seipHeader.push_back(static_cast<unsigned char>(0xC0 | PGP_TAG_SEIP));
+        appendNewFormatLength(seipHeader, seipBodyLength);
+        if (!writeFileExact(outputFileHandle, seipHeader.data(), static_cast<DWORD>(seipHeader.size())))
+        {
+            return FILE_IO_ERROR;
+        }
+        const unsigned char seipVersion = 1;
+        if (!writeFileExact(outputFileHandle, &seipVersion, 1))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        unsigned char zeroIv[16];
+        std::memset(zeroIv, 0, 16);
+        CryptoPP::CFB_Mode<CryptoPP::AES>::Encryption cfb;
+        cfb.SetKeyWithIV(sessionKey, 32, zeroIv, 16);
+        CryptoPP::SHA1 mdc;
+
+        unsigned char prefix[18];
+        rng.GenerateBlock(prefix, 16);
+        prefix[16] = prefix[14];
+        prefix[17] = prefix[15];
+
+        unsigned char prefixCipher[18];
+        mdc.Update(prefix, 18);
+        cfb.ProcessData(prefixCipher, prefix, 18);
+        if (!writeFileExact(outputFileHandle, prefixCipher, 18))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<unsigned char> compressedHeaderCipher(compressedHeader.size());
+        mdc.Update(compressedHeader.data(), compressedHeader.size());
+        cfb.ProcessData(compressedHeaderCipher.data(), compressedHeader.data(), compressedHeader.size());
+        if (!writeFileExact(outputFileHandle, compressedHeaderCipher.data(), static_cast<DWORD>(compressedHeaderCipher.size())))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        unsigned char algorithmOctetCipher = 0;
+        mdc.Update(&compressionAlgorithmOctet, 1);
+        cfb.ProcessData(&algorithmOctetCipher, &compressionAlgorithmOctet, 1);
+        if (!writeFileExact(outputFileHandle, &algorithmOctetCipher, 1))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        const HANDLE rawTempReadHandle = CreateFileW(tempFilePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawTempReadHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> tempReadHandle(rawTempReadHandle, &CloseHandle);
+
+        std::vector<unsigned char> plainChunk(PGP_FILE_CHUNK_SIZE);
+        std::vector<unsigned char> cipherChunk(PGP_FILE_CHUNK_SIZE);
+        unsigned long long processedBytes = 0;
+        for (;;)
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(rawTempReadHandle, plainChunk.data(), static_cast<DWORD>(plainChunk.size()), &bytesRead, nullptr))
+            {
+                return FILE_IO_ERROR;
+            }
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            mdc.Update(plainChunk.data(), bytesRead);
+            cfb.ProcessData(cipherChunk.data(), plainChunk.data(), bytesRead);
+            if (!writeFileExact(outputFileHandle, cipherChunk.data(), bytesRead))
+            {
+                return FILE_IO_ERROR;
+            }
+
+            processedBytes += bytesRead;
+            if (onProgress)
+            {
+                const double percentage = compressedSize > 0 ? (static_cast<double>(processedBytes) / static_cast<double>(compressedSize)) * 100.0 : 0.0;
+                if (!onProgress(processedBytes, compressedSize, percentage, progressUserData))
                 {
                     return OPERATION_CANCELLED;
                 }
@@ -2656,8 +3247,88 @@ struct DecryptFileHeader
     std::size_t encLength;
     std::vector<unsigned char> leftoverCipher;
 
-    DecryptFileHeader() : ok(false), encLength(0) {}
+    // Set when the SEIP packet uses new-format partial-body-length framing (RFC 4880 section
+    // 4.2.2.4) instead of one definite length -- what real GnuPG emits for anything bigger than
+    // its own output buffer. encLength above is then the TOTAL ciphertext length summed over every
+    // chunk (the chunk length octets themselves excluded, and the SEIP version octet already
+    // subtracted), leftoverCipher is empty and the file pointer sits on the first ciphertext byte,
+    // and seipChunkRemaining/seipFinalChunk describe the chunk the file pointer is currently
+    // inside so the streaming reader can keep stepping over the remaining chunk headers.
+    bool seipPartial;
+    std::size_t seipChunkRemaining;
+    bool seipFinalChunk;
+
+    DecryptFileHeader() : ok(false), encLength(0), seipPartial(false), seipChunkRemaining(0), seipFinalChunk(false) {}
 };
+// -----------------------------------------------------------------------------
+
+// Walks the chunk sequence of a new-format partial-body-length packet (RFC 4880 section 4.2.2.4)
+// whose body starts at bodyStartOffset with a first chunk of firstChunkLength octets, and sums up
+// how many body octets it holds in total. Only the (1, 2 or 5 octet) chunk headers are actually
+// read -- each chunk's payload is skipped with a seek -- so this costs one small read per chunk and
+// no payload I/O at all. The streaming SEIP reader needs this because a partial-length packet does
+// not announce its total size anywhere, yet the MDC trailer can only be split off the plaintext
+// once the end of the body is known. Leaves the file pointer wherever the walk ended; the caller
+// repositions it.
+bool scanPartialBodyTotalLength(HANDLE inputFileHandle, const unsigned long long bodyStartOffset, const std::size_t firstChunkLength, unsigned long long& totalPayload)
+{
+    try
+    {
+        LARGE_INTEGER fileSize;
+        fileSize.QuadPart = 0;
+        if (!GetFileSizeEx(inputFileHandle, &fileSize) || fileSize.QuadPart < 0)
+        {
+            return false;
+        }
+        const unsigned long long endOffset = static_cast<unsigned long long>(fileSize.QuadPart);
+
+        unsigned long long total = static_cast<unsigned long long>(firstChunkLength);
+        unsigned long long offset = bodyStartOffset + firstChunkLength;
+        bool moreChunks = true;
+        while (moreChunks)
+        {
+            if (offset >= endOffset)
+            {
+                return false;
+            }
+            LARGE_INTEGER moveTo;
+            moveTo.QuadPart = static_cast<LONGLONG>(offset);
+            if (!SetFilePointerEx(inputFileHandle, moveTo, nullptr, FILE_BEGIN))
+            {
+                return false;
+            }
+
+            unsigned char header[5] = { 0, 0, 0, 0, 0 };
+            DWORD bytesRead = 0;
+            if (!ReadFile(inputFileHandle, header, 5, &bytesRead, nullptr) || bytesRead == 0)
+            {
+                return false;
+            }
+
+            std::size_t headerSize = 0;
+            std::size_t chunkLength = 0;
+            bool isPartial = false;
+            if (!decodeNewFormatBodyLength(header, static_cast<std::size_t>(bytesRead), headerSize, chunkLength, isPartial))
+            {
+                return false;
+            }
+            total += static_cast<unsigned long long>(chunkLength);
+            offset += static_cast<unsigned long long>(headerSize) + static_cast<unsigned long long>(chunkLength);
+            moreChunks = isPartial;
+        }
+
+        if (offset > endOffset)
+        {
+            return false;
+        }
+        totalPayload = total;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
 // -----------------------------------------------------------------------------
 
 // Reads just enough of the file (a small, bounded prefix -- PKESKs plus the SEIP header are at
@@ -2814,7 +3485,8 @@ DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const PgpKeyA
 
         unsigned char seipTag = 0;
         std::size_t seipBodyLength = 0;
-        if (!readPacketHeader(buf, pos, seipTag, seipBodyLength) || seipTag != PGP_TAG_SEIP)
+        bool seipPartial = false;
+        if (!readPacketHeader(buf, pos, seipTag, seipBodyLength, static_cast<std::size_t>(-1), &seipPartial) || seipTag != PGP_TAG_SEIP)
         {
             return result;
         }
@@ -2823,6 +3495,37 @@ DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const PgpKeyA
             return result;
         }
         pos += 1;
+
+        if (seipPartial)
+        {
+            // Partial-body-length SEIP (what GnuPG produces for anything past its output buffer):
+            // seipBodyLength above is only the FIRST chunk. The total is not written anywhere, so
+            // walk the chunk headers once to add it up, then rewind to the first ciphertext octet
+            // and hand the streaming reader the chunk state instead of a leftover prefix -- the
+            // prefix read above would otherwise have to be de-chunked here as well, for no gain.
+            const unsigned long long bodyStartOffset = static_cast<unsigned long long>(pos - 1);
+            unsigned long long totalPayload = 0;
+            if (seipBodyLength < 1 || !scanPartialBodyTotalLength(inputFileHandle, bodyStartOffset, seipBodyLength, totalPayload) || totalPayload < 1)
+            {
+                return result;
+            }
+
+            LARGE_INTEGER moveTo;
+            moveTo.QuadPart = static_cast<LONGLONG>(pos);
+            if (!SetFilePointerEx(inputFileHandle, moveTo, nullptr, FILE_BEGIN))
+            {
+                return result;
+            }
+
+            result.sessionKey = sessionKey;
+            result.encLength = static_cast<std::size_t>(totalPayload - 1);
+            result.leftoverCipher.clear();
+            result.seipPartial = true;
+            result.seipChunkRemaining = seipBodyLength - 1; // the SEIP version octet came out of this same first chunk.
+            result.seipFinalChunk = false;
+            result.ok = true;
+            return result;
+        }
 
         result.sessionKey = sessionKey;
         result.encLength = seipBodyLength - 1;
@@ -2842,10 +3545,592 @@ DecryptFileHeader parseEncryptedFileHeader(HANDLE inputFileHandle, const PgpKeyA
 }
 // -----------------------------------------------------------------------------
 
+// ================================================================================================
+// Minimal from-scratch BZip2 stream decoder -- RFC 4880's Compressed Data packet algorithm octet 3
+// (section 9.3). Crypto++ 8.9.0 (vendored under 3rdParty/cryptopp890) never shipped BZip2 support
+// (it was dropped from Crypto++ long before 8.x), and no other 3rdParty dependency in this repo
+// vendors it either: Botan's own bzip2 wrapper (3rdParty/botan3130/src/lib/compression/bzip2) only
+// links against an external system libbz2 ("<libs> all -> bz2" in its info.txt), which this repo
+// does not carry. So this is a small self-contained decoder implementing exactly the bzip2 format
+// (https://sourceware.org/bzip2/): Huffman-coded MTF/RLE2 symbol stream -> inverse Burrows-Wheeler
+// transform (via the classic cumulative-count/"next" array technique) -> inverse initial RLE1.
+// Decode-only (EncryptFileCompressed never produces BZip2, only ZIP/ZLIB -- see its own comment)
+// and does not verify bzip2's own per-block/whole-stream CRC32 (the outer OpenPGP SEIP's SHA-1 MDC
+// already covers end-to-end integrity for this engine's purposes) -- any malformed/corrupt bzip2
+// stream still fails closed via a decode error, it just is not specifically diagnosed as a "bzip2
+// CRC mismatch". Randomized blocks (a deprecated feature no encoder since bzip2 1.0.3, 2005, has
+// produced) are rejected rather than derandomized.
+// ================================================================================================
+
+class Bzip2BitReader
+{
+public:
+    Bzip2BitReader(const unsigned char* data, const std::size_t size) : data_(data), size_(size), bytePos_(0), bitBuffer_(0), bitCount_(0) {}
+
+    bool ReadBit(unsigned int& outBit)
+    {
+        if (bitCount_ == 0)
+        {
+            if (bytePos_ >= size_)
+            {
+                return false;
+            }
+            bitBuffer_ = data_[bytePos_++];
+            bitCount_ = 8;
+        }
+        --bitCount_;
+        outBit = (bitBuffer_ >> bitCount_) & 1U;
+        return true;
+    }
+
+    bool ReadBits(const unsigned int count, unsigned int& outValue)
+    {
+        outValue = 0;
+        for (unsigned int i = 0; i < count; ++i)
+        {
+            unsigned int bit = 0;
+            if (!ReadBit(bit))
+            {
+                return false;
+            }
+            outValue = (outValue << 1) | bit;
+        }
+        return true;
+    }
+
+    bool ReadBits64(const unsigned int count, unsigned long long& outValue)
+    {
+        outValue = 0;
+        for (unsigned int i = 0; i < count; ++i)
+        {
+            unsigned int bit = 0;
+            if (!ReadBit(bit))
+            {
+                return false;
+            }
+            outValue = (outValue << 1) | static_cast<unsigned long long>(bit);
+        }
+        return true;
+    }
+
+private:
+    const unsigned char* data_;
+    std::size_t size_;
+    std::size_t bytePos_;
+    unsigned int bitBuffer_;
+    unsigned int bitCount_;
+};
+// -----------------------------------------------------------------------------
+
+// Canonical Huffman decode table (limit/base/perm arrays) -- the classic bzip2/bzlib algorithm:
+// perm[] lists symbols sorted by (codeLength, symbolValue); base[len]/limit[len] let getSymbol
+// below decode bit-by-bit without a full tree. Lengths are 1..20 per the bzip2 format, so 24
+// entries in base/limit comfortably covers every valid length plus its "len+1" lookups.
+struct Bzip2HuffmanTable
+{
+    int minLen;
+    int maxLen;
+    int limit[24];
+    int base[24];
+    std::vector<int> perm;
+};
+// -----------------------------------------------------------------------------
+
+bool bzip2BuildHuffmanTable(const std::vector<unsigned char>& lengths, const int alphaSize, Bzip2HuffmanTable& table)
+{
+    try
+    {
+        int minLen = 32;
+        int maxLen = 0;
+        for (int i = 0; i < alphaSize; ++i)
+        {
+            if (lengths[i] < minLen) { minLen = lengths[i]; }
+            if (lengths[i] > maxLen) { maxLen = lengths[i]; }
+        }
+        if (minLen < 1 || maxLen > 20)
+        {
+            return false;
+        }
+        table.minLen = minLen;
+        table.maxLen = maxLen;
+
+        table.perm.assign(static_cast<std::size_t>(alphaSize), 0);
+        int pp = 0;
+        for (int len = minLen; len <= maxLen; ++len)
+        {
+            for (int i = 0; i < alphaSize; ++i)
+            {
+                if (lengths[i] == len)
+                {
+                    table.perm[pp++] = i;
+                }
+            }
+        }
+
+        for (int i = 0; i < 24; ++i)
+        {
+            table.base[i] = 0;
+            table.limit[i] = 0;
+        }
+        for (int i = 0; i < alphaSize; ++i)
+        {
+            table.base[lengths[i] + 1]++;
+        }
+        for (int i = 1; i < 24; ++i)
+        {
+            table.base[i] += table.base[i - 1];
+        }
+
+        int vec = 0;
+        for (int len = minLen; len <= maxLen; ++len)
+        {
+            vec += (table.base[len + 1] - table.base[len]);
+            table.limit[len] = vec - 1;
+            vec <<= 1;
+        }
+        for (int len = minLen + 1; len <= maxLen; ++len)
+        {
+            table.base[len] = ((table.limit[len - 1] + 1) << 1) - table.base[len];
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool bzip2GetSymbol(Bzip2BitReader& reader, const Bzip2HuffmanTable& table, int& outSymbol)
+{
+    unsigned int code = 0;
+    if (!reader.ReadBits(static_cast<unsigned int>(table.minLen), code))
+    {
+        return false;
+    }
+    int len = table.minLen;
+    while (true)
+    {
+        if (len > table.maxLen)
+        {
+            return false;
+        }
+        if (static_cast<int>(code) <= table.limit[len])
+        {
+            break;
+        }
+        unsigned int bit = 0;
+        if (!reader.ReadBit(bit))
+        {
+            return false;
+        }
+        code = (code << 1) | bit;
+        ++len;
+    }
+    const int index = static_cast<int>(code) - table.base[len];
+    if (index < 0 || index >= static_cast<int>(table.perm.size()))
+    {
+        return false;
+    }
+    outSymbol = table.perm[index];
+    return true;
+}
+// -----------------------------------------------------------------------------
+
+// Decodes exactly one bzip2 block (everything after its 48-bit start-of-block magic, up to and
+// including this block's own trailing structure -- there is none; the caller detects the next
+// block/end-of-stream magic afterward) into blockOut, fully undoing MTF/RLE2, the BWT (via
+// origPtr), and the initial RLE1 pass -- so blockOut ends up holding this block's share of the
+// final decompressed bytes, in order.
+bool bzip2DecodeBlock(Bzip2BitReader& reader, const unsigned int blockSize100k, std::vector<unsigned char>& blockOut)
+{
+    try
+    {
+        unsigned int blockCrc = 0;
+        if (!reader.ReadBits(32, blockCrc))
+        {
+            return false;
+        }
+
+        unsigned int randomized = 0;
+        if (!reader.ReadBits(1, randomized) || randomized != 0)
+        {
+            return false;
+        }
+
+        unsigned int origPtr = 0;
+        if (!reader.ReadBits(24, origPtr))
+        {
+            return false;
+        }
+
+        // Mapping table (section-less, but see bzip2's own format notes): a 16-bit bitmap of
+        // which 16-value groups are used, then a 16-bit per-value bitmap for each used group --
+        // together giving the ascending list of distinct byte values actually present.
+        unsigned int usedGroupsBits = 0;
+        if (!reader.ReadBits(16, usedGroupsBits))
+        {
+            return false;
+        }
+        std::vector<unsigned char> symbolMap;
+        for (int g = 0; g < 16; ++g)
+        {
+            if (((usedGroupsBits >> (15 - g)) & 1U) == 0)
+            {
+                continue;
+            }
+            unsigned int usedBitsInGroup = 0;
+            if (!reader.ReadBits(16, usedBitsInGroup))
+            {
+                return false;
+            }
+            for (int k = 0; k < 16; ++k)
+            {
+                if (((usedBitsInGroup >> (15 - k)) & 1U) != 0)
+                {
+                    symbolMap.push_back(static_cast<unsigned char>(g * 16 + k));
+                }
+            }
+        }
+        const int nInUse = static_cast<int>(symbolMap.size());
+        if (nInUse < 1)
+        {
+            return false;
+        }
+        const int alphaSize = nInUse + 2; // + RUNA/RUNB (0/1) folded in below, + trailing EOB.
+
+        unsigned int numGroups = 0;
+        if (!reader.ReadBits(3, numGroups) || numGroups < 2 || numGroups > 6)
+        {
+            return false;
+        }
+        unsigned int numSelectors = 0;
+        if (!reader.ReadBits(15, numSelectors) || numSelectors == 0)
+        {
+            return false;
+        }
+
+        // Selectors: MTF-encoded (unary) indices into the numGroups Huffman tables, one per
+        // 50-symbol group of the main symbol stream decoded further below.
+        std::vector<unsigned char> mtfGroupPos(numGroups);
+        for (unsigned int i = 0; i < numGroups; ++i)
+        {
+            mtfGroupPos[i] = static_cast<unsigned char>(i);
+        }
+        std::vector<unsigned char> selectors(numSelectors);
+        for (unsigned int i = 0; i < numSelectors; ++i)
+        {
+            unsigned int j = 0;
+            unsigned int bit = 0;
+            while (true)
+            {
+                if (!reader.ReadBit(bit))
+                {
+                    return false;
+                }
+                if (bit == 0)
+                {
+                    break;
+                }
+                ++j;
+                if (j >= numGroups)
+                {
+                    return false;
+                }
+            }
+            const unsigned char value = mtfGroupPos[j];
+            for (unsigned int k = j; k > 0; --k)
+            {
+                mtfGroupPos[k] = mtfGroupPos[k - 1];
+            }
+            mtfGroupPos[0] = value;
+            selectors[i] = value;
+        }
+
+        // Per-group Huffman code lengths: a 5-bit starting length, then a delta-coded adjustment
+        // (unary "keep going" bit + direction bit) per symbol in the alphabet.
+        std::vector<Bzip2HuffmanTable> tables(numGroups);
+        for (unsigned int g = 0; g < numGroups; ++g)
+        {
+            unsigned int curLen = 0;
+            if (!reader.ReadBits(5, curLen))
+            {
+                return false;
+            }
+            std::vector<unsigned char> lengths(static_cast<std::size_t>(alphaSize));
+            for (int sym = 0; sym < alphaSize; ++sym)
+            {
+                while (true)
+                {
+                    unsigned int bit = 0;
+                    if (!reader.ReadBit(bit))
+                    {
+                        return false;
+                    }
+                    if (bit == 0)
+                    {
+                        break;
+                    }
+                    unsigned int adjust = 0;
+                    if (!reader.ReadBit(adjust))
+                    {
+                        return false;
+                    }
+                    if (adjust == 0)
+                    {
+                        ++curLen;
+                    }
+                    else
+                    {
+                        if (curLen == 0)
+                        {
+                            return false;
+                        }
+                        --curLen;
+                    }
+                }
+                if (curLen < 1 || curLen > 20)
+                {
+                    return false;
+                }
+                lengths[static_cast<std::size_t>(sym)] = static_cast<unsigned char>(curLen);
+            }
+            if (!bzip2BuildHuffmanTable(lengths, alphaSize, tables[g]))
+            {
+                return false;
+            }
+        }
+
+        // Main symbol stream: MTF ranks with RUNA/RUNB bijective-base-2 run-length coding of
+        // repeated MTF-front bytes, terminated by the EOB symbol (alphaSize - 1).
+        std::vector<unsigned char> mtf(symbolMap);
+        const unsigned long long maxBlockBytes = static_cast<unsigned long long>(blockSize100k) * 100000ULL + 4096ULL;
+        blockOut.clear();
+        unsigned int selectorIndex = 0;
+        unsigned int groupSymbolsLeft = 0;
+        const Bzip2HuffmanTable* currentTable = nullptr;
+        unsigned long long runLength = 0;
+        unsigned int runBit = 0;
+        const int eobSymbol = alphaSize - 1;
+
+        while (true)
+        {
+            if (groupSymbolsLeft == 0)
+            {
+                if (selectorIndex >= selectors.size())
+                {
+                    return false;
+                }
+                currentTable = &tables[selectors[selectorIndex++]];
+                groupSymbolsLeft = 50;
+            }
+            --groupSymbolsLeft;
+
+            int symbol = 0;
+            if (!bzip2GetSymbol(reader, *currentTable, symbol))
+            {
+                return false;
+            }
+
+            if (symbol == 0 || symbol == 1) // RUNA / RUNB
+            {
+                runLength += (static_cast<unsigned long long>(symbol) + 1ULL) << runBit;
+                ++runBit;
+                if (runLength > maxBlockBytes)
+                {
+                    return false;
+                }
+                continue;
+            }
+
+            if (runLength > 0)
+            {
+                const unsigned char runByte = mtf[0];
+                for (unsigned long long r = 0; r < runLength; ++r)
+                {
+                    blockOut.push_back(runByte);
+                }
+                runLength = 0;
+                runBit = 0;
+                if (blockOut.size() > maxBlockBytes)
+                {
+                    return false;
+                }
+            }
+
+            if (symbol == eobSymbol)
+            {
+                break;
+            }
+
+            const int mtfIndex = symbol - 1;
+            if (mtfIndex < 0 || mtfIndex >= nInUse)
+            {
+                return false;
+            }
+            const unsigned char value = mtf[static_cast<std::size_t>(mtfIndex)];
+            for (int k = mtfIndex; k > 0; --k)
+            {
+                mtf[static_cast<std::size_t>(k)] = mtf[static_cast<std::size_t>(k - 1)];
+            }
+            mtf[0] = value;
+            blockOut.push_back(value);
+            if (blockOut.size() > maxBlockBytes)
+            {
+                return false;
+            }
+        }
+
+        if (origPtr >= blockOut.size())
+        {
+            return false;
+        }
+
+        // Inverse Burrows-Wheeler transform: the classic cumulative-count "next" array technique
+        // (equivalent to bzlib's own packed "tt" array, kept unpacked here for clarity).
+        const std::size_t n = blockOut.size();
+        std::vector<unsigned int> cumulative(257, 0);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            cumulative[static_cast<std::size_t>(blockOut[i]) + 1]++;
+        }
+        for (int i = 1; i <= 256; ++i)
+        {
+            cumulative[static_cast<std::size_t>(i)] += cumulative[static_cast<std::size_t>(i - 1)];
+        }
+        std::vector<unsigned int> nextIndex(n);
+        std::vector<unsigned int> cursor(cumulative.begin(), cumulative.begin() + 256);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const unsigned char ch = blockOut[i];
+            nextIndex[cursor[ch]] = static_cast<unsigned int>(i);
+            cursor[ch]++;
+        }
+
+        std::vector<unsigned char> bwtOutput(n);
+        unsigned int tPos = nextIndex[origPtr];
+        for (std::size_t k = 0; k < n; ++k)
+        {
+            bwtOutput[k] = blockOut[tPos];
+            tPos = nextIndex[tPos];
+        }
+
+        // Undo the initial RLE1 pass: any run of 4 identical bytes is followed by a count byte
+        // (0-255) of how many MORE repeats follow.
+        std::vector<unsigned char> rle1Output;
+        rle1Output.reserve(n);
+        std::size_t i = 0;
+        while (i < bwtOutput.size())
+        {
+            const unsigned char b = bwtOutput[i];
+            std::size_t runCount = 1;
+            while (runCount < 4 && i + runCount < bwtOutput.size() && bwtOutput[i + runCount] == b)
+            {
+                ++runCount;
+            }
+            for (std::size_t k = 0; k < runCount; ++k)
+            {
+                rle1Output.push_back(b);
+            }
+            i += runCount;
+            if (runCount == 4)
+            {
+                if (i >= bwtOutput.size())
+                {
+                    return false;
+                }
+                const unsigned char extra = bwtOutput[i++];
+                for (unsigned int k = 0; k < extra; ++k)
+                {
+                    rle1Output.push_back(b);
+                }
+            }
+        }
+
+        blockOut.swap(rle1Output);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Decodes a complete bzip2 stream (the "BZh" + level header, one or more compressed blocks, and
+// the final end-of-stream marker + combined CRC) into output. See the banner comment above this
+// section for why this exists instead of a Crypto++/Botan class, and for the CRC caveat.
+bool bzip2DecompressBuffer(const std::vector<unsigned char>& input, std::vector<unsigned char>& output)
+{
+    try
+    {
+        if (input.size() < 4 || input[0] != 'B' || input[1] != 'Z' || input[2] != 'h' || input[3] < '1' || input[3] > '9')
+        {
+            return false;
+        }
+        const unsigned int blockSize100k = static_cast<unsigned int>(input[3] - '0');
+
+        Bzip2BitReader reader(input.data() + 4, input.size() - 4);
+        output.clear();
+
+        const unsigned long long blockMagic = 0x314159265359ULL;
+        const unsigned long long eosMagic = 0x177245385090ULL;
+
+        while (true)
+        {
+            unsigned long long magic = 0;
+            if (!reader.ReadBits64(48, magic))
+            {
+                return false;
+            }
+            if (magic == eosMagic)
+            {
+                unsigned int combinedCrc = 0;
+                reader.ReadBits(32, combinedCrc); // best-effort only -- see banner comment above.
+                break;
+            }
+            if (magic != blockMagic)
+            {
+                return false;
+            }
+            std::vector<unsigned char> blockOut;
+            if (!bzip2DecodeBlock(reader, blockSize100k, blockOut))
+            {
+                return false;
+            }
+            output.insert(output.end(), blockOut.begin(), blockOut.end());
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 // Streams the SEIP body (CFB-decrypt + running MDC) into outputFileHandle. The inner packet may
 // be a Literal Data packet (tag 11) or a Compressed Data packet (tag 8) containing one literal
-// packet; ZIP and ZLIB are inflated incrementally so file size does not bound memory usage.
-int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned char>& leftoverCipher, const std::size_t encLength, const unsigned char* sessionKey, const std::size_t sessionKeyLength, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+// packet; ZIP and ZLIB are inflated incrementally so file size does not bound memory usage. BZip2
+// (algorithm 3) is the one exception: bzip2DecompressBuffer's inverse-BWT step fundamentally needs
+// the whole block decoded before it can emit a single output byte (see its own comment), and this
+// engine's from-scratch decoder (see the banner comment above it) does not attempt incremental
+// per-block bit-stream resumption -- so the entire Compressed Data packet body (the bzip2-
+// compressed bytes, which is typically much smaller than the plaintext it expands to) is buffered
+// before decoding, and the decompressed result is then handed to the same
+// drainDecoded()/writeFileExact() output path in bounded chunks. This only affects algorithm 3;
+// EncryptFileCompressed below never produces it, so this engine's own round-trip stays fully
+// O(chunk) end to end -- the tradeoff is confined to reading BZip2 files from other producers.
+//
+// seipPartial/seipChunkRemaining/seipFinalChunk come straight from parseEncryptedFileHeader (see
+// DecryptFileHeader) and describe partial-body-length framing (RFC 4880 section 4.2.2.4) on the
+// SEIP packet itself: the chunk length octets sitting between runs of ciphertext are stepped over
+// as the read position reaches each of them, so everything downstream -- including all four
+// compression cases below -- still sees one flat stream of encLength ciphertext octets. Partial-
+// body-length framing on the INNER packet (which GnuPG applies to the Literal Data packet when its
+// own input size is unknown) is handled separately, further down, since those chunk headers are
+// inside the encrypted -- and possibly compressed -- data rather than in the file's clear framing.
+int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned char>& leftoverCipher, const std::size_t encLength, const bool seipPartial, const std::size_t seipChunkRemaining, const bool seipFinalChunk, const unsigned char* sessionKey, const std::size_t sessionKeyLength, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
 {
     try
     {
@@ -2853,6 +4138,9 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
         {
             return INVALID_DATA;
         }
+
+        std::size_t cipherChunkRemaining = seipChunkRemaining;
+        bool cipherFinalChunk = seipFinalChunk;
 
         unsigned char zeroIv[16];
         std::memset(zeroIv, 0, 16);
@@ -2884,13 +4172,53 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
                 {
                     return false;
                 }
-                const DWORD toRead = static_cast<DWORD>((cipherRemaining < cipherReadBuf.size()) ? cipherRemaining : cipherReadBuf.size());
+                std::size_t readCeiling = cipherRemaining;
+                if (seipPartial)
+                {
+                    // Step over every chunk length header the read position has reached before
+                    // taking any more ciphertext, and never read past the current chunk's end.
+                    while (cipherChunkRemaining == 0)
+                    {
+                        if (cipherFinalChunk)
+                        {
+                            return false;
+                        }
+                        unsigned char chunkHeader[5] = { 0, 0, 0, 0, 0 };
+                        if (!readFileExact(inputFileHandle, chunkHeader, 1))
+                        {
+                            return false;
+                        }
+                        const std::size_t chunkHeaderSize = newFormatBodyLengthHeaderSize(chunkHeader[0]);
+                        if (chunkHeaderSize > 1 && !readFileExact(inputFileHandle, chunkHeader + 1, static_cast<DWORD>(chunkHeaderSize - 1)))
+                        {
+                            return false;
+                        }
+                        std::size_t decodedHeaderSize = 0;
+                        std::size_t chunkLength = 0;
+                        bool isPartial = false;
+                        if (!decodeNewFormatBodyLength(chunkHeader, chunkHeaderSize, decodedHeaderSize, chunkLength, isPartial))
+                        {
+                            return false;
+                        }
+                        cipherChunkRemaining = chunkLength;
+                        cipherFinalChunk = !isPartial;
+                    }
+                    if (readCeiling > cipherChunkRemaining)
+                    {
+                        readCeiling = cipherChunkRemaining;
+                    }
+                }
+                const DWORD toRead = static_cast<DWORD>((readCeiling < cipherReadBuf.size()) ? readCeiling : cipherReadBuf.size());
                 DWORD bytesRead = 0;
                 if (!ReadFile(inputFileHandle, cipherReadBuf.data(), toRead, &bytesRead, nullptr) || bytesRead == 0)
                 {
                     return false;
                 }
                 cipherRemaining -= bytesRead;
+                if (seipPartial)
+                {
+                    cipherChunkRemaining -= bytesRead;
+                }
                 const std::size_t oldSize = pending.size();
                 pending.resize(oldSize + bytesRead);
                 cfb.ProcessData(&pending[oldSize], cipherReadBuf.data(), bytesRead);
@@ -2924,6 +4252,7 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
         unsigned char innerTag = 0;
         std::size_t innerBodyLength = 0;
         bool innerHeaderParsed = false;
+        bool innerPartial = false;
         for (std::size_t probeSize = 8; probeSize <= 512 && !innerHeaderParsed; probeSize += 8)
         {
             if (!ensurePending(probeSize))
@@ -2932,7 +4261,7 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
             }
             const std::vector<unsigned char> probeBuf(pending.begin() + pendingPos, pending.begin() + pendingPos + probeSize);
             std::size_t probePos = 0;
-            if (readPacketHeader(probeBuf, probePos, innerTag, innerBodyLength))
+            if (readPacketHeader(probeBuf, probePos, innerTag, innerBodyLength, static_cast<std::size_t>(-1), &innerPartial))
             {
                 innerHeaderLength = probePos;
                 innerHeaderParsed = true;
@@ -2953,25 +4282,85 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
             }
             innerBodyLength = encLength - 22 - streamPos;
         }
+
+        // Partial-body-length framing on the inner packet: innerBodyLength above is only its FIRST
+        // chunk, and the chunk length octets that separate the following chunks are part of the
+        // decrypted stream (so they are MDC-hashed like every other body octet, but must not reach
+        // the output file, the ZIP/ZLIB inflator, or the BZip2 accumulator). innerChunkRemaining/
+        // innerFinalChunk track where the next such header sits; ensureInnerChunk steps over it the
+        // moment the stream reaches it. Both stay inert for definite-length and old-format
+        // indeterminate inner packets, which take exactly the same path through the loops below as
+        // they always did.
+        std::size_t innerChunkRemaining = innerPartial ? innerBodyLength : 0;
+        bool innerFinalChunk = false;
+        auto ensureInnerChunk = [&](void) -> bool
+        {
+            if (!innerPartial)
+            {
+                return true;
+            }
+            while (innerChunkRemaining == 0)
+            {
+                if (innerFinalChunk)
+                {
+                    return false;
+                }
+                if (!ensurePending(1))
+                {
+                    return false;
+                }
+                const std::size_t chunkHeaderSize = newFormatBodyLengthHeaderSize(pending[pendingPos]);
+                if (!ensurePending(chunkHeaderSize))
+                {
+                    return false;
+                }
+                std::size_t decodedHeaderSize = 0;
+                std::size_t chunkLength = 0;
+                bool isPartial = false;
+                if (!decodeNewFormatBodyLength(&pending[pendingPos], chunkHeaderSize, decodedHeaderSize, chunkLength, isPartial))
+                {
+                    return false;
+                }
+                consumeForHash(decodedHeaderSize);
+                innerChunkRemaining = chunkLength;
+                innerFinalChunk = !isPartial;
+            }
+            return true;
+        };
+        // The fixed-size prefix each inner packet type starts with (a Compressed Data packet's
+        // algorithm octet, a Literal Data packet's format/filename/timestamp fields) is read out of
+        // `pending` as one contiguous run below, so it must not straddle a chunk boundary. RFC 4880
+        // section 4.2.2.4 requires the first partial chunk to be at least 512 octets, which is more
+        // than any of those prefixes can ever need, so this only ever rejects malformed input.
+        auto innerPrefixFitsInChunk = [&](const std::size_t prefixLength) -> bool
+        {
+            return !innerPartial || innerChunkRemaining >= prefixLength;
+        };
+
         if (innerTag == PGP_TAG_COMPRESSED_DATA)
         {
-            if (innerBodyLength < 1 || innerBodyLength > mdcHashOffset - streamPos - 2)
+            if (innerBodyLength < 1 || (!innerPartial && innerBodyLength > mdcHashOffset - streamPos - 2))
             {
                 return INVALID_DATA;
             }
-            if (!ensurePending(1))
+            if (!ensurePending(1) || !innerPrefixFitsInChunk(1))
             {
                 return INVALID_DATA;
             }
             const unsigned char algorithm = pending[pendingPos];
             consumeForHash(1);
-            if (algorithm > 2)
+            if (innerPartial)
+            {
+                innerChunkRemaining -= 1;
+            }
+            if (algorithm > 3)
             {
                 return NOT_IMPLEMENTED;
             }
             std::size_t compressedRemaining = innerBodyLength - 1;
             CryptoPP::ByteQueue* decodedQueue = new CryptoPP::ByteQueue();
             std::unique_ptr<CryptoPP::BufferedTransformation> inflator;
+            std::vector<unsigned char> bzip2CompressedAccumulator; // only filled when algorithm == 3.
             if (algorithm == 1)
             {
                 inflator.reset(new CryptoPP::Inflator(decodedQueue));
@@ -2982,6 +4371,12 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
             }
             else
             {
+                // algorithm == 0 (uncompressed): decodedQueue itself acts as the "inflator" (Put()
+                // just enqueues verbatim). algorithm == 3 (BZip2) also reaches this branch purely so
+                // decodedQueue's lifetime is owned by `inflator` for cleanup -- the loop below never
+                // calls inflator->Put()/MessageEnd() for algorithm 3, it accumulates the compressed
+                // bytes into bzip2CompressedAccumulator instead and decodes them in one pass
+                // afterward (see bzip2DecompressBuffer's own comment for why).
                 inflator.reset(decodedQueue);
             }
 
@@ -2993,14 +4388,32 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
             std::size_t literalBodyLength = 0;
             std::size_t contentRemaining = 0;
             unsigned long long processedBytes = 0;
+            // Partial-body-length framing on the Literal Data packet that comes back out of the
+            // decompressor -- what GnuPG emits whenever it streamed the plaintext in from a source
+            // of unknown size (piped stdin). This is framing INSIDE the decompressed stream, so it
+            // is independent of which of the four compression algorithms produced that stream:
+            // ZIP/ZLIB arrive here incrementally through decodedQueue, BZip2 arrives in one post-
+            // loop burst, and either way literalRawPending holds the still-framed tail while the
+            // chunk headers are stripped out of it into decodedPending, which therefore always
+            // holds plain content octets exactly like in the non-partial case. A partial-length
+            // literal also has no total length anywhere, so it is treated as indeterminate too.
+            bool literalPartial = false;
+            bool literalFinalChunk = false;
+            std::size_t literalChunkRemaining = 0;
+            std::vector<unsigned char> literalRawPending;
             auto drainDecoded = [&]() -> int
             {
                 const std::size_t available = static_cast<std::size_t>(decodedQueue->MaxRetrievable());
                 if (available > 0)
                 {
-                    const std::size_t oldSize = decodedPending.size();
-                    decodedPending.resize(oldSize + available);
-                    decodedQueue->Get(decodedPending.data() + oldSize, available);
+                    std::vector<unsigned char>& decodedSink = literalPartial ? literalRawPending : decodedPending;
+                    const std::size_t oldSize = decodedSink.size();
+                    decodedSink.resize(oldSize + available);
+                    decodedQueue->Get(decodedSink.data() + oldSize, available);
+                }
+                if (literalPartial && !dechunkPartialBody(literalRawPending, literalChunkRemaining, literalFinalChunk, decodedPending))
+                {
+                    return INVALID_DATA;
                 }
                 if (!literalHeaderParsed)
                 {
@@ -3010,7 +4423,8 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
                     }
                     std::size_t pos = 0;
                     unsigned char tag = 0;
-                    if (!readPacketHeader(decodedPending, pos, tag, literalBodyLength))
+                    bool isPartial = false;
+                    if (!readPacketHeader(decodedPending, pos, tag, literalBodyLength, static_cast<std::size_t>(-1), &isPartial))
                     {
                         return decodedPending.size() > 512 ? INVALID_DATA : NO_ERROR;
                     }
@@ -3020,6 +4434,19 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
                     }
                     const unsigned char first = decodedPending[0];
                     literalIndeterminate = (first & 0xC0) == 0x80 && (first & 0x03) == 3;
+                    if (isPartial)
+                    {
+                        literalPartial = true;
+                        literalIndeterminate = true;
+                        literalChunkRemaining = literalBodyLength; // the header carried the FIRST chunk's length only.
+                        literalFinalChunk = false;
+                        literalRawPending.assign(decodedPending.begin() + pos, decodedPending.end());
+                        decodedPending.resize(pos);
+                        if (!dechunkPartialBody(literalRawPending, literalChunkRemaining, literalFinalChunk, decodedPending))
+                        {
+                            return INVALID_DATA;
+                        }
+                    }
                     literalHeaderParsed = true;
                     literalHeaderEnd = pos;
                 }
@@ -3071,28 +4498,56 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
                 return NO_ERROR;
             };
 
-            while (compressedRemaining > 0)
+            // Feeds the Compressed Data packet's body to whichever decoder `algorithm` selected.
+            // The partial-body-length variants differ only in where the body ENDS and in having to
+            // step over a chunk length header now and then -- what is done with each run of body
+            // octets (ZIP/ZLIB straight into the inflator, BZip2 into the accumulator, algorithm 0
+            // verbatim into decodedQueue) is unchanged and applies identically either way, because
+            // ensureInnerChunk/innerChunkRemaining guarantee takeNow never spans a chunk header.
+            while (innerPartial ? !(innerFinalChunk && innerChunkRemaining == 0) : (compressedRemaining > 0))
             {
+                if (!ensureInnerChunk())
+                {
+                    return INVALID_DATA;
+                }
                 if (!ensurePending(1))
                 {
                     return INVALID_DATA;
                 }
                 const std::size_t available = pending.size() - pendingPos;
-                const std::size_t takeNow = std::min<std::size_t>(std::min<std::size_t>(available, compressedRemaining), 4096);
-                try
+                const std::size_t bodyRemaining = innerPartial ? innerChunkRemaining : compressedRemaining;
+                const std::size_t takeNow = std::min<std::size_t>(std::min<std::size_t>(available, bodyRemaining), 4096);
+                if (algorithm == 3)
                 {
-                    inflator->Put(&pending[pendingPos], takeNow);
+                    bzip2CompressedAccumulator.insert(bzip2CompressedAccumulator.end(), pending.begin() + pendingPos, pending.begin() + pendingPos + takeNow);
                 }
-                catch (const CryptoPP::Exception&)
+                else
                 {
-                    return INVALID_DATA;
+                    try
+                    {
+                        inflator->Put(&pending[pendingPos], takeNow);
+                    }
+                    catch (const CryptoPP::Exception&)
+                    {
+                        return INVALID_DATA;
+                    }
                 }
                 consumeForHash(takeNow);
-                compressedRemaining -= takeNow;
-                const int status = drainDecoded();
-                if (status != NO_ERROR)
+                if (innerPartial)
                 {
-                    return status;
+                    innerChunkRemaining -= takeNow;
+                }
+                else
+                {
+                    compressedRemaining -= takeNow;
+                }
+                if (algorithm != 3)
+                {
+                    const int status = drainDecoded();
+                    if (status != NO_ERROR)
+                    {
+                        return status;
+                    }
                 }
                 if (pendingPos > PGP_FILE_CHUNK_SIZE)
                 {
@@ -3100,18 +4555,60 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
                     pendingPos = 0;
                 }
             }
-            try
+            if (algorithm == 3)
             {
-                inflator->MessageEnd();
+                std::vector<unsigned char> bzip2Decompressed;
+                if (!bzip2DecompressBuffer(bzip2CompressedAccumulator, bzip2Decompressed))
+                {
+                    return INVALID_DATA;
+                }
+                bzip2CompressedAccumulator.clear();
+                bzip2CompressedAccumulator.shrink_to_fit();
+                std::size_t bzOffset = 0;
+                const std::size_t bzChunkSize = 65536;
+                do
+                {
+                    const std::size_t take = std::min<std::size_t>(bzChunkSize, bzip2Decompressed.size() - bzOffset);
+                    if (take > 0)
+                    {
+                        decodedQueue->Put(&bzip2Decompressed[bzOffset], take);
+                        bzOffset += take;
+                    }
+                    const int status = drainDecoded();
+                    if (status != NO_ERROR)
+                    {
+                        return status;
+                    }
+                } while (bzOffset < bzip2Decompressed.size());
+                if (!literalPrefixParsed || (!literalIndeterminate && contentRemaining != 0))
+                {
+                    return INVALID_DATA;
+                }
             }
-            catch (const CryptoPP::Exception&)
+            else
+            {
+                try
+                {
+                    inflator->MessageEnd();
+                }
+                catch (const CryptoPP::Exception&)
+                {
+                    return INVALID_DATA;
+                }
+                const int status = drainDecoded();
+                if (status != NO_ERROR || !literalPrefixParsed || (!literalIndeterminate && contentRemaining != 0))
+                {
+                    return status != NO_ERROR ? status : INVALID_DATA;
+                }
+            }
+            // A partial-body-length literal packet must have ended on its terminating chunk with
+            // every framed octet accounted for -- otherwise the message was truncated. Checked once
+            // here rather than inside each branch above, since it holds for all four compression
+            // algorithms alike (the framing being checked lives in the decompressed stream, not in
+            // whatever encoding delivered it).
+            if (literalPartial && (!literalFinalChunk || literalChunkRemaining != 0 || !literalRawPending.empty()))
             {
                 return INVALID_DATA;
-            }
-            const int status = drainDecoded();
-            if (status != NO_ERROR || !literalPrefixParsed || (!literalIndeterminate && contentRemaining != 0))
-            {
-                return status != NO_ERROR ? status : INVALID_DATA;
             }
         }
         else if (innerTag == PGP_TAG_LITERAL_DATA)
@@ -3121,6 +4618,11 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
                 return INVALID_DATA;
             }
             const unsigned char filenameLength = pending[pendingPos + 1];
+            const std::size_t literalHeaderTotal = 2 + static_cast<std::size_t>(filenameLength) + 4;
+            if (!innerPrefixFitsInChunk(literalHeaderTotal))
+            {
+                return INVALID_DATA;
+            }
             consumeForHash(2);
             if (filenameLength > 0)
             {
@@ -3135,29 +4637,48 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
                 return INVALID_DATA;
             }
             consumeForHash(4);
-            const std::size_t literalHeaderTotal = 2 + static_cast<std::size_t>(filenameLength) + 4;
             if (innerBodyLength < literalHeaderTotal)
             {
                 return INVALID_DATA;
             }
-            std::size_t contentRemaining = innerBodyLength - literalHeaderTotal;
-            const unsigned long long totalContentBytes = static_cast<unsigned long long>(contentRemaining);
-            unsigned long long processedBytes = 0;
-            while (contentRemaining > 0)
+            // A partial-body-length literal announces no total size, so there is nothing to count
+            // down and nothing to report a percentage against (same as the old-format
+            // indeterminate case the compressed branch above already handles): the content simply
+            // runs until the terminating chunk is exhausted.
+            std::size_t contentRemaining = innerPartial ? 0 : (innerBodyLength - literalHeaderTotal);
+            if (innerPartial)
             {
+                innerChunkRemaining -= literalHeaderTotal;
+            }
+            const unsigned long long totalContentBytes = innerPartial ? 0 : static_cast<unsigned long long>(contentRemaining);
+            unsigned long long processedBytes = 0;
+            while (innerPartial ? !(innerFinalChunk && innerChunkRemaining == 0) : (contentRemaining > 0))
+            {
+                if (!ensureInnerChunk())
+                {
+                    return INVALID_DATA;
+                }
                 if (!ensurePending(1))
                 {
                     return INVALID_DATA;
                 }
                 const std::size_t available = pending.size() - pendingPos;
-                const std::size_t wantBytes = (contentRemaining < PGP_FILE_CHUNK_SIZE) ? contentRemaining : PGP_FILE_CHUNK_SIZE;
+                const std::size_t bodyRemaining = innerPartial ? innerChunkRemaining : contentRemaining;
+                const std::size_t wantBytes = (bodyRemaining < PGP_FILE_CHUNK_SIZE) ? bodyRemaining : PGP_FILE_CHUNK_SIZE;
                 const std::size_t takeNow = (available < wantBytes) ? available : wantBytes;
                 if (!writeFileExact(outputFileHandle, &pending[pendingPos], static_cast<DWORD>(takeNow)))
                 {
                     return FILE_IO_ERROR;
                 }
                 consumeForHash(takeNow);
-                contentRemaining -= takeNow;
+                if (innerPartial)
+                {
+                    innerChunkRemaining -= takeNow;
+                }
+                else
+                {
+                    contentRemaining -= takeNow;
+                }
                 processedBytes += takeNow;
                 if (onProgress)
                 {
@@ -3372,6 +4893,518 @@ bool parsePeerPublicKeyBlock(const std::vector<unsigned char>& binary, ParsedPee
     catch (...)
     {
         return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// ================================================================================================
+// Read-only message inspection -- the shared machinery behind CPgpEngine's IsPublicKeyEncrypted/
+// IsPasswordEncrypted/IsIntegrityProtected/GetCompression/ListEncryptionKeyIds/ListSigningKeyIds/
+// ListSignatures methods (see PgpEngine.h for what each of them promises). ONE packet walker feeds
+// all seven, and it is deliberately built on the same readPacketHeader/reassemblePartialBodyLengths
+// primitives every other reader in this file uses rather than a second, simpler parser of its own:
+// a naive walker would silently mis-handle old-format headers, indeterminate lengths and
+// partial-body-length framing that the real readers already cope with, and would then disagree with
+// DecryptBuffer/DecryptFile about the very same bytes.
+//
+// Nothing here decrypts or verifies anything -- the encrypted-data packets (SEIP/AEAD/SED) are
+// noted and then stepped over, never opened.
+// ================================================================================================
+
+struct PgpInspectedSignature
+{
+    bool haveIssuerKeyId;
+    unsigned char issuerKeyId[8];
+    unsigned char signatureType;
+    unsigned char hashAlgorithm;
+
+    PgpInspectedSignature() : haveIssuerKeyId(false), signatureType(0), hashAlgorithm(0)
+    {
+        std::memset(issuerKeyId, 0, 8);
+    }
+};
+// -----------------------------------------------------------------------------
+
+struct PgpInspectedMessage
+{
+    bool sawAnyPacket;
+    bool hasPkesk;
+    bool hasSkesk;
+    bool hasIntegrityProtectedData;   // SEIP (tag 18) or AEAD (tag 20).
+    bool hasUnprotectedEncryptedData; // SED (tag 9), the obsolete MDC-less packet.
+    bool hasCompressedData;
+    unsigned char compressionAlgorithm;
+    std::vector< std::vector<unsigned char> > recipientKeyIds; // one 8-byte entry per PKESK, in message order.
+    std::vector<PgpInspectedSignature> signatures;             // tag 2 and tag 4 packets, in message order.
+
+    PgpInspectedMessage() : sawAnyPacket(false), hasPkesk(false), hasSkesk(false),
+                            hasIntegrityProtectedData(false), hasUnprotectedEncryptedData(false),
+                            hasCompressedData(false), compressionAlgorithm(0)
+    {
+    }
+};
+// -----------------------------------------------------------------------------
+
+// RFC 4880 section 5.2.3.1 signature SUBPACKET length -- deliberately NOT routed through
+// decodeNewFormatBodyLength above, because the two encodings differ exactly where it matters: a
+// subpacket's two-octet form covers a first octet of 192..254, whereas a packet BODY length
+// reserves 224..254 for partial lengths instead. Reusing the body-length decoder here would decode
+// every subpacket of length 8384..65535 as a bogus partial chunk.
+bool readSignatureSubpacketLength(const std::vector<unsigned char>& data, std::size_t& pos, const std::size_t end, std::size_t& lengthOut)
+{
+    try
+    {
+        if (pos >= end)
+        {
+            return false;
+        }
+        const unsigned char first = data[pos];
+        if (first < 192)
+        {
+            lengthOut = first;
+            pos += 1;
+            return true;
+        }
+        if (first < 255)
+        {
+            if (pos + 1 >= end)
+            {
+                return false;
+            }
+            lengthOut = (static_cast<std::size_t>(first - 192) << 8) + static_cast<std::size_t>(data[pos + 1]) + 192;
+            pos += 2;
+            return true;
+        }
+        if (pos + 4 >= end)
+        {
+            return false;
+        }
+        lengthOut = (static_cast<std::size_t>(data[pos + 1]) << 24) | (static_cast<std::size_t>(data[pos + 2]) << 16) |
+                    (static_cast<std::size_t>(data[pos + 3]) << 8)  |  static_cast<std::size_t>(data[pos + 4]);
+        pos += 5;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Scans one signature subpacket area (data[begin, end), either the hashed or the unhashed one) for
+// the issuer's Key ID. An explicit Issuer Key ID subpacket (type 16) wins when present; otherwise
+// the Key ID is derived from an Issuer Fingerprint subpacket (type 33), which is where modern
+// GnuPG puts the issuer in the HASHED area -- for a v4 fingerprint the Key ID is its low 8 bytes
+// (RFC 4880 section 12.2), for the 32-byte v5/v6 fingerprints it is the leading 8 (crypto-refresh).
+bool findIssuerKeyIdInSubpackets(const std::vector<unsigned char>& data, const std::size_t begin, const std::size_t end, unsigned char keyIdOut[8])
+{
+    try
+    {
+        bool found = false;
+        bool foundExplicitIssuerSubpacket = false;
+        std::size_t pos = begin;
+        while (pos < end)
+        {
+            std::size_t subpacketLength = 0;
+            if (!readSignatureSubpacketLength(data, pos, end, subpacketLength) || subpacketLength == 0 || pos + subpacketLength > end)
+            {
+                break;
+            }
+            const unsigned char subpacketType = static_cast<unsigned char>(data[pos] & 0x7F);
+            const std::size_t bodyBegin = pos + 1;
+            const std::size_t bodyLength = subpacketLength - 1;
+
+            if (subpacketType == 16 && bodyLength == 8 && !foundExplicitIssuerSubpacket)
+            {
+                std::memcpy(keyIdOut, &data[bodyBegin], 8);
+                found = true;
+                foundExplicitIssuerSubpacket = true;
+            }
+            else if (subpacketType == 33 && !found && bodyLength >= 21 && data[bodyBegin] == 4)
+            {
+                std::memcpy(keyIdOut, &data[bodyBegin + 13], 8);
+                found = true;
+            }
+            else if (subpacketType == 33 && !found && bodyLength >= 33 && (data[bodyBegin] == 5 || data[bodyBegin] == 6))
+            {
+                std::memcpy(keyIdOut, &data[bodyBegin + 1], 8);
+                found = true;
+            }
+
+            pos += subpacketLength;
+        }
+        return found;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Version-tolerant, algorithm-agnostic signature-packet reader for inspection only -- unlike
+// parseSignaturePacketBody above (which exists to VERIFY, and therefore rejects anything outside
+// this engine's own two supported RSA/SHA-256 and EdDSA/SHA-512 combinations), this one reports
+// whatever signature type, hash algorithm and issuer a foreign producer wrote, without judging
+// them. Returns false for a signature version whose field layout is not known here (anything but
+// v3 and v4), so both List* methods skip exactly the same packets and their counts stay in step.
+bool inspectSignaturePacketBody(const std::vector<unsigned char>& body, PgpInspectedSignature& out)
+{
+    try
+    {
+        if (body.empty())
+        {
+            return false;
+        }
+
+        if (body[0] == 3)
+        {
+            // v3 (RFC 4880 section 5.2.2): version, hashed-material length (always 5), signature
+            // type, 4-octet creation time, 8-octet issuer Key ID, public-key algorithm, hash
+            // algorithm -- the issuer sits in the packet itself, with no subpackets involved.
+            if (body.size() < 17 || body[1] != 5)
+            {
+                return false;
+            }
+            out.signatureType = body[2];
+            std::memcpy(out.issuerKeyId, &body[7], 8);
+            out.haveIssuerKeyId = true;
+            out.hashAlgorithm = body[16];
+            return true;
+        }
+
+        if (body[0] == 4)
+        {
+            if (body.size() < 6)
+            {
+                return false;
+            }
+            out.signatureType = body[1];
+            out.hashAlgorithm = body[3];
+
+            std::size_t pos = 4;
+            const std::size_t hashedLength = readBigEndian16(body, pos);
+            pos += 2;
+            if (pos + hashedLength > body.size())
+            {
+                return false;
+            }
+            const std::size_t hashedEnd = pos + hashedLength;
+            out.haveIssuerKeyId = findIssuerKeyIdInSubpackets(body, pos, hashedEnd, out.issuerKeyId);
+            pos = hashedEnd;
+
+            if (!out.haveIssuerKeyId && pos + 2 <= body.size())
+            {
+                const std::size_t unhashedLength = readBigEndian16(body, pos);
+                pos += 2;
+                if (pos + unhashedLength <= body.size())
+                {
+                    out.haveIssuerKeyId = findIssuerKeyIdInSubpackets(body, pos, pos + unhashedLength, out.issuerKeyId);
+                }
+            }
+            return true;
+        }
+
+        return false;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Decompresses a Compressed Data packet body (algorithm octet already stripped) so the inspection
+// walker can keep walking the packets nested inside it. Handles the same four encodings
+// DecryptFile/DecryptBuffer read (uncompressed/ZIP/ZLIB/BZip2, RFC 4880 section 9.3); anything
+// else simply returns false and the nested packets stay unreported, which is honest rather than
+// fatal -- the enclosing Compressed Data packet's own algorithm octet was already recorded.
+bool decompressCompressedDataBodyForInspection(const unsigned char compressionAlgorithm, const unsigned char* body, const std::size_t bodySize, std::vector<unsigned char>& out)
+{
+    try
+    {
+        if (body == nullptr)
+        {
+            return false;
+        }
+        if (compressionAlgorithm == 0)
+        {
+            out.assign(body, body + bodySize);
+            return true;
+        }
+        if (compressionAlgorithm == 1)
+        {
+            std::string decompressed;
+            CryptoPP::Inflator inflator(new CryptoPP::StringSink(decompressed));
+            inflator.Put(body, bodySize);
+            inflator.MessageEnd();
+            out.assign(decompressed.begin(), decompressed.end());
+            return true;
+        }
+        if (compressionAlgorithm == 2)
+        {
+            std::string decompressed;
+            CryptoPP::ZlibDecompressor inflator(new CryptoPP::StringSink(decompressed));
+            inflator.Put(body, bodySize);
+            inflator.MessageEnd();
+            out.assign(decompressed.begin(), decompressed.end());
+            return true;
+        }
+        if (compressionAlgorithm == 3)
+        {
+            const std::vector<unsigned char> compressed(body, body + bodySize);
+            return bzip2DecompressBuffer(compressed, out);
+        }
+        return false;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Walks data[begin, end) as a sequence of whole OpenPGP packets, recording everything the seven
+// inspection methods need. depth bounds the recursion into Compressed Data packets (a hostile or
+// simply broken input could otherwise nest them without end); 3 is far beyond anything a real
+// producer writes, where the deepest legitimate nesting is compressed -> literal.
+void inspectPacketSequence(const std::vector<unsigned char>& data, const std::size_t begin, const std::size_t end, const int depth, PgpInspectedMessage& out)
+{
+    try
+    {
+        std::size_t pos = begin;
+        while (pos < end)
+        {
+            unsigned char tag = 0;
+            std::size_t bodyLength = 0;
+            if (!readPacketHeader(data, pos, tag, bodyLength, end))
+            {
+                break;
+            }
+            if (bodyLength > end - pos)
+            {
+                break;
+            }
+            const std::size_t bodyBegin = pos;
+            const std::size_t bodyEnd = pos + bodyLength;
+            out.sawAnyPacket = true;
+
+            if (tag == PGP_TAG_PKESK)
+            {
+                out.hasPkesk = true;
+                // v3 PKESK (RFC 4880 section 5.1, the only version any producer writes today):
+                // version octet, 8-octet recipient Key ID, public-key algorithm, then the
+                // algorithm-specific session-key material this inspector never touches. A v6
+                // PKESK identifies its recipient by fingerprint instead and is deliberately not
+                // decoded here -- the packet is still counted as public-key encrypted.
+                if (bodyLength >= 10 && data[bodyBegin] == 3)
+                {
+                    out.recipientKeyIds.push_back(std::vector<unsigned char>(data.begin() + bodyBegin + 1, data.begin() + bodyBegin + 9));
+                }
+            }
+            else if (tag == PGP_TAG_SKESK)
+            {
+                out.hasSkesk = true;
+            }
+            else if (tag == PGP_TAG_SEIP || tag == PGP_TAG_AEAD)
+            {
+                out.hasIntegrityProtectedData = true;
+            }
+            else if (tag == PGP_TAG_SED)
+            {
+                out.hasUnprotectedEncryptedData = true;
+            }
+            else if (tag == PGP_TAG_SIGNATURE)
+            {
+                const std::vector<unsigned char> body(data.begin() + bodyBegin, data.begin() + bodyEnd);
+                PgpInspectedSignature signature;
+                if (inspectSignaturePacketBody(body, signature))
+                {
+                    out.signatures.push_back(signature);
+                }
+            }
+            else if (tag == PGP_TAG_ONE_PASS_SIG)
+            {
+                // RFC 4880 section 5.4: version, signature type, hash algorithm, public-key
+                // algorithm, 8-octet issuer Key ID, "nested" flag. This engine never WRITES one
+                // (there is no one-pass signing API), but real GnuPG puts one in front of a
+                // signed document, so it is read and reported like any other signature.
+                if (bodyLength >= 13 && data[bodyBegin] == 3)
+                {
+                    PgpInspectedSignature signature;
+                    signature.signatureType = data[bodyBegin + 1];
+                    signature.hashAlgorithm = data[bodyBegin + 2];
+                    std::memcpy(signature.issuerKeyId, &data[bodyBegin + 4], 8);
+                    signature.haveIssuerKeyId = true;
+                    out.signatures.push_back(signature);
+                }
+            }
+            else if (tag == PGP_TAG_COMPRESSED_DATA)
+            {
+                if (bodyLength >= 1)
+                {
+                    if (!out.hasCompressedData)
+                    {
+                        out.hasCompressedData = true;
+                        out.compressionAlgorithm = data[bodyBegin];
+                    }
+                    if (depth > 0)
+                    {
+                        std::vector<unsigned char> decompressed;
+                        if (decompressCompressedDataBodyForInspection(data[bodyBegin], &data[bodyBegin] + 1, bodyLength - 1, decompressed) && !decompressed.empty())
+                        {
+                            std::vector<unsigned char> reassembledInner;
+                            if (reassemblePartialBodyLengths(decompressed, reassembledInner))
+                            {
+                                decompressed.swap(reassembledInner);
+                            }
+                            inspectPacketSequence(decompressed, 0, decompressed.size(), depth - 1, out);
+                        }
+                    }
+                }
+            }
+
+            pos = bodyEnd;
+        }
+    }
+    catch (...)
+    {
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Turns whatever the caller handed an inspection method into raw OpenPGP packet bytes: raw binary
+// straight through, an ASCII-armored block decoded (same auto-detection decodeKeyBlockToBinary
+// uses for key blocks), and a clear-signed message reduced to its trailing signature block -- the
+// only part of a clear-signed message that IS OpenPGP packets at all, the rest being plain text.
+bool decodeInspectionInputToBinary(const unsigned char* inputBuffer, const int inputBufferSize, std::vector<unsigned char>& binary)
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0)
+        {
+            return false;
+        }
+        if (inputBufferSize >= 5 && std::memcmp(inputBuffer, "-----", 5) == 0)
+        {
+            const std::string text(reinterpret_cast<const char*>(inputBuffer), static_cast<std::size_t>(inputBufferSize));
+            std::string blockType;
+            if (text.compare(0, 34, "-----BEGIN PGP SIGNED MESSAGE-----") == 0)
+            {
+                const std::size_t sigBeginPos = text.find("-----BEGIN PGP SIGNATURE-----");
+                if (sigBeginPos == std::string::npos)
+                {
+                    return false;
+                }
+                return armorDecode(text.substr(sigBeginPos), blockType, binary);
+            }
+            return armorDecode(text, blockType, binary);
+        }
+        binary.assign(inputBuffer, inputBuffer + inputBufferSize);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+bool inspectMessageBuffer(const unsigned char* inputBuffer, const int inputBufferSize, PgpInspectedMessage& out)
+{
+    try
+    {
+        std::vector<unsigned char> binary;
+        if (!decodeInspectionInputToBinary(inputBuffer, inputBufferSize, binary) || binary.empty())
+        {
+            return false;
+        }
+
+        // Same partial-body-length splice parseAndDecryptMessage performs before parsing, for the
+        // same reason: GnuPG frames anything past its own output buffer size that way, and the
+        // walker below expects one contiguous body per packet. A no-op for every definite-length
+        // or old-format message, which keeps using the original bytes untouched.
+        std::vector<unsigned char> reassembled;
+        const bool wasReassembled = reassemblePartialBodyLengths(binary, reassembled);
+        const std::vector<unsigned char>& message = wasReassembled ? reassembled : binary;
+
+        inspectPacketSequence(message, 0, message.size(), 3, out);
+        return out.sawAnyPacket;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::string formatInspectionKeyIdHex(const bool haveKeyId, const unsigned char keyId[8])
+{
+    try
+    {
+        if (!haveKeyId)
+        {
+            return std::string(16, '?');
+        }
+        static const char* hexDigits = "0123456789ABCDEF";
+        std::string hex;
+        for (int i = 0; i < 8; ++i)
+        {
+            hex.push_back(hexDigits[(keyId[i] >> 4) & 0xF]);
+            hex.push_back(hexDigits[keyId[i] & 0xF]);
+        }
+        return hex;
+    }
+    catch (...)
+    {
+        return std::string(16, '?');
+    }
+}
+// -----------------------------------------------------------------------------
+
+std::string formatInspectionOctetHex(const unsigned char value)
+{
+    try
+    {
+        static const char* hexDigits = "0123456789ABCDEF";
+        std::string hex;
+        hex.push_back(hexDigits[(value >> 4) & 0xF]);
+        hex.push_back(hexDigits[value & 0xF]);
+        return hex;
+    }
+    catch (...)
+    {
+        return std::string("00");
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Shared tail of the three List* methods: hands `records` (already the exact packed fixed-stride
+// byte image, NUL terminators included) to the caller under the repo's standard capacity-query
+// convention -- with the one documented refinement that an EMPTY list is NO_ERROR with
+// *outputBufferSize = 0 rather than BUFFER_TOO_SMALL, since no larger buffer would ever help.
+int writeInspectionRecords(const std::string& records, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        const int neededSize = static_cast<int>(records.size());
+        if (neededSize == 0)
+        {
+            *outputBufferSize = 0;
+            return NO_ERROR;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < neededSize)
+        {
+            *outputBufferSize = neededSize;
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, records.data(), records.size());
+        *outputBufferSize = neededSize;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
     }
 }
 // -----------------------------------------------------------------------------
@@ -4432,6 +6465,96 @@ int CPgpEngine::EncryptFile(const char* inputFilePath, const char* outputFilePat
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngine::EncryptFileCompressed(const char* inputFilePath, const char* outputFilePath, const PgpFileCompressionAlgorithm compressionAlgorithm, ProgressCallback onProgress, void* progressUserData)
+{
+    try
+    {
+        if (!impl_ || !impl_->peerKeyImported || inputFilePath == nullptr || outputFilePath == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (compressionAlgorithm != PGP_FILE_COMPRESSION_ALGORITHM_ZIP && compressionAlgorithm != PGP_FILE_COMPRESSION_ALGORITHM_ZLIB)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<PgpEncryptionRecipient> recipients;
+        {
+            PgpEncryptionRecipient primary;
+            primary.algorithm = impl_->peerSubkeyAlgorithm;
+            if (primary.algorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                primary.rsaPublicKey = impl_->peerSubkeyPublicKey;
+                std::memcpy(primary.rsaKeyId, impl_->peerSubkeyKeyId, 8);
+            }
+            else
+            {
+                std::memcpy(primary.x25519PublicKey, impl_->peerX25519PublicKey, 32);
+                std::memcpy(primary.x25519KeyId, impl_->peerSubkeyKeyId, 8);
+                std::memcpy(primary.x25519Fingerprint, impl_->peerSubkeyFingerprint, 20);
+            }
+            recipients.push_back(primary);
+        }
+        for (std::size_t i = 0; i < impl_->additionalRecipients.size(); ++i)
+        {
+            recipients.push_back(impl_->additionalRecipients[i]);
+        }
+
+        std::wstring wideInputPath;
+        std::wstring wideOutputPath;
+        if (!convertUtf8PathToWide(inputFilePath, wideInputPath) || !convertUtf8PathToWide(outputFilePath, wideOutputPath))
+        {
+            return INVALID_ARGUMENT;
+        }
+        const std::wstring wideTempPath = wideOutputPath + L".pgpztmp";
+
+        const HANDLE rawInputHandle = CreateFileW(wideInputPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawInputHandle == INVALID_HANDLE_VALUE)
+        {
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> inputHandle(rawInputHandle, &CloseHandle);
+
+        LARGE_INTEGER inputFileSize;
+        inputFileSize.QuadPart = 0;
+        if (!GetFileSizeEx(rawInputHandle, &inputFileSize) || inputFileSize.QuadPart < 0)
+        {
+            return FILE_IO_ERROR;
+        }
+        const unsigned long long fileSize = static_cast<unsigned long long>(inputFileSize.QuadPart);
+        const unsigned char compressionAlgorithmOctet = static_cast<unsigned char>(compressionAlgorithm);
+
+        unsigned long long compressedSize = 0;
+        const int compressStatus = compressLiteralToTempFile(rawInputHandle, fileSize, compressionAlgorithmOctet, wideTempPath, onProgress, progressUserData, compressedSize);
+        if (compressStatus != NO_ERROR)
+        {
+            DeleteFileW(wideTempPath.c_str());
+            return compressStatus;
+        }
+
+        const HANDLE rawOutputHandle = CreateFileW(wideOutputPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (rawOutputHandle == INVALID_HANDLE_VALUE)
+        {
+            DeleteFileW(wideTempPath.c_str());
+            return FILE_IO_ERROR;
+        }
+        std::unique_ptr<void, decltype(&CloseHandle)> outputHandle(rawOutputHandle, &CloseHandle);
+
+        const int status = encryptFileStreamingCompressed(recipients, wideTempPath, compressedSize, compressionAlgorithmOctet, rawOutputHandle, onProgress, progressUserData);
+        DeleteFileW(wideTempPath.c_str());
+        if (status != NO_ERROR)
+        {
+            outputHandle.reset();
+            DeleteFileW(wideOutputPath.c_str());
+        }
+        return status;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngine::DecryptFile(const char* password, const int passwordSize, const char* inputFilePath, const char* outputFilePath, ProgressCallback onProgress, void* progressUserData)
 {
     try
@@ -4474,6 +6597,7 @@ int CPgpEngine::DecryptFile(const char* password, const int passwordSize, const 
         std::unique_ptr<void, decltype(&CloseHandle)> tempHandle(rawTempHandle, &CloseHandle);
 
         const int status = decryptSeipBodyStreaming(rawInputHandle, header.leftoverCipher, header.encLength,
+                                                     header.seipPartial, header.seipChunkRemaining, header.seipFinalChunk,
                                                      header.sessionKey.data(), header.sessionKey.size(),
                                                      rawTempHandle, onProgress, progressUserData);
         tempHandle.reset();
@@ -4618,6 +6742,206 @@ int CPgpEngine::VerifyFile(const char* inputFilePath, const char* signatureFileP
         return impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA
             ? verifyFileStreaming(impl_->peerMasterPublicKey, rawInputHandle, fileSize, signaturePacketBytes, isValid, onProgress, progressUserData)
             : verifyEd25519FileStreaming(impl_->peerEd25519PublicKey, rawInputHandle, fileSize, signaturePacketBytes, isValid, onProgress, progressUserData);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::IsPublicKeyEncrypted(const unsigned char* inputBuffer, const int inputBufferSize, bool* isPublicKeyEncrypted) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || isPublicKeyEncrypted == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+        *isPublicKeyEncrypted = inspected.hasPkesk;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::IsPasswordEncrypted(const unsigned char* inputBuffer, const int inputBufferSize, bool* isPasswordEncrypted) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || isPasswordEncrypted == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+        *isPasswordEncrypted = inspected.hasSkesk;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::IsIntegrityProtected(const unsigned char* inputBuffer, const int inputBufferSize, bool* isIntegrityProtected) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || isIntegrityProtected == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+        *isIntegrityProtected = inspected.hasIntegrityProtectedData;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetCompression(const unsigned char* inputBuffer, const int inputBufferSize, int* compressionAlgorithm) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || compressionAlgorithm == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+        if (inspected.hasCompressedData)
+        {
+            *compressionAlgorithm = static_cast<int>(inspected.compressionAlgorithm);
+        }
+        else if (inspected.hasIntegrityProtectedData || inspected.hasUnprotectedEncryptedData)
+        {
+            // Encrypted, and no Compressed Data packet visible OUTSIDE the ciphertext -- which is
+            // exactly the case where nobody can answer the question without the decryption key,
+            // so say so instead of reporting a confident "not compressed".
+            *compressionAlgorithm = PGP_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION;
+        }
+        else
+        {
+            *compressionAlgorithm = PGP_COMPRESSION_NOT_PRESENT;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::ListEncryptionKeyIds(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize, int* keyIdCount) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr || keyIdCount == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+
+        std::string records;
+        for (std::size_t i = 0; i < inspected.recipientKeyIds.size(); ++i)
+        {
+            records += formatInspectionKeyIdHex(true, &inspected.recipientKeyIds[i][0]);
+            records.push_back('\0');
+        }
+        *keyIdCount = static_cast<int>(inspected.recipientKeyIds.size());
+        return writeInspectionRecords(records, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::ListSigningKeyIds(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize, int* keyIdCount) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr || keyIdCount == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+
+        std::string records;
+        for (std::size_t i = 0; i < inspected.signatures.size(); ++i)
+        {
+            records += formatInspectionKeyIdHex(inspected.signatures[i].haveIssuerKeyId, inspected.signatures[i].issuerKeyId);
+            records.push_back('\0');
+        }
+        *keyIdCount = static_cast<int>(inspected.signatures.size());
+        return writeInspectionRecords(records, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::ListSignatures(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize, int* signatureCount) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr || signatureCount == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+
+        std::string records;
+        for (std::size_t i = 0; i < inspected.signatures.size(); ++i)
+        {
+            records += formatInspectionKeyIdHex(inspected.signatures[i].haveIssuerKeyId, inspected.signatures[i].issuerKeyId);
+            records.push_back(':');
+            records += formatInspectionOctetHex(inspected.signatures[i].signatureType);
+            records.push_back(':');
+            records += formatInspectionOctetHex(inspected.signatures[i].hashAlgorithm);
+            records.push_back('\0');
+        }
+        *signatureCount = static_cast<int>(inspected.signatures.size());
+        return writeInspectionRecords(records, outputBufferCapacity, outputBuffer, outputBufferSize);
     }
     catch (...)
     {

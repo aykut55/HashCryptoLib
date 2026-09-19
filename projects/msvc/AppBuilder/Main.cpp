@@ -16,7 +16,7 @@ int main()
     cryptoApiTester.RunEncryptDecryptBytesTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunMicrosoftProviderEncryptDecryptFileTest();
 
     cryptoApiTester.RunMicrosoftProviderEncryptDecryptStringTest();
@@ -240,7 +240,7 @@ int main()
     cryptoApiTester.RunRandomAlgorithmsTest();
 #endif
 
-#if 0
+#if 1
     cryptoApiTester.RunPgpKeyGenerationTest();
 
     cryptoApiTester.RunPgpEncryptDecryptTest();
@@ -291,9 +291,33 @@ int main()
     cryptoApiTester.RunPgpEd25519KeyExpirationTest();
 
     cryptoApiTester.RunPgpGnuPgEd25519RevocationInteropTest();
+
+    cryptoApiTester.RunPgpEncryptFileCompressedZipTest();
+
+    cryptoApiTester.RunPgpEncryptFileCompressedZlibTest();
+
+    cryptoApiTester.RunPgpEncryptFileCompressedEmptyFileTest();
+
+    cryptoApiTester.RunPgpEncryptFileCompressedLargeFileTest();
+
+    cryptoApiTester.RunPgpEncryptFileCompressedCancellationTest();
+
+    cryptoApiTester.RunPgpEncryptFileCompressedCorruptionTest();
+
+    cryptoApiTester.RunPgpGnuPgBzip2InteropTest();
+
+    cryptoApiTester.RunPgpGnuPgPartialBodyLengthInteropTest();
+
+    cryptoApiTester.RunPgpInspectionEncryptedMessageTest();
+
+    cryptoApiTester.RunPgpInspectionMultiRecipientTest();
+
+    cryptoApiTester.RunPgpInspectionSignatureTest();
+
+    cryptoApiTester.RunPgpGnuPgInspectionInteropTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunPgpWrapperAvailabilityTest();
 
     cryptoApiTester.RunPgpWrapperKeyGenerationTest();
@@ -323,6 +347,14 @@ int main()
     cryptoApiTester.RunPgpWrapperKeyringListDeleteTest();
 
     cryptoApiTester.RunPgpWrapperCompressionAlgorithmTest();
+
+    cryptoApiTester.RunPgpWrapperInspectionEncryptedMessageTest();
+
+    cryptoApiTester.RunPgpWrapperInspectionMultiRecipientTest();
+
+    cryptoApiTester.RunPgpWrapperInspectionSymmetricTest();
+
+    cryptoApiTester.RunPgpWrapperInspectionSignatureTest();
 #endif
 
     return 0;

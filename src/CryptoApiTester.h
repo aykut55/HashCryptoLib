@@ -574,6 +574,117 @@ public:
     int RunPgpGnuPgEd25519RevocationInteropTest(void);
 
     // ============================================================================================
+    // CPgpEngine::EncryptFileCompressed -- additive counterpart of RunPgpFileEncryptDecryptTest for
+    // the new compressed streaming encrypt path (see PgpEngine.h's own comment on
+    // EncryptFileCompressed), plus BZip2 Compressed Data packet decode support added to DecryptFile
+    // itself (algorithm octet 3 -- see decryptSeipBodyStreaming's own .cpp comment for why this
+    // engine implements BZip2 from scratch rather than via Crypto++/Botan).
+    // ============================================================================================
+
+    // ZIP-compressed round trip: bob EncryptFileCompressed(PGP_COMPRESSION_ALGORITHM_ZIP), alice
+    // DecryptFile (unchanged, already reads ZIP). Also checks the compressed output is actually
+    // smaller than the (highly compressible) plaintext, confirming compression really ran rather
+    // than the packet merely claiming algorithm 1.
+    int RunPgpEncryptFileCompressedZipTest(void);
+
+    // ZLIB-compressed analogue of RunPgpEncryptFileCompressedZipTest (PGP_COMPRESSION_ALGORITHM_ZLIB
+    // instead of ZIP).
+    int RunPgpEncryptFileCompressedZlibTest(void);
+
+    // Zero-byte input file through EncryptFileCompressed -> DecryptFile, confirming the temp-file/
+    // Compressed-Data-packet machinery degrades correctly to an empty result instead of erroring on
+    // the edge case of nothing to compress.
+    int RunPgpEncryptFileCompressedEmptyFileTest(void);
+
+    // Several-megabyte input (multiple PGP_FILE_CHUNK_SIZE chunks in both the compress pass and the
+    // encrypt pass) through EncryptFileCompressed -> DecryptFile, same round-trip shape as
+    // RunPgpFileEncryptDecryptTest but exercising the two-pass compressed path across chunk
+    // boundaries.
+    int RunPgpEncryptFileCompressedLargeFileTest(void);
+
+    // Cancellation mid-stream (CancelAfterThirdChunk, same helper RunEncryptFileDecryptFileTest's
+    // own cancellation check uses) during EncryptFileCompressed's first (compress-to-temp-file)
+    // pass over a multi-chunk input; confirms the call returns OPERATION_CANCELLED and that BOTH
+    // the ".pgpztmp" temporary file and the real output file are absent afterward -- the specific
+    // cleanup-on-every-exit-path guarantee EncryptFileCompressed's own comment documents.
+    int RunPgpEncryptFileCompressedCancellationTest(void);
+
+    // Flips one byte of EncryptFileCompressed's output and confirms DecryptFile fails closed
+    // (non-NO_ERROR, and never produces the original plaintext) instead of silently accepting
+    // corrupted compressed ciphertext -- compressed analogue of RunPgpFileEncryptDecryptTest's own
+    // corruption check.
+    int RunPgpEncryptFileCompressedCorruptionTest(void);
+
+    // Real-GnuPG interop for the new BZip2 decode path -- SKIPPED (not FAILED) when gpg.exe isn't
+    // found, same convention as RunPgpGnuPgInteropTest. A real "gpg --compress-algo bzip2 --encrypt"
+    // produces a file this engine never could have produced itself (EncryptFileCompressed only ever
+    // emits ZIP/ZLIB), and this engine's DecryptFile must still read it back correctly via the
+    // from-scratch BZip2 decoder -- mirrors RunPgpGnuPgEd25519InteropTest's own "gpg ZLIB file ->
+    // our DecryptFile" direction, with bzip2 in place of zlib.
+    int RunPgpGnuPgBzip2InteropTest(void);
+
+    // Cross-checks CPgpEngine's reader against real GnuPG's new-format PARTIAL BODY LENGTH framing
+    // (RFC 4880 section 4.2.2.4) -- SKIPPED (not FAILED) when gpg.exe isn't found, same convention
+    // as RunPgpGnuPgInteropTest. GnuPG switches to that framing for any message that outgrows its
+    // own output buffer, so it is what essentially every real gpg-encrypted file of more than a few
+    // KB looks like. Imports this engine's identity into a throwaway keyring (plus a second,
+    // gpg-owned "inspector" identity as an extra recipient, purely so gpg --list-packets can open
+    // the ciphertext and report the framing of the packets nested inside it) and has gpg produce
+    // four messages: from an ordinary input file (partial SEIP, inner Literal still definite), from
+    // piped stdin (partial SEIP AND partial inner Literal, since gpg cannot know stdin's size),
+    // from piped stdin with compression off (partial Literal directly inside the partial SEIP,
+    // no Compressed Data packet at all), and from piped stdin with --compress-algo bzip2 (the
+    // combination of partial framing with the buffer-then-decode BZip2 path, which neither that
+    // path nor this one was written with the other in mind). Each is decrypted with DecryptBuffer
+    // and the streaming DecryptFile -- except the BZip2 one, DecryptFile only, since the
+    // buffer-based path does not implement BZip2 at all. The framing is verified, never assumed:
+    // the SEIP packet's own length octet is checked to be in the 224-254 partial range directly in
+    // the raw bytes, and "gpg --list-packets" is used as an independent second opinion on the
+    // nested packets.
+    int RunPgpGnuPgPartialBodyLengthInteropTest(void);
+
+    // Internal-only (no GnuPG needed) exercise of CPgpEngine's read-only inspection API over an
+    // ENCRYPTED message: alice encrypts one buffer to bob (EncryptBuffer) and one string
+    // (EncryptStringArmored, so the armored-input auto-detection is covered too), and both are
+    // inspected WITHOUT ever being decrypted -- IsPublicKeyEncrypted true, IsPasswordEncrypted
+    // false (CPgpEngine writes no SKESK), IsIntegrityProtected true (it always writes a SEIP/MDC
+    // packet), GetCompression reporting the -2 "cannot tell without decrypting" sentinel (the
+    // Compressed Data packet is inside the ciphertext), ListEncryptionKeyIds finding exactly one
+    // recipient, and ListSigningKeyIds/ListSignatures finding none (an encrypted message's
+    // signatures, if any, are unreachable). The capacity=0 BUFFER_TOO_SMALL query convention is
+    // exercised on every List* call.
+    int RunPgpInspectionEncryptedMessageTest(void);
+
+    // Internal-only (no GnuPG needed) check that ListEncryptionKeyIds enumerates ALL recipients of
+    // a real multi-recipient message, not just the first: bob encrypts once to alice alone and
+    // once to carol alone (two single-recipient messages, giving the two expected Key IDs, which
+    // are confirmed to differ), then imports carol via ImportAdditionalRecipientPublicKey and
+    // encrypts ONE message to both -- whose ListEncryptionKeyIds must report exactly those two
+    // Key IDs, in PKESK order. Note these are the recipients' ENCRYPTION SUBKEY Key IDs (what a
+    // PKESK packet addresses), which is why they are established from the engine's own
+    // single-recipient output rather than from GetPeerKeyId (the peer's MASTER key).
+    int RunPgpInspectionMultiRecipientTest(void);
+
+    // Internal-only (no GnuPG needed) exercise of the signature side of the inspection API over
+    // UNENCRYPTED input: alice's SignBuffer detached signature must report exactly one signature
+    // whose issuer Key ID equals alice's own GetKeyId and whose type/hash octets are 00 (binary
+    // document) / 08 (SHA-256), and her ClearSignString output must report the same issuer with
+    // type 01 (canonical text document). Both are also confirmed to report
+    // IsPublicKeyEncrypted/IsPasswordEncrypted/IsIntegrityProtected all false and GetCompression
+    // the -1 "provably not compressed" sentinel -- the honest answers for input that carries no
+    // ciphertext at all, and the case that distinguishes -1 from the encrypted -2.
+    int RunPgpInspectionSignatureTest(void);
+
+    // Cross-checks CPgpEngine's inspection API against real GnuPG's own "gpg --list-packets"
+    // verdict on the very same bytes -- SKIPPED (not FAILED) when gpg.exe isn't found, same
+    // convention as RunPgpGnuPgInteropTest. Both directions are covered: a message GPG produced
+    // (gpg encrypting to this engine's imported public key) is inspected here and the recipient
+    // Key ID ListEncryptionKeyIds reports is required to match the one gpg's own listing prints,
+    // and a detached signature THIS engine produced is listed by gpg and its printed issuer key
+    // id, sigclass and digest algorithm required to match what ListSignatures reports.
+    int RunPgpGnuPgInspectionInteropTest(void);
+
+    // ============================================================================================
     // CPgpEngineWrapper -- parallel test suite for the gpg.exe-backed engine (see
     // src/Pgp/PgpEngineWrapper.h). Every one of these is inherently a real-GnuPG interop test (the
     // class has no cryptography of its own), so all of them SKIP (return NO_ERROR, not FAILED)
@@ -694,6 +805,36 @@ public:
     // Also exercises the PgpCompressionAlgorithm-taking EncryptBufferMultiRecipient overload once
     // (bob addressing both alice and carol) to confirm that overload compiles and works too.
     int RunPgpWrapperCompressionAlgorithmTest(void);
+
+    // gpg-backed mirror of RunPgpInspectionEncryptedMessageTest: bob encrypts a buffer and a
+    // string to alice through real gpg, and CPgpEngineWrapper's inspection API (real
+    // "gpg --list-packets", never a decryption) must report IsPublicKeyEncrypted true,
+    // IsPasswordEncrypted false, IsIntegrityProtected true (gpg 2.5 writes an AEAD packet, tag 20,
+    // for AEAD-capable recipients, and a SEIP packet, tag 18, otherwise -- both are integrity
+    // protected), GetCompression the -2 "cannot tell without decrypting" sentinel, and
+    // ListEncryptionKeyIds exactly one recipient Key ID.
+    int RunPgpWrapperInspectionEncryptedMessageTest(void);
+
+    // gpg-backed mirror of RunPgpInspectionMultiRecipientTest, using this class's own real
+    // multi-recipient capability: bob encrypts ONE buffer via EncryptBufferMultiRecipient to both
+    // alice and carol, and ListEncryptionKeyIds must report two recipient Key IDs -- the same two
+    // that the corresponding single-recipient messages to alice and to carol report on their own.
+    int RunPgpWrapperInspectionMultiRecipientTest(void);
+
+    // Inspection of a passphrase-only (SKESK) message, which only this engine can produce:
+    // EncryptBufferSymmetric's output must report IsPasswordEncrypted true, IsPublicKeyEncrypted
+    // false, ListEncryptionKeyIds zero recipients (a symmetric message addresses no key at all),
+    // and IsIntegrityProtected true. The same instance's ordinary public-key EncryptBuffer output
+    // is inspected alongside it as the mirror-image control (password false, public-key true).
+    int RunPgpWrapperInspectionSymmetricTest(void);
+
+    // gpg-backed mirror of RunPgpInspectionSignatureTest: alice's SignBuffer detached signature
+    // and ClearSignString output are inspected through real "gpg --list-packets" and must report
+    // one signature each, issued by alice's own Key ID, with signature type 00 (binary document)
+    // and 01 (canonical text document) respectively -- the clear-signed case also exercising this
+    // class's extraction of the trailing signature block, without which gpg's own listing never
+    // mentions the signature at all.
+    int RunPgpWrapperInspectionSignatureTest(void);
 
 protected:
 

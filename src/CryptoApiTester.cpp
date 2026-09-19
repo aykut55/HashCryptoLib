@@ -16754,6 +16754,2096 @@ int CCryptoApiTester::RunPgpGnuPgEd25519RevocationInteropTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpEncryptFileCompressedZipTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_compressed_zip_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_compressed_zip_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_compressed_zip_out.bin";
+
+        std::vector<unsigned char> inputData(256 * 1024);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>('A' + (index % 5));
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.EncryptFileCompressed(inputFilePath, encryptedFilePath, PGP_FILE_COMPRESSION_ALGORITHM_ZIP, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED EncryptFileCompressed status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        std::vector<unsigned char> encryptedData;
+        if (!ReadTesterFile(encryptedFilePath, encryptedData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED to read encrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+        if (encryptedData.size() >= inputData.size())
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED compressed output not smaller than input (" << encryptedData.size() << " >= " << inputData.size() << ")" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        status = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED DecryptFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED to read decrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData != inputData)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZipTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptFileCompressedZipTest: PASSED ZIP-compressed round trip (" << inputData.size() << " -> " << encryptedData.size() << " bytes)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpEncryptFileCompressedZlibTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_compressed_zlib_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_compressed_zlib_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_compressed_zlib_out.bin";
+
+        std::vector<unsigned char> inputData(256 * 1024);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>('B' + (index % 7));
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.EncryptFileCompressed(inputFilePath, encryptedFilePath, PGP_FILE_COMPRESSION_ALGORITHM_ZLIB, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED EncryptFileCompressed status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        std::vector<unsigned char> encryptedData;
+        if (!ReadTesterFile(encryptedFilePath, encryptedData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED to read encrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+        if (encryptedData.size() >= inputData.size())
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED compressed output not smaller than input (" << encryptedData.size() << " >= " << inputData.size() << ")" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return UNEXPECTED_ERROR;
+        }
+
+        status = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED DecryptFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED to read decrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData != inputData)
+        {
+            std::cout << "RunPgpEncryptFileCompressedZlibTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptFileCompressedZlibTest: PASSED ZLIB-compressed round trip (" << inputData.size() << " -> " << encryptedData.size() << " bytes)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpEncryptFileCompressedEmptyFileTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_compressed_empty_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_compressed_empty_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_compressed_empty_out.bin";
+
+        std::vector<unsigned char> inputData; // empty on purpose.
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedEmptyFileTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedEmptyFileTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedEmptyFileTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedEmptyFileTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.EncryptFileCompressed(inputFilePath, encryptedFilePath, PGP_FILE_COMPRESSION_ALGORITHM_ZLIB, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedEmptyFileTest: FAILED EncryptFileCompressed status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, nullptr, nullptr);
+        std::vector<unsigned char> outputData;
+        const bool readOk = ReadTesterFile(decryptedFilePath, outputData);
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+        if (status != NO_ERROR || !readOk || !outputData.empty())
+        {
+            std::cout << "RunPgpEncryptFileCompressedEmptyFileTest: FAILED status=" << status << " outputSize=" << outputData.size() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptFileCompressedEmptyFileTest: PASSED empty file round trip" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpEncryptFileCompressedLargeFileTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_compressed_large_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_compressed_large_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_compressed_large_out.bin";
+
+        std::vector<unsigned char> inputData(5 * 1048576 + 12345);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.EncryptFileCompressed(inputFilePath, encryptedFilePath, PGP_FILE_COMPRESSION_ALGORITHM_ZIP, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED EncryptFileCompressed status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        status = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, &PrintFileProgress, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED DecryptFile status=" << status << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return status;
+        }
+
+        std::cout << std::endl;
+
+        std::vector<unsigned char> outputData;
+        if (!ReadTesterFile(decryptedFilePath, outputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED to read decrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            std::remove(decryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+
+        if (outputData != inputData)
+        {
+            std::cout << "RunPgpEncryptFileCompressedLargeFileTest: FAILED content mismatch" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptFileCompressedLargeFileTest: PASSED multi-chunk round trip (" << inputData.size() << " bytes)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpEncryptFileCompressedCancellationTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_compressed_cancel_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_compressed_cancel_enc.pgp";
+        const std::string tempFilePath = std::string(encryptedFilePath) + ".pgpztmp";
+
+        std::vector<unsigned char> inputData(5 * 1048576 + 777);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>(index * 2654435761u >> 24);
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedCancellationTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCancellationTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCancellationTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCancellationTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int callCount = 0;
+        const int cancelStatus = bob.EncryptFileCompressed(inputFilePath, encryptedFilePath, PGP_FILE_COMPRESSION_ALGORITHM_ZIP, &CancelAfterThirdChunk, &callCount);
+        std::remove(inputFilePath);
+        if (cancelStatus != OPERATION_CANCELLED)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCancellationTest: FAILED cancel status=" << cancelStatus << std::endl;
+            std::remove(encryptedFilePath);
+            std::remove(tempFilePath.c_str());
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ifstream outputLeftover(encryptedFilePath, std::ios::binary);
+        const bool outputLeftoverExists = outputLeftover.good();
+        outputLeftover.close();
+        std::ifstream tempLeftover(tempFilePath, std::ios::binary);
+        const bool tempLeftoverExists = tempLeftover.good();
+        tempLeftover.close();
+        std::remove(encryptedFilePath);
+        std::remove(tempFilePath.c_str());
+
+        if (outputLeftoverExists || tempLeftoverExists)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCancellationTest: FAILED leftover file(s) after cancellation (output=" << outputLeftoverExists << " temp=" << tempLeftoverExists << ")" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptFileCompressedCancellationTest: PASSED cancellation cleaned up temp and output files" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpEncryptFileCompressedCorruptionTest(void)
+{
+    try
+    {
+        const char* inputFilePath = "cryptoapi_pgp_compressed_corrupt_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_compressed_corrupt_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_compressed_corrupt_out.bin";
+
+        std::vector<unsigned char> inputData(300000);
+        for (std::size_t index = 0; index < inputData.size(); ++index)
+        {
+            inputData[index] = static_cast<unsigned char>('X' + (index % 7));
+        }
+        if (!WriteTesterFile(inputFilePath, inputData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPgpEngine bob;
+        CPgpEngine alice;
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        status = bob.EncryptFileCompressed(inputFilePath, encryptedFilePath, PGP_FILE_COMPRESSION_ALGORITHM_ZIP, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED EncryptFileCompressed status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+
+        std::vector<unsigned char> encryptedData;
+        if (!ReadTesterFile(encryptedFilePath, encryptedData) || encryptedData.size() < 100)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED to read encrypted file for corruption test" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+        encryptedData[encryptedData.size() / 2] = static_cast<unsigned char>(encryptedData[encryptedData.size() / 2] ^ 0xFF);
+        if (!WriteTesterFile(encryptedFilePath, encryptedData))
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED to write corrupted encrypted file" << std::endl;
+            std::remove(inputFilePath);
+            std::remove(encryptedFilePath);
+            return FILE_IO_ERROR;
+        }
+
+        const int corruptedStatus = alice.DecryptFile(alicePassword, static_cast<int>(std::strlen(alicePassword)), encryptedFilePath, decryptedFilePath, nullptr, nullptr);
+        std::vector<unsigned char> possiblyCorruptOutput;
+        const bool producedOutput = ReadTesterFile(decryptedFilePath, possiblyCorruptOutput) && !possiblyCorruptOutput.empty();
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+        if (corruptedStatus == NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED corrupted ciphertext was not rejected" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (producedOutput && possiblyCorruptOutput == inputData)
+        {
+            std::cout << "RunPgpEncryptFileCompressedCorruptionTest: FAILED corrupted ciphertext silently produced correct plaintext" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptFileCompressedCorruptionTest: PASSED corrupted compressed ciphertext correctly rejected (status=" << corruptedStatus << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpGnuPgBzip2InteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgBzip2InteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* homeDir = "cryptoapi_pgp_gnupg_bzip2_home";
+        const char* pubKeyPath = "cryptoapi_pgp_gnupg_bzip2_pub.asc";
+        const char* plainPath = "cryptoapi_pgp_gnupg_bzip2_plain.bin";
+        const char* compressedPath = "cryptoapi_pgp_gnupg_bzip2.pgp";
+        const char* compressedOutputPath = "cryptoapi_pgp_gnupg_bzip2_out.bin";
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(homeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        CPgpEngine pgp;
+        const char* userId = "GnuPG BZip2 Interop Test <interop-bzip2@example.com>";
+        const char* password = "InteropTest-1";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgBzip2InteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgBzip2InteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgBzip2InteropTest: FAILED gpg --import rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        // Keep the plaintext compressible and large enough that gpg actually engages BZip2 (gpg's
+        // own compressor skips compressing data it judges incompressible).
+        std::vector<unsigned char> bzip2Plaintext(16384);
+        for (std::size_t index = 0; index < bzip2Plaintext.size(); ++index)
+        {
+            bzip2Plaintext[index] = static_cast<unsigned char>('a' + (index % 11));
+        }
+        if (!WriteTesterFile(plainPath, bzip2Plaintext))
+        {
+            std::cout << "RunPgpGnuPgBzip2InteropTest: FAILED to write plaintext file" << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--compress-algo bzip2 -r " + keyId + " --output " + QuoteShellPath(compressedPath) + " --encrypt " + QuoteShellPath(plainPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgBzip2InteropTest: FAILED gpg BZip2 encryption rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        status = pgp.DecryptFile(password, static_cast<int>(std::strlen(password)), compressedPath, compressedOutputPath, nullptr, nullptr);
+        std::vector<unsigned char> bzip2Decrypted;
+        const bool readOk = ReadTesterFile(compressedOutputPath, bzip2Decrypted);
+
+        std::remove(pubKeyPath);
+        std::remove(plainPath);
+        std::remove(compressedPath);
+        std::remove(compressedOutputPath);
+        std::filesystem::remove_all(homeDir, fsError);
+
+        if (status != NO_ERROR || !readOk || bzip2Decrypted != bzip2Plaintext)
+        {
+            std::cout << "RunPgpGnuPgBzip2InteropTest: FAILED BZip2 DecryptFile status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGnuPgBzip2InteropTest: PASSED gpg BZip2 file -> our DecryptFile" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpGnuPgPartialBodyLengthInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* homeDir = "cryptoapi_pgp_gnupg_partial_home";
+        const char* pubKeyPath = "cryptoapi_pgp_gnupg_partial_pub.asc";
+        const char* plainPath = "cryptoapi_pgp_gnupg_partial_plain.bin";
+        const char* fileEncryptedPath = "cryptoapi_pgp_gnupg_partial_fromfile.pgp";
+        const char* pipeEncryptedPath = "cryptoapi_pgp_gnupg_partial_frompipe.pgp";
+        const char* uncompressedEncryptedPath = "cryptoapi_pgp_gnupg_partial_frompipe_raw.pgp";
+        const char* bzip2PlainPath = "cryptoapi_pgp_gnupg_partial_bzip2_plain.bin";
+        const char* bzip2EncryptedPath = "cryptoapi_pgp_gnupg_partial_bzip2.pgp";
+        const char* decryptedPath = "cryptoapi_pgp_gnupg_partial_decrypted.bin";
+        // Absolute path, for the same reason RunPgpGnuPgRevocationInteropTest uses one.
+        const std::string absoluteHomeDir = std::filesystem::absolute(homeDir).string();
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(absoluteHomeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        CPgpEngine pgp;
+        const char* userId = "Partial Length Test <partial@example.com>";
+        const char* password = "PartialTest-1";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+        std::string primeOutput;
+        RunShellCommand(gpgBase + "--check-trustdb", primeOutput);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --import (public) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        // A second, gpg-OWNED identity in the same throwaway keyring. It is added as an extra
+        // recipient of the piped message further down for one reason only: it lets "gpg
+        // --list-packets" actually open that message and report the framing of the packets nested
+        // INSIDE the ciphertext, which cannot be inspected from the outside at all. It does not
+        // change the framing under test (GnuPG still writes an RFC 4880 SEIP packet rather than an
+        // AEAD one, because this engine's own key advertises no AEAD support), and this engine
+        // decrypts through its own PKESK regardless of the other recipient's presence.
+        const char* inspectorUserId = "Partial Inspector <inspector@example.com>";
+        const char* inspectorPassword = "InspectorTest-1";
+        RunShellCommand(gpgBase + "--pinentry-mode loopback --passphrase " + QuoteShellPath(inspectorPassword) +
+                        " --quick-generate-key " + QuoteShellPath(inspectorUserId) + " default default 0", cmdOutput);
+
+        // 300000 octets of deterministic pseudo-random data: large enough that GnuPG's output no
+        // longer fits the buffer it needs in order to know a packet's length in advance (which is
+        // exactly what makes it fall back to partial-body-length framing), and incompressible
+        // enough that its ZIP stage cannot shrink the message back below that threshold.
+        std::vector<unsigned char> plaintext(300000);
+        unsigned int lcgState = 0x13579BDFu;
+        for (std::size_t i = 0; i < plaintext.size(); ++i)
+        {
+            lcgState = (lcgState * 1664525u) + 1013904223u;
+            plaintext[i] = static_cast<unsigned char>((lcgState >> 16) & 0xFFu);
+        }
+        if (!WriteTesterFile(plainPath, plaintext))
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED to write plaintext file" << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Case 1 -- gpg encrypts an ordinary input FILE. Even here GnuPG 2.5.21 frames the SEIP
+        // packet with partial body lengths once the message outgrows its output buffer; the
+        // Literal Data packet nested inside still gets a definite length, because gpg knows the
+        // input file's size.
+        // ------------------------------------------------------------------------------------
+        rc = RunShellCommand(gpgBase + "-r " + keyId + " --output " + QuoteShellPath(fileEncryptedPath) + " --encrypt " + QuoteShellPath(plainPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --encrypt (file input) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> fileEncrypted;
+        if (!ReadTesterFile(fileEncryptedPath, fileEncrypted))
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED to read gpg-encrypted file (file input)" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        // Prove the input really is partial-body-length framed instead of assuming it: step over
+        // the leading Public-Key Encrypted Session Key packets and look at the length octet that
+        // follows the SEIP packet's own tag octet. 224-254 there is the partial encoding (RFC 4880
+        // section 4.2.2.4); anything else and this test would be silently exercising nothing.
+        int fileSeipLengthOctet = -1;
+        std::size_t fileScanPos = 0;
+        while (fileScanPos + 1 < fileEncrypted.size())
+        {
+            const unsigned char ctb = fileEncrypted[fileScanPos];
+            if ((ctb & 0x80) == 0)
+            {
+                break;
+            }
+            std::size_t headerLength = 0;
+            std::size_t bodyLength = 0;
+            if ((ctb & 0x40) != 0)
+            {
+                const unsigned char lengthOctet = fileEncrypted[fileScanPos + 1];
+                if ((ctb & 0x3F) == 18)
+                {
+                    fileSeipLengthOctet = static_cast<int>(lengthOctet);
+                    break;
+                }
+                if (lengthOctet < 192)
+                {
+                    headerLength = 2;
+                    bodyLength = lengthOctet;
+                }
+                else if (lengthOctet < 224)
+                {
+                    headerLength = 3;
+                    bodyLength = (static_cast<std::size_t>(lengthOctet - 192) << 8) + fileEncrypted[fileScanPos + 2] + 192;
+                }
+                else if (lengthOctet < 255)
+                {
+                    headerLength = 2;
+                    bodyLength = static_cast<std::size_t>(1) << (lengthOctet & 0x1F);
+                }
+                else
+                {
+                    headerLength = 6;
+                    bodyLength = (static_cast<std::size_t>(fileEncrypted[fileScanPos + 2]) << 24) | (static_cast<std::size_t>(fileEncrypted[fileScanPos + 3]) << 16) |
+                                 (static_cast<std::size_t>(fileEncrypted[fileScanPos + 4]) << 8)  |  static_cast<std::size_t>(fileEncrypted[fileScanPos + 5]);
+                }
+            }
+            else
+            {
+                const unsigned char lengthType = ctb & 0x03;
+                if (lengthType == 0)
+                {
+                    headerLength = 2;
+                    bodyLength = fileEncrypted[fileScanPos + 1];
+                }
+                else if (lengthType == 1)
+                {
+                    headerLength = 3;
+                    bodyLength = (static_cast<std::size_t>(fileEncrypted[fileScanPos + 1]) << 8) | static_cast<std::size_t>(fileEncrypted[fileScanPos + 2]);
+                }
+                else if (lengthType == 2)
+                {
+                    headerLength = 5;
+                    bodyLength = (static_cast<std::size_t>(fileEncrypted[fileScanPos + 1]) << 24) | (static_cast<std::size_t>(fileEncrypted[fileScanPos + 2]) << 16) |
+                                 (static_cast<std::size_t>(fileEncrypted[fileScanPos + 3]) << 8)  |  static_cast<std::size_t>(fileEncrypted[fileScanPos + 4]);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            fileScanPos += headerLength + bodyLength;
+        }
+        if (fileSeipLengthOctet < 224 || fileSeipLengthOctet > 254)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg (file input) did not produce a partial-body-length SEIP packet, length octet=" << fileSeipLengthOctet << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: gpg (file input) SEIP first length octet=" << fileSeipLengthOctet
+                  << " (partial, first chunk " << (static_cast<std::size_t>(1) << (fileSeipLengthOctet & 0x1F)) << " octets)" << std::endl;
+
+        int fileDecSize = 0;
+        pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &fileEncrypted[0], static_cast<int>(fileEncrypted.size()), 0, nullptr, &fileDecSize);
+        std::vector<unsigned char> fileDecrypted(static_cast<std::size_t>(fileDecSize));
+        int fileDecActualSize = 0;
+        status = pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &fileEncrypted[0], static_cast<int>(fileEncrypted.size()),
+                                   fileDecSize, fileDecrypted.empty() ? nullptr : &fileDecrypted[0], &fileDecActualSize);
+        if (status != NO_ERROR || fileDecActualSize != static_cast<int>(plaintext.size()) || fileDecrypted != plaintext)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED DecryptBuffer (file input) status=" << status
+                      << " size=" << fileDecActualSize << " expected=" << plaintext.size() << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        status = pgp.DecryptFile(password, static_cast<int>(std::strlen(password)), fileEncryptedPath, decryptedPath, nullptr, nullptr);
+        std::vector<unsigned char> fileStreamDecrypted;
+        ReadTesterFile(decryptedPath, fileStreamDecrypted);
+        if (status != NO_ERROR || fileStreamDecrypted != plaintext)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED DecryptFile (file input) status=" << status
+                      << " size=" << fileStreamDecrypted.size() << " expected=" << plaintext.size() << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(decryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::remove(decryptedPath);
+        std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: PASSED partial-body-length SEIP from a gpg-encrypted FILE (DecryptBuffer + DecryptFile)" << std::endl;
+
+        // ------------------------------------------------------------------------------------
+        // Case 2 -- gpg encrypts from a PIPE, so it cannot know the plaintext's size either: on
+        // top of the partial-body-length SEIP, the Literal Data packet nested inside the
+        // compressed stream is partial-body-length framed too. cmd.exe's own `type` feeds stdin;
+        // RunShellCommand already runs everything through cmd.exe.
+        // ------------------------------------------------------------------------------------
+        const std::string pipeCommand = "type " + QuoteShellPath(plainPath) + " | " + gpgBase + "-r " + keyId +
+                                        " -r " + QuoteShellPath("Partial Inspector") +
+                                        " --output " + QuoteShellPath(pipeEncryptedPath) + " --encrypt";
+        rc = RunShellCommand(pipeCommand, cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --encrypt (piped stdin) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> pipeEncrypted;
+        if (!ReadTesterFile(pipeEncryptedPath, pipeEncrypted))
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED to read gpg-encrypted file (piped stdin)" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        int pipeSeipLengthOctet = -1;
+        std::size_t pipeScanPos = 0;
+        while (pipeScanPos + 1 < pipeEncrypted.size())
+        {
+            const unsigned char ctb = pipeEncrypted[pipeScanPos];
+            if ((ctb & 0x80) == 0)
+            {
+                break;
+            }
+            std::size_t headerLength = 0;
+            std::size_t bodyLength = 0;
+            if ((ctb & 0x40) != 0)
+            {
+                const unsigned char lengthOctet = pipeEncrypted[pipeScanPos + 1];
+                if ((ctb & 0x3F) == 18)
+                {
+                    pipeSeipLengthOctet = static_cast<int>(lengthOctet);
+                    break;
+                }
+                if (lengthOctet < 192)
+                {
+                    headerLength = 2;
+                    bodyLength = lengthOctet;
+                }
+                else if (lengthOctet < 224)
+                {
+                    headerLength = 3;
+                    bodyLength = (static_cast<std::size_t>(lengthOctet - 192) << 8) + pipeEncrypted[pipeScanPos + 2] + 192;
+                }
+                else if (lengthOctet < 255)
+                {
+                    headerLength = 2;
+                    bodyLength = static_cast<std::size_t>(1) << (lengthOctet & 0x1F);
+                }
+                else
+                {
+                    headerLength = 6;
+                    bodyLength = (static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 2]) << 24) | (static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 3]) << 16) |
+                                 (static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 4]) << 8)  |  static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 5]);
+                }
+            }
+            else
+            {
+                const unsigned char lengthType = ctb & 0x03;
+                if (lengthType == 0)
+                {
+                    headerLength = 2;
+                    bodyLength = pipeEncrypted[pipeScanPos + 1];
+                }
+                else if (lengthType == 1)
+                {
+                    headerLength = 3;
+                    bodyLength = (static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 1]) << 8) | static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 2]);
+                }
+                else if (lengthType == 2)
+                {
+                    headerLength = 5;
+                    bodyLength = (static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 1]) << 24) | (static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 2]) << 16) |
+                                 (static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 3]) << 8)  |  static_cast<std::size_t>(pipeEncrypted[pipeScanPos + 4]);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            pipeScanPos += headerLength + bodyLength;
+        }
+        if (pipeSeipLengthOctet < 224 || pipeSeipLengthOctet > 254)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg (piped stdin) did not produce a partial-body-length SEIP packet, length octet=" << pipeSeipLengthOctet << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        // Second, independent confirmation of the framing -- and the only way to see the INNER
+        // packet, which lives inside the ciphertext: gpg's own packet dump, opened with the
+        // inspector identity's secret key. A line reading "tag=11 ... partial new-ctb" is GnuPG
+        // stating that the Literal Data packet it wrote uses partial body lengths.
+        std::string listPacketsOutput;
+        RunShellCommand(gpgBase + "--pinentry-mode loopback --passphrase " + QuoteShellPath(inspectorPassword) +
+                        " --list-packets " + QuoteShellPath(pipeEncryptedPath), listPacketsOutput);
+        bool seipPacketIsPartial = false;
+        bool literalPacketIsPartial = false;
+        {
+            std::istringstream listStream(listPacketsOutput);
+            std::string line;
+            while (std::getline(listStream, line))
+            {
+                if (line.find("tag=18") != std::string::npos && line.find("partial") != std::string::npos)
+                {
+                    seipPacketIsPartial = true;
+                }
+                if (line.find("tag=11") != std::string::npos && line.find("partial") != std::string::npos)
+                {
+                    literalPacketIsPartial = true;
+                }
+            }
+        }
+        if (!seipPacketIsPartial || !literalPacketIsPartial)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --list-packets reported partial SEIP=" << seipPacketIsPartial
+                      << " partial Literal=" << literalPacketIsPartial << "\n" << listPacketsOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: gpg (piped stdin) SEIP first length octet=" << pipeSeipLengthOctet
+                  << " and gpg --list-packets confirms the nested Literal Data packet is partial too" << std::endl;
+
+        int pipeDecSize = 0;
+        pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &pipeEncrypted[0], static_cast<int>(pipeEncrypted.size()), 0, nullptr, &pipeDecSize);
+        std::vector<unsigned char> pipeDecrypted(static_cast<std::size_t>(pipeDecSize));
+        int pipeDecActualSize = 0;
+        status = pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &pipeEncrypted[0], static_cast<int>(pipeEncrypted.size()),
+                                   pipeDecSize, pipeDecrypted.empty() ? nullptr : &pipeDecrypted[0], &pipeDecActualSize);
+        if (status != NO_ERROR || pipeDecActualSize != static_cast<int>(plaintext.size()) || pipeDecrypted != plaintext)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED DecryptBuffer (piped stdin) status=" << status
+                      << " size=" << pipeDecActualSize << " expected=" << plaintext.size() << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        status = pgp.DecryptFile(password, static_cast<int>(std::strlen(password)), pipeEncryptedPath, decryptedPath, nullptr, nullptr);
+        std::vector<unsigned char> pipeStreamDecrypted;
+        ReadTesterFile(decryptedPath, pipeStreamDecrypted);
+        if (status != NO_ERROR || pipeStreamDecrypted != plaintext)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED DecryptFile (piped stdin) status=" << status
+                      << " size=" << pipeStreamDecrypted.size() << " expected=" << plaintext.size() << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::remove(decryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::remove(decryptedPath);
+        std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: PASSED partial-body-length SEIP + Literal from gpg-encrypted PIPED stdin (DecryptBuffer + DecryptFile)" << std::endl;
+
+        // ------------------------------------------------------------------------------------
+        // Case 3 -- piped stdin again, but with compression switched off, so the partial-body-
+        // length Literal Data packet sits DIRECTLY inside the SEIP body instead of inside a
+        // Compressed Data packet. That is a different reader path in both engines' halves (the
+        // buffer decoder splices it out of the decrypted plaintext; the streaming decoder steps
+        // over its chunk headers as it copies content to the output file), so it gets its own
+        // round trip rather than being assumed equivalent to case 2.
+        // ------------------------------------------------------------------------------------
+        const std::string uncompressedPipeCommand = "type " + QuoteShellPath(plainPath) + " | " + gpgBase + "--compress-algo 0 -r " + keyId +
+                                                    " -r " + QuoteShellPath("Partial Inspector") +
+                                                    " --output " + QuoteShellPath(uncompressedEncryptedPath) + " --encrypt";
+        rc = RunShellCommand(uncompressedPipeCommand, cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --encrypt (piped stdin, uncompressed) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string uncompressedListOutput;
+        RunShellCommand(gpgBase + "--pinentry-mode loopback --passphrase " + QuoteShellPath(inspectorPassword) +
+                        " --list-packets " + QuoteShellPath(uncompressedEncryptedPath), uncompressedListOutput);
+        bool uncompressedSeipIsPartial = false;
+        bool uncompressedLiteralIsPartial = false;
+        bool uncompressedHasCompressedPacket = false;
+        {
+            std::istringstream listStream(uncompressedListOutput);
+            std::string line;
+            while (std::getline(listStream, line))
+            {
+                if (line.find("tag=18") != std::string::npos && line.find("partial") != std::string::npos)
+                {
+                    uncompressedSeipIsPartial = true;
+                }
+                if (line.find("tag=11") != std::string::npos && line.find("partial") != std::string::npos)
+                {
+                    uncompressedLiteralIsPartial = true;
+                }
+                if (line.find("tag=8 ") != std::string::npos)
+                {
+                    uncompressedHasCompressedPacket = true;
+                }
+            }
+        }
+        if (!uncompressedSeipIsPartial || !uncompressedLiteralIsPartial || uncompressedHasCompressedPacket)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --list-packets (uncompressed) reported partial SEIP=" << uncompressedSeipIsPartial
+                      << " partial Literal=" << uncompressedLiteralIsPartial << " compressedPacketPresent=" << uncompressedHasCompressedPacket
+                      << "\n" << uncompressedListOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::remove(uncompressedEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> uncompressedEncrypted;
+        ReadTesterFile(uncompressedEncryptedPath, uncompressedEncrypted);
+        int uncompressedDecSize = 0;
+        pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &uncompressedEncrypted[0], static_cast<int>(uncompressedEncrypted.size()), 0, nullptr, &uncompressedDecSize);
+        std::vector<unsigned char> uncompressedDecrypted(static_cast<std::size_t>(uncompressedDecSize));
+        int uncompressedDecActualSize = 0;
+        status = pgp.DecryptBuffer(password, static_cast<int>(std::strlen(password)), &uncompressedEncrypted[0], static_cast<int>(uncompressedEncrypted.size()),
+                                   uncompressedDecSize, uncompressedDecrypted.empty() ? nullptr : &uncompressedDecrypted[0], &uncompressedDecActualSize);
+        if (status != NO_ERROR || uncompressedDecActualSize != static_cast<int>(plaintext.size()) || uncompressedDecrypted != plaintext)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED DecryptBuffer (piped stdin, uncompressed) status=" << status
+                      << " size=" << uncompressedDecActualSize << " expected=" << plaintext.size() << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::remove(uncompressedEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        status = pgp.DecryptFile(password, static_cast<int>(std::strlen(password)), uncompressedEncryptedPath, decryptedPath, nullptr, nullptr);
+        std::vector<unsigned char> uncompressedStreamDecrypted;
+        ReadTesterFile(decryptedPath, uncompressedStreamDecrypted);
+        if (status != NO_ERROR || uncompressedStreamDecrypted != plaintext)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED DecryptFile (piped stdin, uncompressed) status=" << status
+                      << " size=" << uncompressedStreamDecrypted.size() << " expected=" << plaintext.size() << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::remove(uncompressedEncryptedPath);
+            std::remove(decryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::remove(decryptedPath);
+        std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: PASSED partial-body-length Literal DIRECTLY inside a partial SEIP (uncompressed, DecryptBuffer + DecryptFile)" << std::endl;
+
+        // ------------------------------------------------------------------------------------
+        // Case 4 -- partial-body-length framing combined with BZip2 (compression algorithm 3).
+        // Neither this combination's two halves were written with the other in mind: BZip2 is the
+        // one algorithm the streaming reader cannot decode incrementally, so it buffers the whole
+        // Compressed Data body first -- and with partial framing that body arrives as a chunk
+        // sequence whose length octets must be stripped BEFORE they reach that buffer, or the
+        // BZip2 bit stream is corrupted by interleaved framing bytes. RunPgpGnuPgBzip2InteropTest
+        // cannot catch that: its 16 KB plaintext is small enough that gpg still emits definite
+        // lengths. A compressible plaintext is used so gpg actually engages BZip2, and it is piped
+        // so gpg additionally frames the inner Literal Data packet in chunks of its own.
+        // DecryptFile only, deliberately: the buffer-based DecryptBuffer path does not implement
+        // BZip2 at all (parseAndDecryptMessage rejects compression algorithm 3), independently of
+        // anything to do with partial body lengths.
+        // ------------------------------------------------------------------------------------
+        // Deliberately only HALF compressible -- pseudo-random symbols drawn from a 16-value
+        // alphabet, so BZip2 shrinks it to roughly 4 bits per octet. Fully compressible filler
+        // (a repeating pattern, as RunPgpGnuPgBzip2InteropTest uses) would collapse to a few
+        // hundred octets, which is under the size at which GnuPG bothers with partial framing on
+        // the SEIP packet at all -- and then this case would silently stop testing the
+        // combination it exists for.
+        std::vector<unsigned char> compressiblePlaintext(120000);
+        unsigned int bzip2LcgState = 0x2468ACE1u;
+        for (std::size_t i = 0; i < compressiblePlaintext.size(); ++i)
+        {
+            bzip2LcgState = (bzip2LcgState * 1664525u) + 1013904223u;
+            compressiblePlaintext[i] = static_cast<unsigned char>('a' + ((bzip2LcgState >> 16) & 0x0Fu));
+        }
+        if (!WriteTesterFile(bzip2PlainPath, compressiblePlaintext))
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED to write BZip2 plaintext file" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::remove(uncompressedEncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        const std::string bzip2PipeCommand = "type " + QuoteShellPath(bzip2PlainPath) + " | " + gpgBase + "--compress-algo bzip2 -r " + keyId +
+                                             " -r " + QuoteShellPath("Partial Inspector") +
+                                             " --output " + QuoteShellPath(bzip2EncryptedPath) + " --encrypt";
+        rc = RunShellCommand(bzip2PipeCommand, cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --encrypt (piped stdin, BZip2) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::remove(uncompressedEncryptedPath);
+            std::remove(bzip2PlainPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string bzip2ListOutput;
+        RunShellCommand(gpgBase + "--pinentry-mode loopback --passphrase " + QuoteShellPath(inspectorPassword) +
+                        " --list-packets " + QuoteShellPath(bzip2EncryptedPath), bzip2ListOutput);
+        bool bzip2SeipIsPartial = false;
+        bool bzip2LiteralIsPartial = false;
+        bool bzip2CompressionUsed = false;
+        {
+            std::istringstream listStream(bzip2ListOutput);
+            std::string line;
+            while (std::getline(listStream, line))
+            {
+                if (line.find("tag=18") != std::string::npos && line.find("partial") != std::string::npos)
+                {
+                    bzip2SeipIsPartial = true;
+                }
+                if (line.find("tag=11") != std::string::npos && line.find("partial") != std::string::npos)
+                {
+                    bzip2LiteralIsPartial = true;
+                }
+                if (line.find(":compressed packet:") != std::string::npos && line.find("algo=3") != std::string::npos)
+                {
+                    bzip2CompressionUsed = true;
+                }
+            }
+        }
+        if (!bzip2SeipIsPartial || !bzip2LiteralIsPartial || !bzip2CompressionUsed)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED gpg --list-packets (BZip2) reported partial SEIP=" << bzip2SeipIsPartial
+                      << " partial Literal=" << bzip2LiteralIsPartial << " bzip2Used=" << bzip2CompressionUsed
+                      << "\n" << bzip2ListOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(fileEncryptedPath);
+            std::remove(pipeEncryptedPath);
+            std::remove(uncompressedEncryptedPath);
+            std::remove(bzip2PlainPath);
+            std::remove(bzip2EncryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        status = pgp.DecryptFile(password, static_cast<int>(std::strlen(password)), bzip2EncryptedPath, decryptedPath, nullptr, nullptr);
+        std::vector<unsigned char> bzip2StreamDecrypted;
+        ReadTesterFile(decryptedPath, bzip2StreamDecrypted);
+
+        std::remove(pubKeyPath);
+        std::remove(plainPath);
+        std::remove(fileEncryptedPath);
+        std::remove(pipeEncryptedPath);
+        std::remove(uncompressedEncryptedPath);
+        std::remove(bzip2PlainPath);
+        std::remove(bzip2EncryptedPath);
+        std::remove(decryptedPath);
+        std::filesystem::remove_all(homeDir, fsError);
+
+        if (status != NO_ERROR || bzip2StreamDecrypted != compressiblePlaintext)
+        {
+            std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: FAILED DecryptFile (piped stdin, BZip2) status=" << status
+                      << " size=" << bzip2StreamDecrypted.size() << " expected=" << compressiblePlaintext.size() << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: PASSED partial-body-length SEIP + BZip2 + partial Literal (DecryptFile)" << std::endl;
+
+        std::cout << "RunPgpGnuPgPartialBodyLengthInteropTest: PASSED RFC 4880 4.2.2.4 partial-body-length interop against real GnuPG (" << gpgExe << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpInspectionEncryptedMessageTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        // Never given a key of any kind -- every inspection call below goes through this instance
+        // deliberately, to prove the API needs no identity, no peer key and no password.
+        CPgpEngine inspector;
+        const char* aliceUserId = "Alice <alice-inspect@example.com>";
+        const char* bobUserId = "Bob <bob-inspect@example.com>";
+        const char* alicePassword = "alice-password-1";
+        const char* bobPassword = "bob-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> plaintext = { 'I', 'n', 's', 'p', 'e', 'c', 't', ' ', 'm', 'e', 0x00, 0xFE };
+        int cipherSize = 0;
+        alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &cipherSize);
+        std::vector<unsigned char> ciphertext(static_cast<std::size_t>(cipherSize));
+        int actualCipherSize = 0;
+        status = alice.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), cipherSize, &ciphertext[0], &actualCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isPublicKeyEncrypted = false;
+        status = inspector.IsPublicKeyEncrypted(&ciphertext[0], actualCipherSize, &isPublicKeyEncrypted);
+        if (status != NO_ERROR || !isPublicKeyEncrypted)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED IsPublicKeyEncrypted(binary) status=" << status << " value=" << isPublicKeyEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool isPasswordEncrypted = true;
+        status = inspector.IsPasswordEncrypted(&ciphertext[0], actualCipherSize, &isPasswordEncrypted);
+        if (status != NO_ERROR || isPasswordEncrypted)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED IsPasswordEncrypted(binary) status=" << status << " value=" << isPasswordEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool isIntegrityProtected = false;
+        status = inspector.IsIntegrityProtected(&ciphertext[0], actualCipherSize, &isIntegrityProtected);
+        if (status != NO_ERROR || !isIntegrityProtected)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED IsIntegrityProtected(binary) status=" << status << " value=" << isIntegrityProtected << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int compressionAlgorithm = 0;
+        status = inspector.GetCompression(&ciphertext[0], actualCipherSize, &compressionAlgorithm);
+        if (status != NO_ERROR || compressionAlgorithm != PGP_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED GetCompression(binary) status=" << status << " value=" << compressionAlgorithm << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int recipientCount = 0;
+        int recipientBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&ciphertext[0], actualCipherSize, 0, nullptr, &recipientBytes, &recipientCount);
+        if (status != BUFFER_TOO_SMALL || recipientCount != 1 || recipientBytes != PGP_INSPECTION_KEY_ID_RECORD_SIZE)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED ListEncryptionKeyIds capacity query status=" << status
+                      << " count=" << recipientCount << " bytes=" << recipientBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> recipientRecords(static_cast<std::size_t>(recipientBytes));
+        int actualRecipientBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&ciphertext[0], actualCipherSize, recipientBytes, &recipientRecords[0], &actualRecipientBytes, &recipientCount);
+        const std::string recipientKeyId = (status == NO_ERROR && recipientCount == 1) ? std::string(&recipientRecords[0]) : std::string();
+        if (status != NO_ERROR || recipientCount != 1 || recipientKeyId.size() != 16)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED ListEncryptionKeyIds status=" << status
+                      << " count=" << recipientCount << " keyId=\"" << recipientKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int signingCount = -1;
+        int signingBytes = -1;
+        status = inspector.ListSigningKeyIds(&ciphertext[0], actualCipherSize, 0, nullptr, &signingBytes, &signingCount);
+        if (status != NO_ERROR || signingCount != 0 || signingBytes != 0)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED ListSigningKeyIds(encrypted) status=" << status
+                      << " count=" << signingCount << " bytes=" << signingBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int signatureCount = -1;
+        int signatureBytes = -1;
+        status = inspector.ListSignatures(&ciphertext[0], actualCipherSize, 0, nullptr, &signatureBytes, &signatureCount);
+        if (status != NO_ERROR || signatureCount != 0 || signatureBytes != 0)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED ListSignatures(encrypted) status=" << status
+                      << " count=" << signatureCount << " bytes=" << signatureBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* textMessage = "Armored message for inspection.";
+        int armoredSize = 0;
+        alice.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), 0, nullptr, &armoredSize);
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize));
+        int actualArmoredSize = 0;
+        status = alice.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), armoredSize, &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        bool armoredIsPublicKeyEncrypted = false;
+        status = inspector.IsPublicKeyEncrypted(reinterpret_cast<const unsigned char*>(&armored[0]), actualArmoredSize, &armoredIsPublicKeyEncrypted);
+        if (status != NO_ERROR || !armoredIsPublicKeyEncrypted)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED IsPublicKeyEncrypted(armored) status=" << status << " value=" << armoredIsPublicKeyEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool armoredIsIntegrityProtected = false;
+        status = inspector.IsIntegrityProtected(reinterpret_cast<const unsigned char*>(&armored[0]), actualArmoredSize, &armoredIsIntegrityProtected);
+        if (status != NO_ERROR || !armoredIsIntegrityProtected)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED IsIntegrityProtected(armored) status=" << status << " value=" << armoredIsIntegrityProtected << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int armoredRecipientCount = 0;
+        int armoredRecipientBytes = 0;
+        inspector.ListEncryptionKeyIds(reinterpret_cast<const unsigned char*>(&armored[0]), actualArmoredSize, 0, nullptr, &armoredRecipientBytes, &armoredRecipientCount);
+        std::vector<char> armoredRecipientRecords(static_cast<std::size_t>(armoredRecipientBytes > 0 ? armoredRecipientBytes : 1));
+        int actualArmoredRecipientBytes = 0;
+        status = inspector.ListEncryptionKeyIds(reinterpret_cast<const unsigned char*>(&armored[0]), actualArmoredSize, armoredRecipientBytes, &armoredRecipientRecords[0], &actualArmoredRecipientBytes, &armoredRecipientCount);
+        const std::string armoredRecipientKeyId = (status == NO_ERROR && armoredRecipientCount == 1) ? std::string(&armoredRecipientRecords[0]) : std::string();
+        if (status != NO_ERROR || armoredRecipientCount != 1 || armoredRecipientKeyId != recipientKeyId)
+        {
+            std::cout << "RunPgpInspectionEncryptedMessageTest: FAILED ListEncryptionKeyIds(armored) status=" << status
+                      << " count=" << armoredRecipientCount << " keyId=\"" << armoredRecipientKeyId << "\" expected=\"" << recipientKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpInspectionEncryptedMessageTest: PASSED binary(" << actualCipherSize << " bytes) and armored(" << actualArmoredSize
+                  << " bytes) messages inspected without decrypting, recipient " << recipientKeyId << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpInspectionMultiRecipientTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine carol;
+        CPgpEngine bob;
+        CPgpEngine bobSecondSender;
+        CPgpEngine inspector;
+        const char* aliceUserId = "Alice <alice-inspect-multi@example.com>";
+        const char* carolUserId = "Carol <carol-inspect-multi@example.com>";
+        const char* bobUserId = "Bob <bob-inspect-multi@example.com>";
+        const char* password = "inspect-multi-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = carol.GenerateKeyPair(carolUserId, static_cast<int>(std::strlen(carolUserId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED carol GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bobSecondSender.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED bobSecondSender GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int carolKeySize = 0;
+        carol.ExportPublicKeyArmored(0, nullptr, &carolKeySize);
+        std::vector<char> carolPublicKey(static_cast<std::size_t>(carolKeySize));
+        int carolActualKeySize = 0;
+        carol.ExportPublicKeyArmored(carolKeySize, &carolPublicKey[0], &carolActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = bobSecondSender.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&carolPublicKey[0]), carolActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED bobSecondSender ImportPeerPublicKey(carol) status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> plaintext = { 'T', 'w', 'o', ' ', 'r', 'e', 'c', 'i', 'p', 'i', 'e', 'n', 't', 's' };
+
+        int aliceOnlyCipherSize = 0;
+        bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &aliceOnlyCipherSize);
+        std::vector<unsigned char> aliceOnlyCiphertext(static_cast<std::size_t>(aliceOnlyCipherSize));
+        int actualAliceOnlyCipherSize = 0;
+        status = bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), aliceOnlyCipherSize, &aliceOnlyCiphertext[0], &actualAliceOnlyCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED EncryptBuffer(alice only) status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceOnlyCount = 0;
+        int aliceOnlyBytes = 0;
+        inspector.ListEncryptionKeyIds(&aliceOnlyCiphertext[0], actualAliceOnlyCipherSize, 0, nullptr, &aliceOnlyBytes, &aliceOnlyCount);
+        std::vector<char> aliceOnlyRecords(static_cast<std::size_t>(aliceOnlyBytes > 0 ? aliceOnlyBytes : 1));
+        int actualAliceOnlyBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&aliceOnlyCiphertext[0], actualAliceOnlyCipherSize, aliceOnlyBytes, &aliceOnlyRecords[0], &actualAliceOnlyBytes, &aliceOnlyCount);
+        const std::string aliceRecipientKeyId = (status == NO_ERROR && aliceOnlyCount == 1) ? std::string(&aliceOnlyRecords[0]) : std::string();
+        if (status != NO_ERROR || aliceOnlyCount != 1 || aliceRecipientKeyId.size() != 16)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(alice only) status=" << status << " count=" << aliceOnlyCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int carolOnlyCipherSize = 0;
+        bobSecondSender.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &carolOnlyCipherSize);
+        std::vector<unsigned char> carolOnlyCiphertext(static_cast<std::size_t>(carolOnlyCipherSize));
+        int actualCarolOnlyCipherSize = 0;
+        status = bobSecondSender.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), carolOnlyCipherSize, &carolOnlyCiphertext[0], &actualCarolOnlyCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED EncryptBuffer(carol only) status=" << status << std::endl;
+            return status;
+        }
+
+        int carolOnlyCount = 0;
+        int carolOnlyBytes = 0;
+        inspector.ListEncryptionKeyIds(&carolOnlyCiphertext[0], actualCarolOnlyCipherSize, 0, nullptr, &carolOnlyBytes, &carolOnlyCount);
+        std::vector<char> carolOnlyRecords(static_cast<std::size_t>(carolOnlyBytes > 0 ? carolOnlyBytes : 1));
+        int actualCarolOnlyBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&carolOnlyCiphertext[0], actualCarolOnlyCipherSize, carolOnlyBytes, &carolOnlyRecords[0], &actualCarolOnlyBytes, &carolOnlyCount);
+        const std::string carolRecipientKeyId = (status == NO_ERROR && carolOnlyCount == 1) ? std::string(&carolOnlyRecords[0]) : std::string();
+        if (status != NO_ERROR || carolOnlyCount != 1 || carolRecipientKeyId.size() != 16)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(carol only) status=" << status << " count=" << carolOnlyCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (aliceRecipientKeyId == carolRecipientKeyId)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED alice and carol reported the same recipient Key ID " << aliceRecipientKeyId << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = bob.ImportAdditionalRecipientPublicKey(reinterpret_cast<const unsigned char*>(&carolPublicKey[0]), carolActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED ImportAdditionalRecipientPublicKey(carol) status=" << status << std::endl;
+            return status;
+        }
+
+        int multiCipherSize = 0;
+        bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &multiCipherSize);
+        std::vector<unsigned char> multiCiphertext(static_cast<std::size_t>(multiCipherSize));
+        int actualMultiCipherSize = 0;
+        status = bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), multiCipherSize, &multiCiphertext[0], &actualMultiCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED EncryptBuffer(multi) status=" << status << std::endl;
+            return status;
+        }
+
+        int multiCount = 0;
+        int multiBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&multiCiphertext[0], actualMultiCipherSize, 0, nullptr, &multiBytes, &multiCount);
+        if (status != BUFFER_TOO_SMALL || multiCount != 2 || multiBytes != 2 * PGP_INSPECTION_KEY_ID_RECORD_SIZE)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(multi) capacity query status=" << status
+                      << " count=" << multiCount << " bytes=" << multiBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> multiRecords(static_cast<std::size_t>(multiBytes));
+        int actualMultiBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&multiCiphertext[0], actualMultiCipherSize, multiBytes, &multiRecords[0], &actualMultiBytes, &multiCount);
+        if (status != NO_ERROR || multiCount != 2 || actualMultiBytes != multiBytes)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(multi) status=" << status << " count=" << multiCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        // PKESK order is the engine's own recipient order: the ImportPeerPublicKey peer (alice)
+        // first, then each ImportAdditionalRecipientPublicKey addition (carol) in import order.
+        const std::string firstMultiKeyId(&multiRecords[0]);
+        const std::string secondMultiKeyId(&multiRecords[PGP_INSPECTION_KEY_ID_RECORD_SIZE]);
+        if (firstMultiKeyId != aliceRecipientKeyId || secondMultiKeyId != carolRecipientKeyId)
+        {
+            std::cout << "RunPgpInspectionMultiRecipientTest: FAILED multi-recipient Key IDs [" << firstMultiKeyId << ", " << secondMultiKeyId
+                      << "] expected [" << aliceRecipientKeyId << ", " << carolRecipientKeyId << "]" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpInspectionMultiRecipientTest: PASSED both recipients enumerated from one ciphertext ("
+                  << firstMultiKeyId << ", " << secondMultiKeyId << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpInspectionSignatureTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine inspector;
+        const char* aliceUserId = "Alice <alice-inspect-sign@example.com>";
+        const char* alicePassword = "alice-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char aliceKeyIdBuffer[17];
+        alice.GetKeyId(aliceKeyIdBuffer, 17);
+        const std::string aliceKeyId(aliceKeyIdBuffer);
+
+        const std::vector<unsigned char> document = { 'C', 'o', 'n', 't', 'r', 'a', 'c', 't', ' ', 'v', '2' };
+        int sigSize = 0;
+        alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), sigSize, &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool detachedIsPublicKeyEncrypted = true;
+        status = inspector.IsPublicKeyEncrypted(&signature[0], actualSigSize, &detachedIsPublicKeyEncrypted);
+        if (status != NO_ERROR || detachedIsPublicKeyEncrypted)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED IsPublicKeyEncrypted(detached signature) status=" << status << " value=" << detachedIsPublicKeyEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool detachedIsPasswordEncrypted = true;
+        status = inspector.IsPasswordEncrypted(&signature[0], actualSigSize, &detachedIsPasswordEncrypted);
+        if (status != NO_ERROR || detachedIsPasswordEncrypted)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED IsPasswordEncrypted(detached signature) status=" << status << " value=" << detachedIsPasswordEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool detachedIsIntegrityProtected = true;
+        status = inspector.IsIntegrityProtected(&signature[0], actualSigSize, &detachedIsIntegrityProtected);
+        if (status != NO_ERROR || detachedIsIntegrityProtected)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED IsIntegrityProtected(detached signature) status=" << status << " value=" << detachedIsIntegrityProtected << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int detachedCompression = 0;
+        status = inspector.GetCompression(&signature[0], actualSigSize, &detachedCompression);
+        if (status != NO_ERROR || detachedCompression != PGP_COMPRESSION_NOT_PRESENT)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED GetCompression(detached signature) status=" << status << " value=" << detachedCompression << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int detachedSigningCount = 0;
+        int detachedSigningBytes = 0;
+        status = inspector.ListSigningKeyIds(&signature[0], actualSigSize, 0, nullptr, &detachedSigningBytes, &detachedSigningCount);
+        if (status != BUFFER_TOO_SMALL || detachedSigningCount != 1 || detachedSigningBytes != PGP_INSPECTION_KEY_ID_RECORD_SIZE)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED ListSigningKeyIds capacity query status=" << status
+                      << " count=" << detachedSigningCount << " bytes=" << detachedSigningBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> detachedSigningRecords(static_cast<std::size_t>(detachedSigningBytes));
+        int actualDetachedSigningBytes = 0;
+        status = inspector.ListSigningKeyIds(&signature[0], actualSigSize, detachedSigningBytes, &detachedSigningRecords[0], &actualDetachedSigningBytes, &detachedSigningCount);
+        const std::string detachedSigningKeyId = (status == NO_ERROR && detachedSigningCount == 1) ? std::string(&detachedSigningRecords[0]) : std::string();
+        if (status != NO_ERROR || detachedSigningKeyId != aliceKeyId)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED ListSigningKeyIds status=" << status
+                      << " keyId=\"" << detachedSigningKeyId << "\" expected=\"" << aliceKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int detachedSignatureCount = 0;
+        int detachedSignatureBytes = 0;
+        inspector.ListSignatures(&signature[0], actualSigSize, 0, nullptr, &detachedSignatureBytes, &detachedSignatureCount);
+        std::vector<char> detachedSignatureRecords(static_cast<std::size_t>(detachedSignatureBytes > 0 ? detachedSignatureBytes : 1));
+        int actualDetachedSignatureBytes = 0;
+        status = inspector.ListSignatures(&signature[0], actualSigSize, detachedSignatureBytes, &detachedSignatureRecords[0], &actualDetachedSignatureBytes, &detachedSignatureCount);
+        const std::string detachedSignatureRecord = (status == NO_ERROR && detachedSignatureCount == 1) ? std::string(&detachedSignatureRecords[0]) : std::string();
+        // Signature type 00 = binary document (RFC 4880 5.2.1), hash algorithm 08 = SHA-256
+        // (section 9.4) -- exactly what CPgpEngine's RSA SignBuffer writes.
+        if (status != NO_ERROR || detachedSignatureCount != 1 || detachedSignatureRecord != (aliceKeyId + ":00:08"))
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED ListSignatures(detached) status=" << status
+                      << " count=" << detachedSignatureCount << " record=\"" << detachedSignatureRecord
+                      << "\" expected=\"" << (aliceKeyId + ":00:08") << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* clearMessage = "Line one.\nLine two.\nLine three.";
+        int clearSize = 0;
+        alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), clearMessage, static_cast<int>(std::strlen(clearMessage)), 0, nullptr, &clearSize);
+        std::vector<char> clearSigned(static_cast<std::size_t>(clearSize));
+        int actualClearSize = 0;
+        status = alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), clearMessage, static_cast<int>(std::strlen(clearMessage)), clearSize, &clearSigned[0], &actualClearSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED ClearSignString status=" << status << std::endl;
+            return status;
+        }
+
+        int clearSignatureCount = 0;
+        int clearSignatureBytes = 0;
+        inspector.ListSignatures(reinterpret_cast<const unsigned char*>(&clearSigned[0]), actualClearSize, 0, nullptr, &clearSignatureBytes, &clearSignatureCount);
+        std::vector<char> clearSignatureRecords(static_cast<std::size_t>(clearSignatureBytes > 0 ? clearSignatureBytes : 1));
+        int actualClearSignatureBytes = 0;
+        status = inspector.ListSignatures(reinterpret_cast<const unsigned char*>(&clearSigned[0]), actualClearSize, clearSignatureBytes, &clearSignatureRecords[0], &actualClearSignatureBytes, &clearSignatureCount);
+        const std::string clearSignatureRecord = (status == NO_ERROR && clearSignatureCount == 1) ? std::string(&clearSignatureRecords[0]) : std::string();
+        // Signature type 01 = canonical text document, which is what clear-signing always uses.
+        if (status != NO_ERROR || clearSignatureCount != 1 || clearSignatureRecord != (aliceKeyId + ":01:08"))
+        {
+            std::cout << "RunPgpInspectionSignatureTest: FAILED ListSignatures(clear-signed) status=" << status
+                      << " count=" << clearSignatureCount << " record=\"" << clearSignatureRecord
+                      << "\" expected=\"" << (aliceKeyId + ":01:08") << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpInspectionSignatureTest: PASSED detached(" << detachedSignatureRecord << ") and clear-signed(" << clearSignatureRecord
+                  << ") signatures inspected without verifying" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpGnuPgInspectionInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* homeDir = "cryptoapi_pgp_inspect_home";
+        const char* pubKeyPath = "cryptoapi_pgp_inspect_pub.asc";
+        const char* plainPath = "cryptoapi_pgp_inspect_plain.txt";
+        const char* encryptedPath = "cryptoapi_pgp_inspect_encrypted.asc";
+        const char* signaturePath = "cryptoapi_pgp_inspect_signdata.sig";
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(homeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        CPgpEngine pgp;
+        CPgpEngine inspector;
+        const char* userId = "Inspection Interop <inspect-interop@example.com>";
+        const char* password = "InspectInterop-1";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char ownKeyIdBuffer[17];
+        pgp.GetKeyId(ownKeyIdBuffer, 17);
+        const std::string ownKeyId(ownKeyIdBuffer);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED gpg --import rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* plaintext = "Inspect what gpg produced.";
+        if (!WriteTesterFile(plainPath, std::vector<unsigned char>(plaintext, plaintext + std::strlen(plaintext))))
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED to write plaintext file" << std::endl;
+            std::remove(pubKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+        rc = RunShellCommand(gpgBase + "-r " + ownKeyId + " --armor --output " + QuoteShellPath(encryptedPath) + " --encrypt " + QuoteShellPath(plainPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED gpg --encrypt rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<unsigned char> gpgMessageBytes;
+        if (!ReadTesterFile(encryptedPath, gpgMessageBytes) || gpgMessageBytes.empty())
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED to read gpg-encrypted file" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        bool gpgMessageIsPublicKeyEncrypted = false;
+        inspector.IsPublicKeyEncrypted(&gpgMessageBytes[0], static_cast<int>(gpgMessageBytes.size()), &gpgMessageIsPublicKeyEncrypted);
+        bool gpgMessageIsIntegrityProtected = false;
+        inspector.IsIntegrityProtected(&gpgMessageBytes[0], static_cast<int>(gpgMessageBytes.size()), &gpgMessageIsIntegrityProtected);
+
+        int gpgRecipientCount = 0;
+        int gpgRecipientBytes = 0;
+        inspector.ListEncryptionKeyIds(&gpgMessageBytes[0], static_cast<int>(gpgMessageBytes.size()), 0, nullptr, &gpgRecipientBytes, &gpgRecipientCount);
+        std::vector<char> gpgRecipientRecords(static_cast<std::size_t>(gpgRecipientBytes > 0 ? gpgRecipientBytes : 1));
+        int actualGpgRecipientBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&gpgMessageBytes[0], static_cast<int>(gpgMessageBytes.size()), gpgRecipientBytes, &gpgRecipientRecords[0], &actualGpgRecipientBytes, &gpgRecipientCount);
+        const std::string ourRecipientKeyId = (status == NO_ERROR && gpgRecipientCount == 1) ? std::string(&gpgRecipientRecords[0]) : std::string();
+
+        // gpg's own verdict on the very same bytes: "# off=... tag=1 ..." then
+        // ":pubkey enc packet: version 3, algo 1, keyid <16 hex chars>".
+        rc = RunShellCommand(gpgBase + "--pinentry-mode cancel --list-packets " + QuoteShellPath(encryptedPath), cmdOutput);
+        std::string gpgReportedRecipientKeyId;
+        {
+            const std::size_t packetPos = cmdOutput.find(":pubkey enc packet:");
+            if (packetPos != std::string::npos)
+            {
+                const std::size_t keyIdPos = cmdOutput.find("keyid ", packetPos);
+                if (keyIdPos != std::string::npos && keyIdPos + 22 <= cmdOutput.size())
+                {
+                    gpgReportedRecipientKeyId = cmdOutput.substr(keyIdPos + 6, 16);
+                    for (std::size_t i = 0; i < gpgReportedRecipientKeyId.size(); ++i)
+                    {
+                        gpgReportedRecipientKeyId[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(gpgReportedRecipientKeyId[i])));
+                    }
+                }
+            }
+        }
+
+        if (!gpgMessageIsPublicKeyEncrypted || !gpgMessageIsIntegrityProtected || gpgRecipientCount != 1 ||
+            gpgReportedRecipientKeyId.size() != 16 || ourRecipientKeyId != gpgReportedRecipientKeyId)
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED gpg-produced message inspection: publicKey=" << gpgMessageIsPublicKeyEncrypted
+                      << " integrity=" << gpgMessageIsIntegrityProtected << " count=" << gpgRecipientCount
+                      << " ours=\"" << ourRecipientKeyId << "\" gpg=\"" << gpgReportedRecipientKeyId << "\"" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+        std::cout << "RunPgpGnuPgInspectionInteropTest: PASSED direction gpg-encrypt -> our-inspect (recipient " << ourRecipientKeyId << " agreed by gpg --list-packets)" << std::endl;
+
+        const std::vector<unsigned char> document(plaintext, plaintext + std::strlen(plaintext));
+        int sigSize = 0;
+        pgp.SignBuffer(password, static_cast<int>(std::strlen(password)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        pgp.SignBuffer(password, static_cast<int>(std::strlen(password)), &document[0], static_cast<int>(document.size()), sigSize, &signature[0], &actualSigSize);
+        if (!WriteTesterFile(signaturePath, std::vector<unsigned char>(signature.begin(), signature.begin() + actualSigSize)))
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED to write signature file" << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(plainPath);
+            std::remove(encryptedPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return FILE_IO_ERROR;
+        }
+
+        int ourSignatureCount = 0;
+        int ourSignatureBytes = 0;
+        inspector.ListSignatures(&signature[0], actualSigSize, 0, nullptr, &ourSignatureBytes, &ourSignatureCount);
+        std::vector<char> ourSignatureRecords(static_cast<std::size_t>(ourSignatureBytes > 0 ? ourSignatureBytes : 1));
+        int actualOurSignatureBytes = 0;
+        status = inspector.ListSignatures(&signature[0], actualSigSize, ourSignatureBytes, &ourSignatureRecords[0], &actualOurSignatureBytes, &ourSignatureCount);
+        const std::string ourSignatureRecord = (status == NO_ERROR && ourSignatureCount == 1) ? std::string(&ourSignatureRecords[0]) : std::string();
+
+        rc = RunShellCommand(gpgBase + "--list-packets " + QuoteShellPath(signaturePath), cmdOutput);
+        std::string gpgSignatureRecord;
+        {
+            const std::size_t packetPos = cmdOutput.find(":signature packet:");
+            const std::size_t keyIdPos = (packetPos == std::string::npos) ? std::string::npos : cmdOutput.find("keyid ", packetPos);
+            const std::size_t sigClassPos = (packetPos == std::string::npos) ? std::string::npos : cmdOutput.find("sigclass 0x", packetPos);
+            const std::size_t digestPos = (packetPos == std::string::npos) ? std::string::npos : cmdOutput.find("digest algo ", packetPos);
+            if (keyIdPos != std::string::npos && sigClassPos != std::string::npos && digestPos != std::string::npos &&
+                keyIdPos + 22 <= cmdOutput.size() && sigClassPos + 13 <= cmdOutput.size())
+            {
+                std::string keyIdText = cmdOutput.substr(keyIdPos + 6, 16);
+                for (std::size_t i = 0; i < keyIdText.size(); ++i)
+                {
+                    keyIdText[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(keyIdText[i])));
+                }
+                std::string sigClassText = cmdOutput.substr(sigClassPos + 11, 2);
+                for (std::size_t i = 0; i < sigClassText.size(); ++i)
+                {
+                    sigClassText[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(sigClassText[i])));
+                }
+                const int digestAlgorithm = std::atoi(cmdOutput.c_str() + digestPos + 12);
+                static const char* hexDigits = "0123456789ABCDEF";
+                std::string digestText;
+                digestText.push_back(hexDigits[(digestAlgorithm >> 4) & 0xF]);
+                digestText.push_back(hexDigits[digestAlgorithm & 0xF]);
+                gpgSignatureRecord = keyIdText + ":" + sigClassText + ":" + digestText;
+            }
+        }
+
+        std::remove(pubKeyPath);
+        std::remove(plainPath);
+        std::remove(encryptedPath);
+        std::remove(signaturePath);
+        std::filesystem::remove_all(homeDir, fsError);
+
+        if (ourSignatureCount != 1 || ourSignatureRecord.empty() || ourSignatureRecord != gpgSignatureRecord)
+        {
+            std::cout << "RunPgpGnuPgInspectionInteropTest: FAILED our-sign -> gpg-list cross-check: ours=\"" << ourSignatureRecord
+                      << "\" gpg=\"" << gpgSignatureRecord << "\" count=" << ourSignatureCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGnuPgInspectionInteropTest: PASSED direction our-sign -> gpg-list (signature " << ourSignatureRecord << " agreed by gpg --list-packets)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunPgpWrapperAvailabilityTest(void)
 {
     try
@@ -18731,6 +20821,601 @@ int CCryptoApiTester::RunPgpWrapperCompressionAlgorithmTest(void)
         std::cout << "RunPgpWrapperCompressionAlgorithmTest: PASSED NONE=" << cipherSizeByAlgorithm[0] << " ZIP=" << cipherSizeByAlgorithm[1]
                   << " ZLIB=" << cipherSizeByAlgorithm[2] << " BZIP2=" << cipherSizeByAlgorithm[3]
                   << " bytes (5000-byte compressible plaintext), multi-recipient ZIP=" << multiActualCipherSize << " bytes, all round-tripped via real gpg" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperInspectionEncryptedMessageTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper alice;
+        // Never given an identity -- every inspection call below goes through this instance
+        // deliberately, proving the API needs no key of its own (only a usable gpg.exe).
+        CPgpEngineWrapper inspector;
+        const char* bobUserId = "Bob <bob-wrapper-inspect@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-inspect@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> plaintext = { 'I', 'n', 's', 'p', 'e', 'c', 't', ' ', 'g', 'p', 'g', 0x00, 0xFE };
+        int cipherSize = 0;
+        bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &cipherSize);
+        std::vector<unsigned char> ciphertext(static_cast<std::size_t>(cipherSize) + 32);
+        int actualCipherSize = 0;
+        status = bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), static_cast<int>(ciphertext.size()), &ciphertext[0], &actualCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        bool isPublicKeyEncrypted = false;
+        status = inspector.IsPublicKeyEncrypted(&ciphertext[0], actualCipherSize, &isPublicKeyEncrypted);
+        if (status != NO_ERROR || !isPublicKeyEncrypted)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED IsPublicKeyEncrypted(binary) status=" << status << " value=" << isPublicKeyEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool isPasswordEncrypted = true;
+        status = inspector.IsPasswordEncrypted(&ciphertext[0], actualCipherSize, &isPasswordEncrypted);
+        if (status != NO_ERROR || isPasswordEncrypted)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED IsPasswordEncrypted(binary) status=" << status << " value=" << isPasswordEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool isIntegrityProtected = false;
+        status = inspector.IsIntegrityProtected(&ciphertext[0], actualCipherSize, &isIntegrityProtected);
+        if (status != NO_ERROR || !isIntegrityProtected)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED IsIntegrityProtected(binary) status=" << status << " value=" << isIntegrityProtected << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int compressionAlgorithm = 0;
+        status = inspector.GetCompression(&ciphertext[0], actualCipherSize, &compressionAlgorithm);
+        if (status != NO_ERROR || compressionAlgorithm != PGP_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED GetCompression(binary) status=" << status << " value=" << compressionAlgorithm << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int recipientCount = 0;
+        int recipientBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&ciphertext[0], actualCipherSize, 0, nullptr, &recipientBytes, &recipientCount);
+        if (status != BUFFER_TOO_SMALL || recipientCount != 1 || recipientBytes != PGP_INSPECTION_KEY_ID_RECORD_SIZE)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED ListEncryptionKeyIds capacity query status=" << status
+                      << " count=" << recipientCount << " bytes=" << recipientBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> recipientRecords(static_cast<std::size_t>(recipientBytes));
+        int actualRecipientBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&ciphertext[0], actualCipherSize, recipientBytes, &recipientRecords[0], &actualRecipientBytes, &recipientCount);
+        const std::string recipientKeyId = (status == NO_ERROR && recipientCount == 1) ? std::string(&recipientRecords[0]) : std::string();
+        if (status != NO_ERROR || recipientCount != 1 || recipientKeyId.size() != 16)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED ListEncryptionKeyIds status=" << status
+                      << " count=" << recipientCount << " keyId=\"" << recipientKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int signatureCount = -1;
+        int signatureBytes = -1;
+        status = inspector.ListSignatures(&ciphertext[0], actualCipherSize, 0, nullptr, &signatureBytes, &signatureCount);
+        if (status != NO_ERROR || signatureCount != 0 || signatureBytes != 0)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED ListSignatures(encrypted) status=" << status
+                      << " count=" << signatureCount << " bytes=" << signatureBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* textMessage = "Armored gpg message for inspection.";
+        int armoredSize = 0;
+        bob.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), 0, nullptr, &armoredSize);
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize) + 64);
+        int actualArmoredSize = 0;
+        status = bob.EncryptStringArmored(textMessage, static_cast<int>(std::strlen(textMessage)), static_cast<int>(armored.size()), &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        bool armoredIsPublicKeyEncrypted = false;
+        status = inspector.IsPublicKeyEncrypted(reinterpret_cast<const unsigned char*>(&armored[0]), actualArmoredSize, &armoredIsPublicKeyEncrypted);
+        if (status != NO_ERROR || !armoredIsPublicKeyEncrypted)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED IsPublicKeyEncrypted(armored) status=" << status << " value=" << armoredIsPublicKeyEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int armoredRecipientCount = 0;
+        int armoredRecipientBytes = 0;
+        inspector.ListEncryptionKeyIds(reinterpret_cast<const unsigned char*>(&armored[0]), actualArmoredSize, 0, nullptr, &armoredRecipientBytes, &armoredRecipientCount);
+        std::vector<char> armoredRecipientRecords(static_cast<std::size_t>(armoredRecipientBytes > 0 ? armoredRecipientBytes : 1));
+        int actualArmoredRecipientBytes = 0;
+        status = inspector.ListEncryptionKeyIds(reinterpret_cast<const unsigned char*>(&armored[0]), actualArmoredSize, armoredRecipientBytes, &armoredRecipientRecords[0], &actualArmoredRecipientBytes, &armoredRecipientCount);
+        const std::string armoredRecipientKeyId = (status == NO_ERROR && armoredRecipientCount == 1) ? std::string(&armoredRecipientRecords[0]) : std::string();
+        if (status != NO_ERROR || armoredRecipientCount != 1 || armoredRecipientKeyId != recipientKeyId)
+        {
+            std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: FAILED ListEncryptionKeyIds(armored) status=" << status
+                      << " count=" << armoredRecipientCount << " keyId=\"" << armoredRecipientKeyId << "\" expected=\"" << recipientKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperInspectionEncryptedMessageTest: PASSED binary(" << actualCipherSize << " bytes) and armored(" << actualArmoredSize
+                  << " bytes) gpg messages inspected without decrypting, recipient " << recipientKeyId << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperInspectionMultiRecipientTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper alice;
+        CPgpEngineWrapper carol;
+        CPgpEngineWrapper inspector;
+        const char* bobUserId = "Bob <bob-wrapper-inspect-multi@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-inspect-multi@example.com>";
+        const char* carolUserId = "Carol <carol-wrapper-inspect-multi@example.com>";
+        const char* password = "wrapper-inspect-multi-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = carol.GenerateKeyPair(carolUserId, static_cast<int>(std::strlen(carolUserId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED carol GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int carolKeySize = 0;
+        carol.ExportPublicKeyArmored(0, nullptr, &carolKeySize);
+        std::vector<char> carolPublicKey(static_cast<std::size_t>(carolKeySize));
+        int carolActualKeySize = 0;
+        carol.ExportPublicKeyArmored(carolKeySize, &carolPublicKey[0], &carolActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&carolPublicKey[0]), carolActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED bob ImportPeerPublicKey(carol) status=" << status << std::endl;
+            return status;
+        }
+
+        char aliceKeyId[17];
+        char carolKeyId[17];
+        bob.GetImportedPeerKeyId(0, aliceKeyId, 17);
+        bob.GetImportedPeerKeyId(1, carolKeyId, 17);
+        const char* aliceOnlyRecipients[1] = { aliceKeyId };
+        const char* carolOnlyRecipients[1] = { carolKeyId };
+        const char* bothRecipients[2] = { aliceKeyId, carolKeyId };
+
+        const std::vector<unsigned char> plaintext = { 'T', 'w', 'o', ' ', 'g', 'p', 'g', ' ', 'r', 'e', 'c', 'i', 'p', 's' };
+
+        int aliceOnlyCipherSize = 0;
+        bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), aliceOnlyRecipients, 1, 0, nullptr, &aliceOnlyCipherSize);
+        std::vector<unsigned char> aliceOnlyCiphertext(static_cast<std::size_t>(aliceOnlyCipherSize) + 32);
+        int actualAliceOnlyCipherSize = 0;
+        status = bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), aliceOnlyRecipients, 1, static_cast<int>(aliceOnlyCiphertext.size()), &aliceOnlyCiphertext[0], &actualAliceOnlyCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED EncryptBufferMultiRecipient(alice only) status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceOnlyCount = 0;
+        int aliceOnlyBytes = 0;
+        inspector.ListEncryptionKeyIds(&aliceOnlyCiphertext[0], actualAliceOnlyCipherSize, 0, nullptr, &aliceOnlyBytes, &aliceOnlyCount);
+        std::vector<char> aliceOnlyRecords(static_cast<std::size_t>(aliceOnlyBytes > 0 ? aliceOnlyBytes : 1));
+        int actualAliceOnlyBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&aliceOnlyCiphertext[0], actualAliceOnlyCipherSize, aliceOnlyBytes, &aliceOnlyRecords[0], &actualAliceOnlyBytes, &aliceOnlyCount);
+        const std::string aliceRecipientKeyId = (status == NO_ERROR && aliceOnlyCount == 1) ? std::string(&aliceOnlyRecords[0]) : std::string();
+        if (status != NO_ERROR || aliceOnlyCount != 1 || aliceRecipientKeyId.size() != 16)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(alice only) status=" << status << " count=" << aliceOnlyCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int carolOnlyCipherSize = 0;
+        bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), carolOnlyRecipients, 1, 0, nullptr, &carolOnlyCipherSize);
+        std::vector<unsigned char> carolOnlyCiphertext(static_cast<std::size_t>(carolOnlyCipherSize) + 32);
+        int actualCarolOnlyCipherSize = 0;
+        status = bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), carolOnlyRecipients, 1, static_cast<int>(carolOnlyCiphertext.size()), &carolOnlyCiphertext[0], &actualCarolOnlyCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED EncryptBufferMultiRecipient(carol only) status=" << status << std::endl;
+            return status;
+        }
+
+        int carolOnlyCount = 0;
+        int carolOnlyBytes = 0;
+        inspector.ListEncryptionKeyIds(&carolOnlyCiphertext[0], actualCarolOnlyCipherSize, 0, nullptr, &carolOnlyBytes, &carolOnlyCount);
+        std::vector<char> carolOnlyRecords(static_cast<std::size_t>(carolOnlyBytes > 0 ? carolOnlyBytes : 1));
+        int actualCarolOnlyBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&carolOnlyCiphertext[0], actualCarolOnlyCipherSize, carolOnlyBytes, &carolOnlyRecords[0], &actualCarolOnlyBytes, &carolOnlyCount);
+        const std::string carolRecipientKeyId = (status == NO_ERROR && carolOnlyCount == 1) ? std::string(&carolOnlyRecords[0]) : std::string();
+        if (status != NO_ERROR || carolOnlyCount != 1 || carolRecipientKeyId.size() != 16)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(carol only) status=" << status << " count=" << carolOnlyCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (aliceRecipientKeyId == carolRecipientKeyId)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED alice and carol reported the same recipient Key ID " << aliceRecipientKeyId << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int multiCipherSize = 0;
+        bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), bothRecipients, 2, 0, nullptr, &multiCipherSize);
+        std::vector<unsigned char> multiCiphertext(static_cast<std::size_t>(multiCipherSize) + 32);
+        int actualMultiCipherSize = 0;
+        status = bob.EncryptBufferMultiRecipient(&plaintext[0], static_cast<int>(plaintext.size()), bothRecipients, 2, static_cast<int>(multiCiphertext.size()), &multiCiphertext[0], &actualMultiCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED EncryptBufferMultiRecipient(both) status=" << status << std::endl;
+            return status;
+        }
+
+        int multiCount = 0;
+        int multiBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&multiCiphertext[0], actualMultiCipherSize, 0, nullptr, &multiBytes, &multiCount);
+        if (status != BUFFER_TOO_SMALL || multiCount != 2 || multiBytes != 2 * PGP_INSPECTION_KEY_ID_RECORD_SIZE)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(both) capacity query status=" << status
+                      << " count=" << multiCount << " bytes=" << multiBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> multiRecords(static_cast<std::size_t>(multiBytes));
+        int actualMultiBytes = 0;
+        status = inspector.ListEncryptionKeyIds(&multiCiphertext[0], actualMultiCipherSize, multiBytes, &multiRecords[0], &actualMultiBytes, &multiCount);
+        if (status != NO_ERROR || multiCount != 2)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED ListEncryptionKeyIds(both) status=" << status << " count=" << multiCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string firstMultiKeyId(&multiRecords[0]);
+        const std::string secondMultiKeyId(&multiRecords[PGP_INSPECTION_KEY_ID_RECORD_SIZE]);
+        // gpg is free to order its PKESK packets as it likes (it has been observed emitting them
+        // in a different order than the "-r" arguments were given), so membership is what is
+        // asserted here rather than a fixed position -- unlike the native engine's own test, where
+        // the recipient order is this repo's own code and therefore deterministic.
+        const bool bothPresent = ((firstMultiKeyId == aliceRecipientKeyId && secondMultiKeyId == carolRecipientKeyId) ||
+                                  (firstMultiKeyId == carolRecipientKeyId && secondMultiKeyId == aliceRecipientKeyId));
+        if (!bothPresent)
+        {
+            std::cout << "RunPgpWrapperInspectionMultiRecipientTest: FAILED multi-recipient Key IDs [" << firstMultiKeyId << ", " << secondMultiKeyId
+                      << "] expected the pair [" << aliceRecipientKeyId << ", " << carolRecipientKeyId << "] in either order" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperInspectionMultiRecipientTest: PASSED both gpg recipients enumerated from one ciphertext ("
+                  << firstMultiKeyId << ", " << secondMultiKeyId << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperInspectionSymmetricTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper alice;
+        CPgpEngineWrapper inspector;
+        const char* bobUserId = "Bob <bob-wrapper-inspect-sym@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-inspect-sym@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+        const char* messagePassphrase = "symmetric-inspection-passphrase-1";
+
+        const std::vector<unsigned char> plaintext = { 'P', 'a', 's', 's', 'p', 'h', 'r', 'a', 's', 'e', ' ', 'o', 'n', 'l', 'y' };
+
+        int symmetricCipherSize = 0;
+        bob.EncryptBufferSymmetric(messagePassphrase, static_cast<int>(std::strlen(messagePassphrase)), &plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &symmetricCipherSize);
+        std::vector<unsigned char> symmetricCiphertext(static_cast<std::size_t>(symmetricCipherSize) + 32);
+        int actualSymmetricCipherSize = 0;
+        int status = bob.EncryptBufferSymmetric(messagePassphrase, static_cast<int>(std::strlen(messagePassphrase)), &plaintext[0], static_cast<int>(plaintext.size()), static_cast<int>(symmetricCiphertext.size()), &symmetricCiphertext[0], &actualSymmetricCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED EncryptBufferSymmetric status=" << status << std::endl;
+            return status;
+        }
+
+        bool symmetricIsPasswordEncrypted = false;
+        status = inspector.IsPasswordEncrypted(&symmetricCiphertext[0], actualSymmetricCipherSize, &symmetricIsPasswordEncrypted);
+        if (status != NO_ERROR || !symmetricIsPasswordEncrypted)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED IsPasswordEncrypted(symmetric) status=" << status << " value=" << symmetricIsPasswordEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool symmetricIsPublicKeyEncrypted = true;
+        status = inspector.IsPublicKeyEncrypted(&symmetricCiphertext[0], actualSymmetricCipherSize, &symmetricIsPublicKeyEncrypted);
+        if (status != NO_ERROR || symmetricIsPublicKeyEncrypted)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED IsPublicKeyEncrypted(symmetric) status=" << status << " value=" << symmetricIsPublicKeyEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool symmetricIsIntegrityProtected = false;
+        status = inspector.IsIntegrityProtected(&symmetricCiphertext[0], actualSymmetricCipherSize, &symmetricIsIntegrityProtected);
+        if (status != NO_ERROR || !symmetricIsIntegrityProtected)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED IsIntegrityProtected(symmetric) status=" << status << " value=" << symmetricIsIntegrityProtected << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int symmetricRecipientCount = -1;
+        int symmetricRecipientBytes = -1;
+        status = inspector.ListEncryptionKeyIds(&symmetricCiphertext[0], actualSymmetricCipherSize, 0, nullptr, &symmetricRecipientBytes, &symmetricRecipientCount);
+        if (status != NO_ERROR || symmetricRecipientCount != 0 || symmetricRecipientBytes != 0)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED ListEncryptionKeyIds(symmetric) status=" << status
+                      << " count=" << symmetricRecipientCount << " bytes=" << symmetricRecipientBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // The mirror-image control: the very same instance's ordinary public-key ciphertext must
+        // answer the two questions the other way round.
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+
+        int publicKeyCipherSize = 0;
+        bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), 0, nullptr, &publicKeyCipherSize);
+        std::vector<unsigned char> publicKeyCiphertext(static_cast<std::size_t>(publicKeyCipherSize) + 32);
+        int actualPublicKeyCipherSize = 0;
+        status = bob.EncryptBuffer(&plaintext[0], static_cast<int>(plaintext.size()), static_cast<int>(publicKeyCiphertext.size()), &publicKeyCiphertext[0], &actualPublicKeyCipherSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED EncryptBuffer(public key control) status=" << status << std::endl;
+            return status;
+        }
+
+        bool controlIsPasswordEncrypted = true;
+        status = inspector.IsPasswordEncrypted(&publicKeyCiphertext[0], actualPublicKeyCipherSize, &controlIsPasswordEncrypted);
+        if (status != NO_ERROR || controlIsPasswordEncrypted)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED IsPasswordEncrypted(public key control) status=" << status << " value=" << controlIsPasswordEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool controlIsPublicKeyEncrypted = false;
+        status = inspector.IsPublicKeyEncrypted(&publicKeyCiphertext[0], actualPublicKeyCipherSize, &controlIsPublicKeyEncrypted);
+        if (status != NO_ERROR || !controlIsPublicKeyEncrypted)
+        {
+            std::cout << "RunPgpWrapperInspectionSymmetricTest: FAILED IsPublicKeyEncrypted(public key control) status=" << status << " value=" << controlIsPublicKeyEncrypted << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperInspectionSymmetricTest: PASSED symmetric(" << actualSymmetricCipherSize << " bytes, SKESK, 0 recipients) and public-key("
+                  << actualPublicKeyCipherSize << " bytes, PKESK) messages told apart without decrypting" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperInspectionSignatureTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper inspector;
+        const char* aliceUserId = "Alice <alice-wrapper-inspect-sign@example.com>";
+        const char* alicePassword = "alice-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char aliceKeyIdBuffer[17];
+        alice.GetKeyId(aliceKeyIdBuffer, 17);
+        const std::string aliceKeyId(aliceKeyIdBuffer);
+
+        const std::vector<unsigned char> document = { 'C', 'o', 'n', 't', 'r', 'a', 'c', 't', ' ', 'v', '3' };
+        int sigSize = 0;
+        alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize) + 32);
+        int actualSigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), static_cast<int>(signature.size()), &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int detachedSigningCount = 0;
+        int detachedSigningBytes = 0;
+        status = inspector.ListSigningKeyIds(&signature[0], actualSigSize, 0, nullptr, &detachedSigningBytes, &detachedSigningCount);
+        if (status != BUFFER_TOO_SMALL || detachedSigningCount != 1 || detachedSigningBytes != PGP_INSPECTION_KEY_ID_RECORD_SIZE)
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: FAILED ListSigningKeyIds capacity query status=" << status
+                      << " count=" << detachedSigningCount << " bytes=" << detachedSigningBytes << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> detachedSigningRecords(static_cast<std::size_t>(detachedSigningBytes));
+        int actualDetachedSigningBytes = 0;
+        status = inspector.ListSigningKeyIds(&signature[0], actualSigSize, detachedSigningBytes, &detachedSigningRecords[0], &actualDetachedSigningBytes, &detachedSigningCount);
+        const std::string detachedSigningKeyId = (status == NO_ERROR && detachedSigningCount == 1) ? std::string(&detachedSigningRecords[0]) : std::string();
+        if (status != NO_ERROR || detachedSigningKeyId != aliceKeyId)
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: FAILED ListSigningKeyIds status=" << status
+                      << " keyId=\"" << detachedSigningKeyId << "\" expected=\"" << aliceKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int detachedSignatureCount = 0;
+        int detachedSignatureBytes = 0;
+        inspector.ListSignatures(&signature[0], actualSigSize, 0, nullptr, &detachedSignatureBytes, &detachedSignatureCount);
+        std::vector<char> detachedSignatureRecords(static_cast<std::size_t>(detachedSignatureBytes > 0 ? detachedSignatureBytes : 1));
+        int actualDetachedSignatureBytes = 0;
+        status = inspector.ListSignatures(&signature[0], actualSigSize, detachedSignatureBytes, &detachedSignatureRecords[0], &actualDetachedSignatureBytes, &detachedSignatureCount);
+        const std::string detachedSignatureRecord = (status == NO_ERROR && detachedSignatureCount == 1) ? std::string(&detachedSignatureRecords[0]) : std::string();
+        // Signature type 00 = binary document. The hash algorithm octet is deliberately NOT pinned
+        // to a specific value here: it is whatever real gpg picked for this key's own digest
+        // preferences, so only its shape (2 hex chars in the third field) is required.
+        if (status != NO_ERROR || detachedSignatureCount != 1 || detachedSignatureRecord.size() != 22 ||
+            detachedSignatureRecord.rfind(aliceKeyId + ":00:", 0) != 0)
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: FAILED ListSignatures(detached) status=" << status
+                      << " count=" << detachedSignatureCount << " record=\"" << detachedSignatureRecord
+                      << "\" expected prefix \"" << (aliceKeyId + ":00:") << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* clearMessage = "Line one.\nLine two.\nLine three.";
+        int clearSize = 0;
+        alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), clearMessage, static_cast<int>(std::strlen(clearMessage)), 0, nullptr, &clearSize);
+        std::vector<char> clearSigned(static_cast<std::size_t>(clearSize) + 64);
+        int actualClearSize = 0;
+        status = alice.ClearSignString(alicePassword, static_cast<int>(std::strlen(alicePassword)), clearMessage, static_cast<int>(std::strlen(clearMessage)), static_cast<int>(clearSigned.size()), &clearSigned[0], &actualClearSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: FAILED ClearSignString status=" << status << std::endl;
+            return status;
+        }
+
+        int clearSignatureCount = 0;
+        int clearSignatureBytes = 0;
+        inspector.ListSignatures(reinterpret_cast<const unsigned char*>(&clearSigned[0]), actualClearSize, 0, nullptr, &clearSignatureBytes, &clearSignatureCount);
+        std::vector<char> clearSignatureRecords(static_cast<std::size_t>(clearSignatureBytes > 0 ? clearSignatureBytes : 1));
+        int actualClearSignatureBytes = 0;
+        status = inspector.ListSignatures(reinterpret_cast<const unsigned char*>(&clearSigned[0]), actualClearSize, clearSignatureBytes, &clearSignatureRecords[0], &actualClearSignatureBytes, &clearSignatureCount);
+        const std::string clearSignatureRecord = (status == NO_ERROR && clearSignatureCount == 1) ? std::string(&clearSignatureRecords[0]) : std::string();
+        // Signature type 01 = canonical text document, which is what clear-signing always uses --
+        // and which only appears at all because this class extracts the trailing signature block
+        // before handing it to gpg --list-packets.
+        if (status != NO_ERROR || clearSignatureCount != 1 || clearSignatureRecord.size() != 22 ||
+            clearSignatureRecord.rfind(aliceKeyId + ":01:", 0) != 0)
+        {
+            std::cout << "RunPgpWrapperInspectionSignatureTest: FAILED ListSignatures(clear-signed) status=" << status
+                      << " count=" << clearSignatureCount << " record=\"" << clearSignatureRecord
+                      << "\" expected prefix \"" << (aliceKeyId + ":01:") << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperInspectionSignatureTest: PASSED detached(" << detachedSignatureRecord << ") and clear-signed(" << clearSignatureRecord
+                  << ") gpg signatures inspected without verifying" << std::endl;
         return NO_ERROR;
     }
     catch (...)

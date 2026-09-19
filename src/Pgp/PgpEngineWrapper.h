@@ -410,6 +410,102 @@ public:
     int VerifyFile( const char* inputFilePath, const char* signatureFilePath,
                    bool* isValid, ProgressCallback onProgress, void* progressUserData);
 
+    // ============================================================================================
+    // Message inspection (read-only) -- the gpg-backed mirror of CPgpEngine's own seven inspection
+    // methods (same names, same signatures, same out-parameter meanings and the same record
+    // layout, so the two engines stay drop-in interchangeable for inspection too). Where
+    // CPgpEngine parses the packets itself, these delegate to real "gpg --list-packets" against a
+    // temporary file holding the input under this instance's own isolated homedir, and parse gpg's
+    // own listing text -- the same "let the real tool be the authority, then parse its output"
+    // approach GetKeyringListing/GetKeyringKeyCount take with "--with-colons".
+    //
+    // "--pinentry-mode cancel" is always passed alongside --list-packets, which is what makes the
+    // read-only promise real rather than aspirational: gpg would otherwise try to open an
+    // encrypted input it holds a key for, blocking on a passphrase prompt (observed taking a full
+    // agent timeout before failing) and, for a passphrase-less secret key, actually decrypting and
+    // then listing the INNER packets too. With the prompt refused up front, a
+    // passphrase-protected message is listed strictly from its outer packet layer, fast, and
+    // nothing is ever decrypted. The one honest exception, unavoidable with a real gpg backend: if
+    // the keyring happens to hold an UNPROTECTED (no-passphrase) secret key matching the message,
+    // gpg needs no prompt and will report the inner packets as well -- which only ever makes
+    // GetCompression/ListSignatures below MORE informative than the contract promises, never less.
+    //
+    // Everything CPgpEngine's own inspection section documents about what cannot be seen without
+    // decrypting applies here unchanged, for the same structural reasons.
+    //
+    // inputBuffer/inputBufferSize accept raw binary OpenPGP packets, an ASCII-armored block (gpg
+    // dearmors it itself), or a clear-signed message -- for which this class extracts the trailing
+    // "-----BEGIN PGP SIGNATURE-----" block and lists THAT, because gpg's own --list-packets, fed
+    // a whole clear-signed message, reports only its literal-text framing and never mentions the
+    // signature packet at all (verified against GnuPG 2.5.21 while building these methods).
+    // ============================================================================================
+
+    // *isPublicKeyEncrypted receives true when gpg reports at least one Public-Key Encrypted
+    // Session Key packet (tag 1). Same contract as CPgpEngine::IsPublicKeyEncrypted.
+    int IsPublicKeyEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
+                             bool* isPublicKeyEncrypted) const;
+
+    // *isPasswordEncrypted receives true when gpg reports a Symmetric-Key Encrypted Session Key
+    // packet (tag 3) -- i.e. what EncryptBufferSymmetric/EncryptStringArmoredSymmetric above
+    // produce. Same contract as CPgpEngine::IsPasswordEncrypted.
+    int IsPasswordEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
+                            bool* isPasswordEncrypted) const;
+
+    // *isIntegrityProtected receives true for a Sym. Encrypted Integrity Protected Data packet
+    // (tag 18) or an AEAD Encrypted Data packet (tag 20) -- note recent GnuPG (2.5.x, this
+    // machine's) writes tag 20 by default whenever every recipient key advertises AEAD support, so
+    // that is the packet this class's own EncryptBuffer output normally carries -- and false for
+    // the obsolete unprotected Symmetrically Encrypted Data packet (tag 9). Carries the same
+    // "false also means no encrypted-data packet at all" caveat CPgpEngine::IsIntegrityProtected
+    // documents.
+    int IsIntegrityProtected( const unsigned char* inputBuffer, const int inputBufferSize,
+                             bool* isIntegrityProtected) const;
+
+    // *compressionAlgorithm receives the RFC 4880 section 9.3 compression algorithm octet of the
+    // first Compressed Data packet gpg reports (0 = uncompressed, 1 = ZIP, 2 = ZLIB, 3 = BZIP2 --
+    // the same numbering PgpCompressionAlgorithm at the top of this header uses), or one of the
+    // two NEGATIVE sentinels CPgpEngine's own PgpCompressionInspectionResult enum names, with
+    // identical values and meanings: -1 when the input is not encrypted and provably carries no
+    // Compressed Data packet, -2 when the input IS encrypted so any compressed layer sits
+    // unreachable inside the ciphertext. (The enum itself is deliberately not redeclared here --
+    // both headers live in the same namespace and are routinely included together, so a second
+    // declaration of the same names would collide; include PgpEngine.h to use the named constants
+    // or compare against the literals.) Returns NO_ERROR in all three cases; INVALID_DATA only
+    // when gpg could not make sense of the input as OpenPGP packets at all.
+    int GetCompression( const unsigned char* inputBuffer, const int inputBufferSize,
+                       int* compressionAlgorithm) const;
+
+    // Enumerates the recipient Key ID of every PKESK packet gpg reports, in listing order.
+    // *keyIdCount receives the number of records (always set on success, even when zero) and the
+    // caller's buffer receives that many packed, fixed-stride 17-byte "XXXXXXXXXXXXXXXX\0" records
+    // -- byte-for-byte the same layout CPgpEngine::ListEncryptionKeyIds produces (its
+    // PGP_INSPECTION_KEY_ID_RECORD_SIZE). Same capacity-query/BUFFER_TOO_SMALL convention as
+    // GetKeyringListing above, with the same refinement CPgpEngine documents: an EMPTY list is
+    // NO_ERROR with *outputBufferSize = 0, not BUFFER_TOO_SMALL.
+    int ListEncryptionKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
+                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
+                             int* keyIdCount) const;
+
+    // Enumerates the issuer Key ID of every Signature (tag 2) and One-Pass Signature (tag 4)
+    // packet gpg reports, in listing order -- covering detached signatures (SignBuffer/SignFile
+    // output), the signature block of a clear-signed message, and the one-pass signature real gpg
+    // writes ahead of a signed document. Same 17-byte record layout and count/BUFFER_TOO_SMALL
+    // semantics as ListEncryptionKeyIds above; an issuer gpg does not name is reported as
+    // "????????????????", exactly as CPgpEngine::ListSigningKeyIds does.
+    int ListSigningKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
+                          const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
+                          int* keyIdCount) const;
+
+    // Richer form of ListSigningKeyIds above, over the same signature packets in the same order:
+    // each record is 23 bytes of "XXXXXXXXXXXXXXXX:TT:HH\0" -- issuer Key ID, RFC 4880 section
+    // 5.2.1 signature type octet as 2 hex chars (gpg's own "sigclass"), and section 9.4 hash
+    // algorithm octet as 2 hex chars (gpg's own "digest algo") -- byte-for-byte the layout
+    // CPgpEngine::ListSignatures produces (its PGP_INSPECTION_SIGNATURE_RECORD_SIZE). Same
+    // count/BUFFER_TOO_SMALL semantics as the two methods above.
+    int ListSignatures( const unsigned char* inputBuffer, const int inputBufferSize,
+                       const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
+                       int* signatureCount) const;
+
 protected:
 
 private:

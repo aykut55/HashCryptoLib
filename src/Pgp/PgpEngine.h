@@ -27,6 +27,51 @@ enum PgpKeyAlgorithm
     PGP_KEY_ALGORITHM_ED25519_X25519 = 1
 };
 
+// Which RFC 4880 Compressed Data packet (tag 8, section 5.6) encoding EncryptFileCompressed below
+// uses -- values match the OpenPGP compression algorithm registry (section 9.3) directly, so they
+// double as the wire octet. Named PgpFileCompressionAlgorithm rather than PgpCompressionAlgorithm
+// to avoid colliding with PgpEngineWrapper.h's own like-named (but NONE/ZIP/ZLIB/BZIP2, gpg
+// "--compress-algo") enum -- the two are unrelated types in the same namespace, and both headers
+// are commonly included together (e.g. CryptoApiTester.cpp). PGP_FILE_COMPRESSION_ALGORITHM_ZIP is
+// raw DEFLATE (RFC 1951, no zlib header/trailer -- confusingly called "ZIP" by RFC 4880, nothing to
+// do with the .zip archive format); PGP_FILE_COMPRESSION_ALGORITHM_ZLIB adds the RFC 1950 zlib
+// wrapper (2-byte header, 4-byte Adler-32 trailer). DecryptFile/DecryptBuffer already read back
+// either one (plus uncompressed and BZip2) regardless of which this instance is constructed with --
+// this enum only selects what EncryptFileCompressed itself produces.
+enum PgpFileCompressionAlgorithm
+{
+    PGP_FILE_COMPRESSION_ALGORITHM_ZIP  = 1,
+    PGP_FILE_COMPRESSION_ALGORITHM_ZLIB = 2
+};
+
+// The two negative sentinel values GetCompression() (see the message-inspection section at the end
+// of the class below) writes into its compressionAlgorithm out-parameter when there is no
+// Compressed Data packet octet to report. Any NON-negative value it writes instead is the literal
+// RFC 4880 section 9.3 compression algorithm octet a real, visible Compressed Data packet (tag 8)
+// declared: 0 = uncompressed, 1 = ZIP, 2 = ZLIB, 3 = BZip2. Deliberately two distinct sentinels
+// rather than one, because "this message is definitely not compressed" and "this message may or
+// may not be compressed, but nobody can tell without the decryption key" are genuinely different
+// answers and collapsing them would make the API lie about the encrypted case.
+enum PgpCompressionInspectionResult
+{
+    PGP_COMPRESSION_NOT_PRESENT              = -1,
+    PGP_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION = -2
+};
+
+// Fixed per-record byte sizes (NUL terminator included) of the packed, fixed-stride records the
+// three List* inspection methods at the end of the class below write into the caller's output
+// buffer -- record i always starts at outputBuffer + i * <the matching size here>, so a caller can
+// index straight into the buffer without scanning for separators, and Lua/other bindings can slice
+// it the same way. ListEncryptionKeyIds/ListSigningKeyIds write "XXXXXXXXXXXXXXXX\0" (16 uppercase
+// hex chars of the 8-byte Key ID); ListSignatures writes "XXXXXXXXXXXXXXXX:TT:HH\0" (the same 16
+// hex chars, then the RFC 4880 5.2.1 signature type octet and the section 9.4 hash algorithm octet,
+// each as 2 uppercase hex chars).
+enum PgpInspectionRecordSize
+{
+    PGP_INSPECTION_KEY_ID_RECORD_SIZE    = 17,
+    PGP_INSPECTION_SIGNATURE_RECORD_SIZE = 23
+};
+
 class CPgpEngine
 {
 public:
@@ -238,10 +283,34 @@ public:
     int EncryptFile( const char* inputFilePath, const char* outputFilePath,
                     ProgressCallback onProgress, void* progressUserData);
 
+    // Same as EncryptFile above (same recipients, same SEIP/MDC framing), except the plaintext is
+    // wrapped in a Compressed Data packet (tag 8) using compressionAlgorithm instead of being
+    // stored directly -- additive, EncryptFile itself is completely unaffected. Compressing a
+    // stream whose length is not yet known cannot use EncryptFile's "compute every packet length
+    // upfront" trick, so this method streams the plaintext into a temporary file first (named
+    // outputFilePath with a ".pgpztmp" suffix, in the same directory; removed on every exit path --
+    // success, any error, or OPERATION_CANCELLED), compressing it chunk-by-chunk as it is read so
+    // peak memory never holds the whole file or the whole compressed result. Once that temporary
+    // file's exact compressed size is known, this method writes the real PKESK + Compressed Data +
+    // SEIP/MDC structure, streaming the temporary file's bytes in as the Compressed Data packet's
+    // body (reusing the same SEIP/MDC streaming-write machinery EncryptFile itself uses). Because
+    // of this two-pass design, onProgress is invoked across two separate passes over the data
+    // (compress, then encrypt) rather than one continuous 0-100% sweep -- each pass reports
+    // progress against its own total. ImportPeerPublicKey() must have succeeded first.
+    int EncryptFileCompressed( const char* inputFilePath, const char* outputFilePath,
+                             const PgpFileCompressionAlgorithm compressionAlgorithm,
+                             ProgressCallback onProgress, void* progressUserData);
+
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
     // with. Accepts an uncompressed literal packet such as EncryptFile produces, or a compressed
-    // inner packet using uncompressed, ZIP, or ZLIB encoding (e.g. from EncryptBuffer or GnuPG).
-    // New-format partial-body-length packets are not yet supported by the packet reader.
+    // inner packet using uncompressed, ZIP, ZLIB, or BZip2 encoding (e.g. from EncryptFileCompressed,
+    // EncryptBuffer, or GnuPG). New-format partial-body-length framing (RFC 4880 section 4.2.2.4) is
+    // accepted on the outer Sym. Encrypted Integrity Protected Data packet and on the inner
+    // Compressed/Literal Data packet alike, for all four compression encodings -- real GnuPG
+    // switches to that framing for any message past its own output buffer size, so essentially
+    // every gpg-encrypted file of more than a few KB arrives framed that way. The chunks are
+    // consumed as the stream reaches them, so memory use stays constant as before (BZip2 keeps the
+    // one buffering exception described above, which is unrelated to the framing).
     int DecryptFile( const char* password, const int passwordSize,
                     const char* inputFilePath, const char* outputFilePath,
                     ProgressCallback onProgress, void* progressUserData);
@@ -257,6 +326,120 @@ public:
     // VerifyBuffer above.
     int VerifyFile( const char* inputFilePath, const char* signatureFilePath,
                    bool* isValid, ProgressCallback onProgress, void* progressUserData);
+
+    // ============================================================================================
+    // Message inspection (read-only) -- answer structural questions about an OpenPGP message
+    // WITHOUT decrypting or verifying it. None of these seven methods needs a key of any kind:
+    // GenerateKeyPair/ImportPeerPublicKey need never have been called, they never touch this
+    // instance's own state (all seven are const), and they never attempt a decryption or a
+    // signature check, so they are safe to call on a message addressed to somebody else entirely.
+    // They are pure RFC 4880 packet parsers over the bytes handed in.
+    //
+    // inputBuffer/inputBufferSize accept, auto-detected from the leading bytes exactly the way
+    // ImportPeerPublicKey does: raw binary OpenPGP packets (e.g. EncryptBuffer/SignBuffer/
+    // EncryptFile/SignFile output, or an armor-free gpg message), an ASCII-armored block
+    // ("-----BEGIN PGP MESSAGE-----", "-----BEGIN PGP SIGNATURE-----", ...), or a clear-signed
+    // message ("-----BEGIN PGP SIGNED MESSAGE-----", whose trailing signature block is the part
+    // that gets parsed). New-format partial-body-length framing (RFC 4880 section 4.2.2.4) is
+    // handled by the very same reassembly step DecryptFile/DecryptBuffer use, so a message real
+    // GnuPG streamed out in chunks is inspected exactly like a definite-length one.
+    //
+    // WHAT CANNOT BE SEEN: for an ENCRYPTED message only the OUTER packet layer is visible --
+    // which recipients it is addressed to (PKESK, tag 1), whether a passphrase can open it (SKESK,
+    // tag 3), and whether the ciphertext is integrity protected (SEIP, tag 18, or AEAD, tag 20)
+    // or not (SED, tag 9). The Compressed Data and Literal Data packets, and any signature packets
+    // travelling with the plaintext, live INSIDE the ciphertext and are unreachable without the
+    // decryption key -- no amount of parsing can change that. GetCompression therefore reports the
+    // explicit PGP_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION sentinel in that case rather than
+    // guessing, and ListSigningKeyIds/ListSignatures report only the signatures they can actually
+    // see (zero, for a message whose signatures are all inside the ciphertext). For an
+    // UNENCRYPTED input -- a detached signature, a clear-signed message, a one-pass-signed and/or
+    // compressed file -- everything is visible, including packets nested inside a Compressed Data
+    // packet, which these methods decompress (uncompressed/ZIP/ZLIB/BZip2, the same four encodings
+    // DecryptFile reads) purely to keep walking the packet tree.
+    // ============================================================================================
+
+    // *isPublicKeyEncrypted receives true when the message carries at least one Public-Key
+    // Encrypted Session Key packet (PKESK, tag 1) -- i.e. it is addressed to one or more
+    // recipient keys (see ListEncryptionKeyIds below for which ones). A message can legitimately
+    // be both public-key and password encrypted at once (both PKESK and SKESK packets), so this
+    // and IsPasswordEncrypted below are independent questions, not two halves of one.
+    int IsPublicKeyEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
+                             bool* isPublicKeyEncrypted) const;
+
+    // *isPasswordEncrypted receives true when the message carries a Symmetric-Key Encrypted
+    // Session Key packet (SKESK, tag 3) -- i.e. a passphrase alone can open it. CPgpEngine itself
+    // never PRODUCES such a message (it has no symmetric-only encryption method; CPgpEngineWrapper
+    // does, via EncryptBufferSymmetric), but real gpg's "--symmetric" output is read correctly
+    // here.
+    int IsPasswordEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
+                            bool* isPasswordEncrypted) const;
+
+    // *isIntegrityProtected receives true when the encrypted payload is wrapped in a Sym.
+    // Encrypted Integrity Protected Data packet (SEIP, tag 18, the MDC-protected packet this
+    // engine always writes) or in an AEAD Encrypted Data packet (tag 20, what recent GnuPG
+    // releases produce for keys advertising AEAD support -- integrity protected by construction),
+    // and false when it is the obsolete, unprotected Symmetrically Encrypted Data packet (SED,
+    // tag 9). NOTE the honest edge case: false is ALSO what an input carrying no encrypted-data
+    // packet at all (a detached signature, a clear-signed message, a plain compressed file) gets,
+    // simply because there is no ciphertext there to protect -- call IsPublicKeyEncrypted/
+    // IsPasswordEncrypted first if the two cases must be told apart.
+    int IsIntegrityProtected( const unsigned char* inputBuffer, const int inputBufferSize,
+                             bool* isIntegrityProtected) const;
+
+    // *compressionAlgorithm receives the RFC 4880 section 9.3 compression algorithm octet declared
+    // by the first Compressed Data packet (tag 8) reachable WITHOUT decrypting (0 = uncompressed,
+    // 1 = ZIP, 2 = ZLIB, 3 = BZip2), or one of the two PgpCompressionInspectionResult sentinels
+    // documented above that enum: PGP_COMPRESSION_NOT_PRESENT (-1) when the input is not encrypted
+    // and provably carries no Compressed Data packet, or
+    // PGP_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION (-2) when the input IS encrypted, so any compressed
+    // layer would sit inside the ciphertext where it cannot be seen. Returns NO_ERROR in all three
+    // cases (the answer is in the out-parameter, not the return code); INVALID_DATA only when the
+    // input is not parseable as OpenPGP packets at all.
+    int GetCompression( const unsigned char* inputBuffer, const int inputBufferSize,
+                       int* compressionAlgorithm) const;
+
+    // Enumerates the Key ID of every PKESK packet -- the recipient keys the message is encrypted
+    // to -- in the order they appear in the message, without decrypting anything. *keyIdCount
+    // receives the number of records found (always set on success, even when zero), and the
+    // caller's buffer receives that many fixed-stride PGP_INSPECTION_KEY_ID_RECORD_SIZE-byte
+    // "XXXXXXXXXXXXXXXX\0" records back to back. Same capacity-query convention as
+    // ExportPublicKeyArmored: outputBufferCapacity = 0 / outputBuffer = nullptr reports the
+    // required byte count in *outputBufferSize and returns BUFFER_TOO_SMALL -- except when there
+    // are no records at all, where *outputBufferSize = 0 and NO_ERROR is returned (there is
+    // nothing a bigger buffer could hold). A recipient hidden with gpg's own "--throw-keyids"
+    // legitimately reports an all-zero Key ID; that is the message's own content, not a parse
+    // failure.
+    int ListEncryptionKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
+                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
+                             int* keyIdCount) const;
+
+    // Enumerates the issuer Key ID of every signature this parser can reach without decrypting --
+    // Signature packets (tag 2, e.g. SignBuffer/SignFile detached signatures and the signature
+    // block of a clear-signed message) and One-Pass Signature packets (tag 4, which real GnuPG
+    // writes ahead of a signed-and-compressed document; this engine only READS them, it never
+    // writes one). Same record layout, count semantics and BUFFER_TOO_SMALL convention as
+    // ListEncryptionKeyIds above. A signature packet whose issuer cannot be determined (neither an
+    // Issuer Key ID subpacket, type 16, nor an Issuer Fingerprint subpacket, type 33) is reported
+    // as the 16-character record "????????????????" rather than being silently dropped, so the
+    // count still matches ListSignatures below.
+    int ListSigningKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
+                          const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
+                          int* keyIdCount) const;
+
+    // Richer form of ListSigningKeyIds above, over exactly the same set of signature packets and
+    // in the same order: each record is PGP_INSPECTION_SIGNATURE_RECORD_SIZE bytes of
+    // "XXXXXXXXXXXXXXXX:TT:HH\0" -- the issuer Key ID (or "????????????????"), the RFC 4880
+    // section 5.2.1 signature type octet as 2 hex chars (00 = binary document, 01 = canonical text
+    // document, 10-13 = user-id certifications, 18 = subkey binding, 20 = key revocation, ...),
+    // and the RFC 4880 section 9.4 hash algorithm octet as 2 hex chars (08 = SHA-256, 0A =
+    // SHA-512, ...). Same count semantics and BUFFER_TOO_SMALL convention as the two methods
+    // above. Version 3 and version 4 signature packets are reported; a signature packet of any
+    // other version is skipped by BOTH this method and ListSigningKeyIds (consistently, so their
+    // counts always agree), since its field layout is not one this parser claims to know.
+    int ListSignatures( const unsigned char* inputBuffer, const int inputBufferSize,
+                       const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
+                       int* signatureCount) const;
 
 protected:
 
