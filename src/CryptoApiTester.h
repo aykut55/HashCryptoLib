@@ -627,6 +627,37 @@ public:
     // confirming an ECC identity interoperates with an RSA one through the same gpg keyring.
     int RunPgpWrapperEccKeyGenerationTest(void);
 
+    // Extra capability beyond CPgpEngine: symmetric-only ("passphrase") encryption. A SINGLE
+    // CPgpEngineWrapper instance that NEVER calls GenerateKeyPair/GenerateKeyPairEcc round-trips a
+    // binary buffer through EncryptBufferSymmetric/DecryptBuffer and a UTF-8 string through
+    // EncryptStringArmoredSymmetric/DecryptStringArmored, both byte-exact -- directly demonstrating
+    // that DecryptBuffer/DecryptStringArmored need no own identity for a symmetric (SKESK) message
+    // (see this class's own header comment on EncryptBufferSymmetric for the investigation this
+    // confirms). A wrong-passphrase DecryptBuffer attempt is confirmed to fail rather than silently
+    // succeed.
+    int RunPgpWrapperSymmetricEncryptDecryptTest(void);
+
+    // Extra capability beyond CPgpEngine: ground-truth keyring introspection/removal. bob generates
+    // an identity and imports alice's public key, then GetKeyringKeyCount/GetKeyringListing/
+    // GetKeyringKeyId are checked against the real underlying keyring (2 keys: bob's own plus
+    // alice's). DeletePeerPublicKey(alice) is confirmed to drop both the real keyring count and
+    // GetImportedPeerKeyCount back down, and to be rejected (INVALID_ARGUMENT) when pointed at
+    // bob's OWN key id. DeleteOwnIdentity is then confirmed to reset bob's own identity state
+    // (GetKeyId empty, exported key sizes 0, keyring count 0) and to allow a fresh GenerateKeyPair
+    // call afterward in the same homedir.
+    int RunPgpWrapperKeyringListDeleteTest(void);
+
+    // Extra capability beyond CPgpEngine: real gpg "--compress-algo" selection. bob encrypts the
+    // SAME highly-compressible plaintext to alice four times, once per PgpCompressionAlgorithm
+    // value, via the new PgpCompressionAlgorithm-taking EncryptBuffer overload; alice DecryptBuffer
+    // round-trips all four back to the identical plaintext. PGP_COMPRESSION_ALGORITHM_NONE's
+    // ciphertext is confirmed to be dramatically LARGER than ZIP/ZLIB/BZIP2's (real gpg only omits
+    // the Compressed Data packet entirely for NONE), which is direct evidence the selected
+    // algorithm actually reached gpg rather than merely round-tripping under gpg's own default.
+    // Also exercises the PgpCompressionAlgorithm-taking EncryptBufferMultiRecipient overload once
+    // (bob addressing both alice and carol) to confirm that overload compiles and works too.
+    int RunPgpWrapperCompressionAlgorithmTest(void);
+
 protected:
 
 private:

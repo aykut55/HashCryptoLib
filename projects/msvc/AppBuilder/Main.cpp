@@ -220,7 +220,7 @@ int main()
     cryptoApiTester.RunRandomAlgorithmsTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunPgpKeyGenerationTest();
 
     cryptoApiTester.RunPgpEncryptDecryptTest();
@@ -273,7 +273,7 @@ int main()
     cryptoApiTester.RunPgpGnuPgEd25519RevocationInteropTest();
 #endif
 
-#if 0
+#if 1
     cryptoApiTester.RunPgpWrapperAvailabilityTest();
 
     cryptoApiTester.RunPgpWrapperKeyGenerationTest();
@@ -297,6 +297,12 @@ int main()
     cryptoApiTester.RunPgpWrapperMultiRecipientEncryptTest();
 
     cryptoApiTester.RunPgpWrapperEccKeyGenerationTest();
+
+    cryptoApiTester.RunPgpWrapperSymmetricEncryptDecryptTest();
+
+    cryptoApiTester.RunPgpWrapperKeyringListDeleteTest();
+
+    cryptoApiTester.RunPgpWrapperCompressionAlgorithmTest();
 #endif
 
     return 0;

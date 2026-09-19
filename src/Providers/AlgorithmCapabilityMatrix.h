@@ -571,8 +571,9 @@
 // ================================================================================================
 
 // ================================================================================================
-// LIBGCRYPT (GnuPG's crypto library) -- reference only, not a provider in this SDK (GPL-licensed,
-// C library, but not vendored here). Source: https://www.gnupg.org/software/libgcrypt/index.html
+// LIBGCRYPT (GnuPG's crypto library) -- older published-list snapshot; reference only, not a
+// provider in this SDK. The LGPL-2.1-or-later C library is vendored under 3rdParty/libgcrypt1124.
+// Source: https://www.gnupg.org/software/libgcrypt/index.html
 // ================================================================================================
 //
 //   Libgcrypt's own list, as published:
@@ -787,5 +788,130 @@
 //   even one of the 4 providers behind it.
 //
 // ================================================================================================
+
+// ================================================================================================
+// LIBGCRYPT 1.12.4 -- complete local-source algorithm inventory (reference only)
+// ================================================================================================
+//
+// Source of truth: vendored 3rdParty/libgcrypt1124/src/gcrypt.h.in, cipher/cipher.c, cipher/md.c and
+// cipher/ecc-curves.c, checked on 2026-09-19.  This section supersedes the
+// shorter published-list snapshot above.  Libgcrypt is not wired as an ICryptoProvider in this SDK.
+// The vendored library is LGPL-2.1-or-later and requires libgpg-error.  Configure-time module
+// selection and FIPS mode can reduce a concrete build's usable set; use gcry_*_test_algo at runtime
+// when availability in a particular binary must be established.
+//
+//   Symmetric ciphers:
+//       IDEA, Triple-DES, CAST5, Blowfish, AES-128, AES-192, AES-256,
+//       Twofish, Twofish-128, Arcfour (RC4), DES, Serpent-128/192/256, RFC 2268-40/128 (RC2),
+//       SEED, Camellia-128/192/256, Salsa20, Salsa20/12, GOST 28147-89,
+//       GOST 28147-89 with CryptoPro key meshing, ChaCha20, SM4, ARIA-128/192/256
+//
+//   Cipher modes and authenticated constructions:
+//       ECB, CFB, CFB8, CBC, OFB, CTR, stream, AES Key Wrap, CCM, GCM, Poly1305, OCB, XTS,
+//       EAX, SIV, GCM-SIV
+//
+//   Digests, checksums and XOFs:
+//       MD2, MD4, MD5, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256,
+//       SHA3-224/256/384/512, SHAKE-128/256, cSHAKE-128/256, RIPEMD-160, Tiger, Tiger1,
+//       Tiger2, Whirlpool, GOST R 34.11-94, GOST R 34.11-94 CryptoPro,
+//       Streebog-256/512, BLAKE2b-160/256/384/512, BLAKE2s-128/160/224/256, SM3,
+//       CRC-32, CRC-32/RFC 1510, CRC-24/RFC 2440
+//
+//   Message authentication codes:
+//       GOST 28147-89 IMIT;
+//       HMAC with MD2, MD4, MD5, SHA-1, SHA-224/256/384/512, SHA-512/224, SHA-512/256,
+//         SHA3-224/256/384/512, RIPEMD-160, Tiger1, Whirlpool, GOST R 34.11-94,
+//         GOST R 34.11-94 CryptoPro, Streebog-256/512, BLAKE2b-160/256/384/512,
+//         BLAKE2s-128/160/224/256, or SM3;
+//       CMAC with AES, Triple-DES, Camellia, CAST5, Blowfish, Twofish, Serpent, SEED, RC2,
+//         IDEA, GOST 28147-89, SM4, or ARIA;
+//       GMAC with AES, Camellia, Twofish, Serpent, SEED, SM4, or ARIA;
+//       Poly1305 standalone or with AES, Camellia, Twofish, Serpent, SEED, SM4, or ARIA
+//
+//   Public-key families:
+//       RSA (encryption and signing), ElGamal (encryption), DSA, ECC, ECDSA, EdDSA, ECDH,
+//       ML-DSA and the generic KEM public-key interface
+//
+//   Built-in ECC curves:
+//       Ed25519, Curve25519/X25519, ietf25, Ed448, X448, NIST P-192/224/256/384/521,
+//       brainpoolP160r1/P192r1/P224r1/P256r1/P320r1/P384r1/P512r1,
+//       GOST2001-test, GOST2001-CryptoPro-A/B/C, GOST2012-256-A,
+//       GOST2012-512-test/tc26-A/tc26-B/tc26-C, secp256k1, sm2p256v1
+//
+//   Key encapsulation mechanisms:
+//       SNTRUP761, Classic McEliece 6688128f, ML-KEM-512/768/1024 (Kyber),
+//       raw X25519/X448, raw brainpoolP256r1/P384r1/P512r1,
+//       raw NIST P-256/P-384/P-521, raw secp256k1,
+//       DHKEM(X25519, HKDF-SHA256), DHKEM(X448, HKDF-SHA512),
+//       DHKEM(P-256/P-384/P-521)
+//
+//   Key derivation functions:
+//       Simple S2K, Salted S2K, Iterated-and-Salted S2K, PBKDF1, PBKDF2, scrypt,
+//       Argon2d/Argon2i/Argon2id, Balloon, One-Step KDF, One-Step KDF with MAC, HKDF,
+//       ANSI X9.63 KDF
+//
+// ------------------------------------------------------------------------------------------------
+// Cross-provider matrix for Libgcrypt's algorithm surface. Y = available in the library,
+// N = unavailable, W = already wired through this SDK, and * = version/provider/build dependent.
+// Gcrypt is reference-only here, so its supported entries are Y rather than W.
+// ------------------------------------------------------------------------------------------------
+//
+//   Algorithm                    MS    CPP   Botan   OSSL   Gcrypt  Notes
+//   ------------------------     ----  ----  -----   ----   ------  -------------------------------
+//   AES                          W     W     W       W      Y       128/192/256-bit keys
+//   DES / Triple-DES             W     Y     Y       Y      Y
+//   RC2                          W     Y     N       Y*     Y       OSSL legacy provider
+//   RC4                          W     Y     Y*      Y*     Y       Botan/OSSL legacy support
+//   IDEA                         N     Y     Y       Y*     Y       OSSL build dependent
+//   CAST5                        N     Y     Y       Y      Y
+//   Blowfish                     N     Y     Y       Y*     Y       OSSL legacy provider
+//   Twofish                      N     Y     Y       N      Y
+//   Serpent                      N     Y     Y       N      Y
+//   Camellia                     N     Y     Y       Y      Y
+//   SEED                         N     Y     Y       Y      Y
+//   GOST 28147-89                N     Y     Y       Y*     Y
+//   Salsa20                      N     Y     Y       N      Y
+//   ChaCha20                     N     Y     Y       Y      Y
+//   SM4                          N     Y     Y       Y      Y
+//   ARIA                         N     Y     Y       Y      Y
+//   CCM / GCM                    W     W     W       W      Y       SDK W rows cover AES
+//   OCB / EAX / SIV              N     N*    Y       Y*     Y       OSSL depends on construction
+//   XTS                          Y*    Y*    Y*      Y      Y
+//   AES Key Wrap                 N*    N*    Y*      Y      Y
+//   SHA-1 / SHA-2                W     W     W       W      Y
+//   SHA-3 / SHAKE                W*    W     W       W      Y       MS SHA-3 requires newer Windows
+//   cSHAKE-128/256               N*    N*    N*      Y      Y
+//   BLAKE2b / BLAKE2s            N     W     W       W      Y
+//   RIPEMD-160                   N     W     W       W      Y
+//   MD2 / MD4                    Y*    Y     N       Y*     Y       Legacy or weak algorithms
+//   Tiger                        N     Y     N       N      Y
+//   Whirlpool                    N     Y     Y       Y*     Y       OSSL legacy provider
+//   GOST R 34.11-94              N     N*    Y       N*     Y
+//   Streebog-256/512             N     N     Y       N      Y
+//   SM3                          N     Y     Y       Y      Y
+//   HMAC / CMAC / GMAC           W*    Y     Y       Y      Y       Wired SDK MAC surface is narrower
+//   Poly1305                     Y*    Y     Y       Y      Y
+//   RSA                          W     Y     Y       Y      Y
+//   DSA / ElGamal                N     Y     Y       Y*     Y       ElGamal absent from OSSL
+//   ECDSA / ECDH                 Y*    Y     Y       Y      Y
+//   Ed25519 / X25519             Y*    Y     Y       Y      Y
+//   Ed448 / X448                 Y*    N*    Y       Y      Y
+//   ML-DSA                       N*    N     Y       Y*     Y
+//   ML-KEM                       N*    N     Y       Y*     Y
+//   SNTRUP761                    N     N     N       N      Y
+//   Classic McEliece             N     N     Y       N      Y       Gcrypt parameter set 6688128f
+//   PBKDF1 / PBKDF2              Y*    Y     Y       Y      Y
+//   scrypt                       N     Y*    Y       Y      Y
+//   Argon2d/i/id                 N     Y*    Y       Y*     Y
+//   HKDF                         Y*    Y     Y       Y      Y
+//   ANSI X9.63 KDF               Y*    Y*    Y       Y      Y
+//
+//   Reserved but unimplemented public IDs (therefore excluded above):
+//       SAFER-SK128, DES-SK, HAVAL
+//
+// ================================================================================================
+
+// https://cryptopp-modern.com/
+// Buna bakýlacak
 
 #endif

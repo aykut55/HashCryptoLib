@@ -512,6 +512,62 @@ int mapRevocationReasonToGpgMenu(const unsigned char rfcReasonCode)
 }
 // -----------------------------------------------------------------------------
 
+// Maps a PgpCompressionAlgorithm value (validated by the public method before this is called) to
+// the exact token real gpg's own "--compress-algo" option expects.
+const char* compressionAlgorithmToGpgName(const int compressionAlgorithm)
+{
+    switch (compressionAlgorithm)
+    {
+        case PGP_COMPRESSION_ALGORITHM_NONE:  return "none";
+        case PGP_COMPRESSION_ALGORITHM_ZIP:   return "zip";
+        case PGP_COMPRESSION_ALGORITHM_ZLIB:  return "zlib";
+        case PGP_COMPRESSION_ALGORITHM_BZIP2: return "bzip2";
+        default: return "zip";
+    }
+}
+// -----------------------------------------------------------------------------
+
+// The colon-format "pub" record's field 5 (1-indexed, i.e. index 4 when split on ':') is already
+// the 16-hex-char long Key ID itself -- GnuPG's own --with-colons format documentation confirms
+// this, so (unlike keyIdFromFingerprint above, which derives one from a "fpr" record's full
+// fingerprint) no separate fingerprint lookup is needed here. Used by GetKeyringKeyCount/
+// GetKeyringKeyId to enumerate every public key gpg's own "--list-keys" reports, independent of
+// this class's own peerKeyIds bookkeeping.
+void parseKeyIdsFromColonListing(const std::string& colonOutput, std::vector<std::string>& keyIdsOut)
+{
+    try
+    {
+        std::istringstream lineStream(colonOutput);
+        std::string line;
+        while (std::getline(lineStream, line))
+        {
+            if (line.rfind("pub:", 0) == 0)
+            {
+                std::vector<std::string> fields;
+                std::istringstream fieldStream(line);
+                std::string field;
+                while (std::getline(fieldStream, field, ':'))
+                {
+                    fields.push_back(field);
+                }
+                if (fields.size() > 4 && fields[4].size() == 16)
+                {
+                    std::string id = fields[4];
+                    for (std::size_t i = 0; i < id.size(); ++i)
+                    {
+                        id[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[i])));
+                    }
+                    keyIdsOut.push_back(id);
+                }
+            }
+        }
+    }
+    catch (...)
+    {
+    }
+}
+// -----------------------------------------------------------------------------
+
 std::string sanitizeSingleLine(const std::string& text)
 {
     std::string result = text;
@@ -545,6 +601,7 @@ struct CPgpEngineWrapper::Impl
 
     bool ownKeyGenerated;
     std::string ownKeyId;
+    std::string ownKeyFingerprint;
     std::string ownPublicKeyArmored;
     std::string ownSecretKeyArmored;
     unsigned int keyExpirationSeconds;
@@ -563,7 +620,13 @@ struct CPgpEngineWrapper::Impl
 
     int encryptCommon( const unsigned char* inputBuffer, const int inputBufferSize,
                       const std::vector<std::string>& recipientIds, const bool armor,
-                      std::vector<unsigned char>& outBytes);
+                      const int compressionAlgorithm, std::vector<unsigned char>& outBytes);
+
+    int encryptSymmetricCommon( const char* passphrase, const int passphraseSize,
+                               const unsigned char* inputBuffer, const int inputBufferSize,
+                               const bool armor, std::vector<unsigned char>& outBytes);
+
+    int listKeyringColonOutput(std::string& colonOutputOut);
 
     int decryptCommon( const char* password, const int passwordSize,
                       const unsigned char* inputBuffer, const int inputBufferSize,
@@ -760,6 +823,7 @@ int CPgpEngineWrapper::Impl::generateKeyPairInternal( const char* userId, const 
 
         ownKeyGenerated = true;
         ownKeyId = keyId;
+        ownKeyFingerprint = fingerprint;
         ownPublicKeyArmored = exportPubResult.output;
         ownSecretKeyArmored = exportSecResult.output;
         keyExpirationSeconds = expirationSeconds;
@@ -774,7 +838,7 @@ int CPgpEngineWrapper::Impl::generateKeyPairInternal( const char* userId, const 
 
 int CPgpEngineWrapper::Impl::encryptCommon( const unsigned char* inputBuffer, const int inputBufferSize,
                                            const std::vector<std::string>& recipientIds, const bool armor,
-                                           std::vector<unsigned char>& outBytes)
+                                           const int compressionAlgorithm, std::vector<unsigned char>& outBytes)
 {
     try
     {
@@ -805,6 +869,14 @@ int CPgpEngineWrapper::Impl::encryptCommon( const unsigned char* inputBuffer, co
         std::vector<std::string> args = baseArgs();
         args.push_back("--trust-model");
         args.push_back("always");
+        // compressionAlgorithm < 0 means "no override" -- the command line is left byte-for-byte
+        // identical to what it was before compression selection existed, so gpg's own default
+        // (currently ZIP) applies exactly as it always has for every pre-existing caller.
+        if (compressionAlgorithm >= 0)
+        {
+            args.push_back("--compress-algo");
+            args.push_back(compressionAlgorithmToGpgName(compressionAlgorithm));
+        }
         for (std::size_t i = 0; i < recipientIds.size(); ++i)
         {
             args.push_back("-r");
@@ -842,16 +914,134 @@ int CPgpEngineWrapper::Impl::encryptCommon( const unsigned char* inputBuffer, co
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngineWrapper::Impl::encryptSymmetricCommon( const char* passphrase, const int passphraseSize,
+                                                    const unsigned char* inputBuffer, const int inputBufferSize,
+                                                    const bool armor, std::vector<unsigned char>& outBytes)
+{
+    try
+    {
+        if (passphrase == nullptr || passphraseSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string inPath = makeTempPath(".in");
+        const std::string outPath = makeTempPath(armor ? ".asc" : ".gpg");
+        if (!writeAllBytesToFile(inPath, inputBuffer, static_cast<std::size_t>(inputBufferSize)))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        // No "-r"/recipient and no "--trust-model always" here (irrelevant for a passphrase-only
+        // message; there is no recipient public key to trust) -- otherwise the same
+        // --pinentry-mode loopback / --passphrase-fd 0 plumbing decryptCommon below already uses,
+        // just on the encrypt side and with "--symmetric" instead of "--decrypt"/"--encrypt".
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        if (armor)
+        {
+            args.push_back("--armor");
+        }
+        args.push_back("--output");
+        args.push_back(outPath);
+        args.push_back("--symmetric");
+        args.push_back(inPath);
+
+        std::string stdinData(passphrase, static_cast<std::size_t>(passphraseSize));
+        stdinData.push_back('\n');
+
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        std::remove(inPath.c_str());
+        if (!result.started || result.exitCode != 0)
+        {
+            std::remove(outPath.c_str());
+            return UNEXPECTED_ERROR;
+        }
+
+        const bool readOk = readAllBytesFromFile(outPath, outBytes);
+        std::remove(outPath.c_str());
+        if (!readOk)
+        {
+            return FILE_IO_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::listKeyringColonOutput(std::string& colonOutputOut)
+{
+    try
+    {
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--with-colons");
+        args.push_back("--fingerprint");
+        args.push_back("--list-keys");
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        if (!result.started)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // Not checking result.exitCode here: gpg has been observed (see this class's header
+        // comment and the ImportPeerPublicKey/RevokeKeyArmored quirk-tolerance notes elsewhere in
+        // this file) to report a non-zero exit for unrelated trustdb bookkeeping even when the
+        // listing itself succeeded -- the combined output text is the real verdict, same
+        // philosophy applied consistently throughout this file.
+        colonOutputOut = result.output;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngineWrapper::Impl::decryptCommon( const char* password, const int passwordSize,
                                            const unsigned char* inputBuffer, const int inputBufferSize,
                                            const char* tempSuffix, std::vector<unsigned char>& outPlain)
 {
     try
     {
-        if (!ownKeyGenerated)
-        {
-            return INVALID_ARGUMENT;
-        }
+        // Deliberately NOT requiring ownKeyGenerated here (unlike signCommon/clearSignCommon,
+        // which genuinely cannot do anything without this instance's own secret key): a
+        // symmetric-only (SKESK) message from EncryptBufferSymmetric/EncryptStringArmoredSymmetric
+        // needs no identity at all to decrypt, since real gpg's own "--decrypt" autodetects
+        // SKESK vs. PKESK from the ciphertext and reads the passphrase off passphrase-fd either
+        // way (verified against this machine's gpg.exe while adding symmetric-encryption support
+        // to this class). A caller attempting to decrypt a genuine public-key-encrypted (PKESK)
+        // message without ever having called GenerateKeyPair/GenerateKeyPairEcc still fails here,
+        // just later and more honestly: gpg itself reports it has no matching secret key, which
+        // this method surfaces below as INVALID_DATA exactly like any other decryption failure.
         if (password == nullptr || passwordSize <= 0 || inputBuffer == nullptr || inputBufferSize <= 0)
         {
             return INVALID_ARGUMENT;
@@ -1640,6 +1830,198 @@ int CPgpEngineWrapper::GetImportedPeerKeyId(const int peerIndex, char* outputBuf
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngineWrapper::GetKeyringListing(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::string colonOutput;
+        const int status = impl_->listKeyringColonOutput(colonOutput);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(colonOutput.size()))
+        {
+            *outputBufferSize = static_cast<int>(colonOutput.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!colonOutput.empty())
+        {
+            std::memcpy(outputBuffer, colonOutput.data(), colonOutput.size());
+        }
+        *outputBufferSize = static_cast<int>(colonOutput.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::GetKeyringKeyCount(void) const
+{
+    try
+    {
+        if (!impl_)
+        {
+            return 0;
+        }
+        std::string colonOutput;
+        if (impl_->listKeyringColonOutput(colonOutput) != NO_ERROR)
+        {
+            return 0;
+        }
+        std::vector<std::string> keyIds;
+        parseKeyIdsFromColonListing(colonOutput, keyIds);
+        return static_cast<int>(keyIds.size());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::GetKeyringKeyId(const int keyIndex, char* outputBuffer, const int outputBufferCapacity) const
+{
+    try
+    {
+        if (!impl_ || keyIndex < 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::string colonOutput;
+        if (impl_->listKeyringColonOutput(colonOutput) != NO_ERROR)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<std::string> keyIds;
+        parseKeyIdsFromColonListing(colonOutput, keyIds);
+        if (keyIndex >= static_cast<int>(keyIds.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < 17)
+        {
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, keyIds[static_cast<std::size_t>(keyIndex)].data(), 16);
+        outputBuffer[16] = '\0';
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::DeletePeerPublicKey(const char* keyId, const int keyIdSize)
+{
+    try
+    {
+        if (!impl_ || keyId == nullptr || keyIdSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::string id(keyId, static_cast<std::size_t>(keyIdSize));
+        for (std::size_t i = 0; i < id.size(); ++i)
+        {
+            id[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[i])));
+        }
+        if (impl_->ownKeyGenerated && id == impl_->ownKeyId)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!impl_->gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!impl_->homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::string> args = impl_->baseArgs();
+        args.push_back("--delete-key");
+        args.push_back(id);
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        for (std::size_t i = 0; i < impl_->peerKeyIds.size(); ++i)
+        {
+            if (impl_->peerKeyIds[i] == id)
+            {
+                impl_->peerKeyIds.erase(impl_->peerKeyIds.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::DeleteOwnIdentity(void)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!impl_->ownKeyGenerated)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!impl_->gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!impl_->homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // Batch mode requires the full fingerprint for this specific command (a bare 16-hex-char
+        // Key ID is rejected with "can't do this in batch mode" -- verified against this machine's
+        // gpg.exe while building this feature), unlike --delete-key above and every other
+        // key-id-taking gpg invocation elsewhere in this file.
+        std::vector<std::string> args = impl_->baseArgs();
+        args.push_back("--delete-secret-and-public-key");
+        args.push_back(impl_->ownKeyFingerprint);
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        impl_->ownKeyGenerated = false;
+        impl_->ownKeyId.clear();
+        impl_->ownKeyFingerprint.clear();
+        impl_->ownPublicKeyArmored.clear();
+        impl_->ownSecretKeyArmored.clear();
+        impl_->keyExpirationSeconds = 0;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngineWrapper::EncryptBuffer(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
 {
     try
@@ -1654,7 +2036,49 @@ int CPgpEngineWrapper::EncryptBuffer(const unsigned char* inputBuffer, const int
         }
         std::vector<std::string> recipients(1, impl_->peerKeyIds.back());
         std::vector<unsigned char> cipherBytes;
-        const int status = impl_->encryptCommon(inputBuffer, inputBufferSize, recipients, false, cipherBytes);
+        const int status = impl_->encryptCommon(inputBuffer, inputBufferSize, recipients, false, -1, cipherBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(cipherBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(cipherBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!cipherBytes.empty())
+        {
+            std::memcpy(outputBuffer, cipherBytes.data(), cipherBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(cipherBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::EncryptBuffer(const unsigned char* inputBuffer, const int inputBufferSize, const PgpCompressionAlgorithm compressionAlgorithm, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (compressionAlgorithm < PGP_COMPRESSION_ALGORITHM_NONE || compressionAlgorithm > PGP_COMPRESSION_ALGORITHM_BZIP2)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (impl_->peerKeyIds.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<std::string> recipients(1, impl_->peerKeyIds.back());
+        std::vector<unsigned char> cipherBytes;
+        const int status = impl_->encryptCommon(inputBuffer, inputBufferSize, recipients, false, static_cast<int>(compressionAlgorithm), cipherBytes);
         if (status != NO_ERROR)
         {
             return status;
@@ -1692,7 +2116,119 @@ int CPgpEngineWrapper::EncryptStringArmored(const char* inputString, const int i
         }
         std::vector<std::string> recipients(1, impl_->peerKeyIds.back());
         std::vector<unsigned char> armoredBytes;
-        const int status = impl_->encryptCommon(reinterpret_cast<const unsigned char*>(inputString), inputStringSize, recipients, true, armoredBytes);
+        const int status = impl_->encryptCommon(reinterpret_cast<const unsigned char*>(inputString), inputStringSize, recipients, true, -1, armoredBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armoredBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(armoredBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!armoredBytes.empty())
+        {
+            std::memcpy(outputBuffer, armoredBytes.data(), armoredBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(armoredBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::EncryptStringArmored(const char* inputString, const int inputStringSize, const PgpCompressionAlgorithm compressionAlgorithm, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (compressionAlgorithm < PGP_COMPRESSION_ALGORITHM_NONE || compressionAlgorithm > PGP_COMPRESSION_ALGORITHM_BZIP2)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (impl_->peerKeyIds.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<std::string> recipients(1, impl_->peerKeyIds.back());
+        std::vector<unsigned char> armoredBytes;
+        const int status = impl_->encryptCommon(reinterpret_cast<const unsigned char*>(inputString), inputStringSize, recipients, true, static_cast<int>(compressionAlgorithm), armoredBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armoredBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(armoredBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!armoredBytes.empty())
+        {
+            std::memcpy(outputBuffer, armoredBytes.data(), armoredBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(armoredBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::EncryptBufferSymmetric( const char* passphrase, const int passphraseSize,
+                                              const unsigned char* inputBuffer, const int inputBufferSize,
+                                              const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<unsigned char> cipherBytes;
+        const int status = impl_->encryptSymmetricCommon(passphrase, passphraseSize, inputBuffer, inputBufferSize, false, cipherBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(cipherBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(cipherBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!cipherBytes.empty())
+        {
+            std::memcpy(outputBuffer, cipherBytes.data(), cipherBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(cipherBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::EncryptStringArmoredSymmetric( const char* passphrase, const int passphraseSize,
+                                                     const char* inputString, const int inputStringSize,
+                                                     const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<unsigned char> armoredBytes;
+        const int status = impl_->encryptSymmetricCommon(passphrase, passphraseSize, reinterpret_cast<const unsigned char*>(inputString), inputStringSize, true, armoredBytes);
         if (status != NO_ERROR)
         {
             return status;
@@ -1737,7 +2273,57 @@ int CPgpEngineWrapper::EncryptBufferMultiRecipient( const unsigned char* inputBu
             recipients.push_back(recipientKeyIds[i]);
         }
         std::vector<unsigned char> cipherBytes;
-        const int status = impl_->encryptCommon(inputBuffer, inputBufferSize, recipients, false, cipherBytes);
+        const int status = impl_->encryptCommon(inputBuffer, inputBufferSize, recipients, false, -1, cipherBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(cipherBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(cipherBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!cipherBytes.empty())
+        {
+            std::memcpy(outputBuffer, cipherBytes.data(), cipherBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(cipherBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::EncryptBufferMultiRecipient( const unsigned char* inputBuffer, const int inputBufferSize,
+                                                   const char* const* recipientKeyIds, const int recipientCount,
+                                                   const PgpCompressionAlgorithm compressionAlgorithm,
+                                                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr || recipientKeyIds == nullptr || recipientCount <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (compressionAlgorithm < PGP_COMPRESSION_ALGORITHM_NONE || compressionAlgorithm > PGP_COMPRESSION_ALGORITHM_BZIP2)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<std::string> recipients;
+        recipients.reserve(static_cast<std::size_t>(recipientCount));
+        for (int i = 0; i < recipientCount; ++i)
+        {
+            if (recipientKeyIds[i] == nullptr)
+            {
+                return INVALID_ARGUMENT;
+            }
+            recipients.push_back(recipientKeyIds[i]);
+        }
+        std::vector<unsigned char> cipherBytes;
+        const int status = impl_->encryptCommon(inputBuffer, inputBufferSize, recipients, false, static_cast<int>(compressionAlgorithm), cipherBytes);
         if (status != NO_ERROR)
         {
             return status;
@@ -1782,7 +2368,57 @@ int CPgpEngineWrapper::EncryptStringArmoredMultiRecipient( const char* inputStri
             recipients.push_back(recipientKeyIds[i]);
         }
         std::vector<unsigned char> armoredBytes;
-        const int status = impl_->encryptCommon(reinterpret_cast<const unsigned char*>(inputString), inputStringSize, recipients, true, armoredBytes);
+        const int status = impl_->encryptCommon(reinterpret_cast<const unsigned char*>(inputString), inputStringSize, recipients, true, -1, armoredBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armoredBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(armoredBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!armoredBytes.empty())
+        {
+            std::memcpy(outputBuffer, armoredBytes.data(), armoredBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(armoredBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::EncryptStringArmoredMultiRecipient( const char* inputString, const int inputStringSize,
+                                                          const char* const* recipientKeyIds, const int recipientCount,
+                                                          const PgpCompressionAlgorithm compressionAlgorithm,
+                                                          const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr || recipientKeyIds == nullptr || recipientCount <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (compressionAlgorithm < PGP_COMPRESSION_ALGORITHM_NONE || compressionAlgorithm > PGP_COMPRESSION_ALGORITHM_BZIP2)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<std::string> recipients;
+        recipients.reserve(static_cast<std::size_t>(recipientCount));
+        for (int i = 0; i < recipientCount; ++i)
+        {
+            if (recipientKeyIds[i] == nullptr)
+            {
+                return INVALID_ARGUMENT;
+            }
+            recipients.push_back(recipientKeyIds[i]);
+        }
+        std::vector<unsigned char> armoredBytes;
+        const int status = impl_->encryptCommon(reinterpret_cast<const unsigned char*>(inputString), inputStringSize, recipients, true, static_cast<int>(compressionAlgorithm), armoredBytes);
         if (status != NO_ERROR)
         {
             return status;

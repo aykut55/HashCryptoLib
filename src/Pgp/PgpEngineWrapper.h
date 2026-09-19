@@ -9,6 +9,26 @@ namespace CryptoApiNS
 {
 
 // ====================================================================================================
+// PgpCompressionAlgorithm -- selects which RFC 4880 5.2.3.9 compression algorithm (or none) real
+// gpg's own "--compress-algo" option applies to a message's Literal Data packet before encryption,
+// for the EncryptBuffer/EncryptStringArmored/EncryptBufferMultiRecipient/
+// EncryptStringArmoredMultiRecipient overloads below that accept one. Numeric values match RFC
+// 4880's own Compression Algorithm registry: 0=uncompressed, 1=ZIP (RFC 1951; also gpg's own
+// default when no --compress-algo is given at all, verified against this machine's gpg.exe while
+// building this feature), 2=ZLIB (RFC 1950), 3=BZIP2. The overloads WITHOUT a
+// PgpCompressionAlgorithm argument are completely unaffected by this enum and keep using gpg's own
+// default exactly as before -- this is purely additive.
+// ====================================================================================================
+
+enum PgpCompressionAlgorithm
+{
+    PGP_COMPRESSION_ALGORITHM_NONE  = 0,
+    PGP_COMPRESSION_ALGORITHM_ZIP   = 1,
+    PGP_COMPRESSION_ALGORITHM_ZLIB  = 2,
+    PGP_COMPRESSION_ALGORITHM_BZIP2 = 3
+};
+
+// ====================================================================================================
 // CPgpEngineWrapper -- unlike CPgpEngine (which reimplements RFC 4880 itself on top of CryptoPP),
 // this class does no cryptography of its own: every method shells out to a real, locally installed
 // "gpg.exe" (GnuPG/Gpg4win) as a child process and lets it do the actual work. The public API below
@@ -163,6 +183,56 @@ public:
     int GetImportedPeerKeyId(const int peerIndex, char* outputBuffer, const int outputBufferCapacity) const;
 
     // ============================================================================================
+    // Extra capability beyond CPgpEngine: ground-truth keyring introspection/removal, sourced
+    // directly from real "gpg --with-colons --list-keys"/"--delete-key"/
+    // "--delete-secret-and-public-key" -- unlike GetImportedPeerKeyCount/GetImportedPeerKeyId
+    // above (which only report peer keys THIS instance itself imported through
+    // ImportPeerPublicKey), these reflect whatever is actually in the underlying gpg keyring,
+    // including keys this instance did not import itself.
+    // ============================================================================================
+
+    // Raw "gpg --with-colons --fingerprint --list-keys" output (every public key currently in this
+    // instance's keyring -- own identity plus every imported peer, in gpg's own listing order),
+    // same capacity-query/BUFFER_TOO_SMALL convention as ExportPublicKeyArmored above. Queried live
+    // from gpg on every call (not cached, unlike ExportPublicKeyArmored), since DeletePeerPublicKey/
+    // DeleteOwnIdentity below can change the keyring after construction. The combined stdout/stderr
+    // capture this class's subprocess helper uses (see PgpEngineWrapper.cpp) means occasional
+    // diagnostic lines from gpg itself (e.g. "gpg: checking the trustdb") may be interleaved with
+    // the colon-format records; callers parsing this text should key off the documented
+    // "pub:"/"fpr:"/etc. line prefixes, same as this class's own internal parsing does, and ignore
+    // anything else.
+    int GetKeyringListing(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const;
+
+    // How many distinct public keys "gpg --with-colons --list-keys" currently reports (own identity
+    // plus every imported peer) -- ground truth, unlike GetImportedPeerKeyCount above. 0 if none or
+    // if gpg could not be queried.
+    int GetKeyringKeyCount(void) const;
+
+    // Hex Key ID (16 hex chars) of the keyIndex-th public key (0-based, in gpg's own listing order)
+    // currently in the keyring; INVALID_ARGUMENT if keyIndex is out of range. outputBufferCapacity
+    // must be >= 17.
+    int GetKeyringKeyId(const int keyIndex, char* outputBuffer, const int outputBufferCapacity) const;
+
+    // Removes one specific imported peer public key from the real keyring (real
+    // "gpg --delete-key <id>"); keyId should be a hex Key ID GetImportedPeerKeyId or
+    // GetKeyringKeyId has reported (this instance's own key id is rejected with INVALID_ARGUMENT --
+    // use DeleteOwnIdentity below for that). Also removes it from this instance's own
+    // peer-tracking list if present there, so GetImportedPeerKeyCount/GetImportedPeerKeyId reflect
+    // the keyring again afterward.
+    int DeletePeerPublicKey(const char* keyId, const int keyIdSize);
+
+    // Removes THIS instance's own identity (secret AND public key) from the real keyring (real
+    // "gpg --delete-secret-and-public-key", scripted with the full fingerprint gpg's own batch
+    // mode requires for this operation rather than the short Key ID -- verified against this
+    // machine's gpg.exe while building this feature, which otherwise refuses with "can't do this
+    // in batch mode"). GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first. Resets
+    // this instance's own "current identity" state as if neither had ever been called: GetKeyId
+    // returns an empty string, ExportPublicKeyArmored/ExportSecretKeyArmored report size 0,
+    // GetKeyExpirationSeconds returns 0, and GenerateKeyPair/GenerateKeyPairEcc may be called again
+    // afterward to create a fresh identity in the same homedir.
+    int DeleteOwnIdentity(void);
+
+    // ============================================================================================
     // Encrypt (to the imported peer's key) / Decrypt (with this instance's own secret key) --
     // delegates to "gpg --encrypt"/"gpg --decrypt" through a temporary input/output file pair under
     // this instance's homedir (removed afterwards on a best-effort basis).
@@ -174,10 +244,55 @@ public:
     int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
                       const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
 
+    // Same as EncryptBuffer, plus an explicit PgpCompressionAlgorithm override (real gpg's own
+    // "--compress-algo") instead of gpg's own default. See the PgpCompressionAlgorithm comment
+    // above this class for the exact values/algorithms; INVALID_ARGUMENT if compressionAlgorithm
+    // is not one of them.
+    int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
+                      const PgpCompressionAlgorithm compressionAlgorithm,
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
     // Same as EncryptBuffer, ASCII-armored ("-----BEGIN PGP MESSAGE-----") text output instead of
     // raw binary (gpg's own "--armor --encrypt").
     int EncryptStringArmored( const char* inputString, const int inputStringSize,
                              const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // Same as EncryptStringArmored, plus an explicit PgpCompressionAlgorithm override -- same
+    // contract as the EncryptBuffer overload above.
+    int EncryptStringArmored( const char* inputString, const int inputStringSize,
+                             const PgpCompressionAlgorithm compressionAlgorithm,
+                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // ============================================================================================
+    // Extra capability beyond CPgpEngine: symmetric-only ("passphrase") encryption -- no recipient
+    // key and no identity of any kind required from the encrypting party (GenerateKeyPair/
+    // GenerateKeyPairEcc need never be called on this instance at all). Delegates to real gpg's own
+    // "--symmetric" ("gpg -c"), which produces a Symmetric-Key Encrypted Session Key (SKESK, RFC
+    // 4880 5.3) packet instead of a Public-Key Encrypted Session Key (PKESK) one. No new DECRYPT
+    // method is needed for this: DecryptBuffer/DecryptStringArmored below already delegate to plain
+    // "gpg --decrypt --passphrase-fd 0", and real gpg's own --decrypt autodetects SKESK vs. PKESK
+    // from the ciphertext itself and reads a passphrase off passphrase-fd either way -- verified
+    // directly against this machine's gpg.exe while adding this feature, decrypting a
+    // --symmetric-produced message with a freshly constructed CPgpEngineWrapper that had NEVER
+    // called GenerateKeyPair/GenerateKeyPairEcc. The only change this feature required on the
+    // decrypt side was removing this class's own internal precondition that used to unconditionally
+    // require an own identity before even attempting "gpg --decrypt" (irrelevant, and wrong, for a
+    // passphrase-only message) -- see DecryptBuffer/DecryptStringArmored's own comments below.
+    // ============================================================================================
+
+    // passphrase/passphraseSize is UTF-8 text (same convention as every other password/passphrase
+    // parameter in this class), fed to gpg over passphrase-fd exactly like DecryptBuffer's password
+    // parameter; it is gpg's own real S2K passphrase for this one message; nothing is cached or
+    // reused across calls.
+    int EncryptBufferSymmetric( const char* passphrase, const int passphraseSize,
+                               const unsigned char* inputBuffer, const int inputBufferSize,
+                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
+    // Same as EncryptBufferSymmetric, ASCII-armored text output instead of raw binary (gpg's own
+    // "--armor --symmetric").
+    int EncryptStringArmoredSymmetric( const char* passphrase, const int passphraseSize,
+                                      const char* inputString, const int inputStringSize,
+                                      const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
 
     // ============================================================================================
     // Extra capability beyond CPgpEngine: real multi-recipient encryption -- one shared session key,
@@ -191,19 +306,41 @@ public:
                                     const char* const* recipientKeyIds, const int recipientCount,
                                     const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
 
+    // Same as EncryptBufferMultiRecipient, plus an explicit PgpCompressionAlgorithm override -- same
+    // contract as the EncryptBuffer compression overload above.
+    int EncryptBufferMultiRecipient( const unsigned char* inputBuffer, const int inputBufferSize,
+                                    const char* const* recipientKeyIds, const int recipientCount,
+                                    const PgpCompressionAlgorithm compressionAlgorithm,
+                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+
     // Same as EncryptBufferMultiRecipient, ASCII-armored text output instead of raw binary.
     int EncryptStringArmoredMultiRecipient( const char* inputString, const int inputStringSize,
                                            const char* const* recipientKeyIds, const int recipientCount,
                                            const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
 
-    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
-    // it was called with. Delegates to "gpg --decrypt"; decompresses whatever compression (if any)
-    // the sender used, since real gpg handles that transparently.
+    // Same as EncryptStringArmoredMultiRecipient, plus an explicit PgpCompressionAlgorithm
+    // override -- same contract as the EncryptBuffer compression overload above.
+    int EncryptStringArmoredMultiRecipient( const char* inputString, const int inputStringSize,
+                                           const char* const* recipientKeyIds, const int recipientCount,
+                                           const PgpCompressionAlgorithm compressionAlgorithm,
+                                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+
+    // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first for a public-key-encrypted
+    // (PKESK) message; password must match the one it was called with. Delegates to "gpg --decrypt";
+    // decompresses whatever compression (if any) the sender used, since real gpg handles that
+    // transparently. UNLIKE every other method in this section, an own identity is NOT actually
+    // required to decrypt a message produced by EncryptBufferSymmetric/EncryptStringArmoredSymmetric
+    // above (a Symmetric-Key Encrypted Session Key/SKESK message) -- real gpg's own --decrypt
+    // autodetects SKESK vs. PKESK from the ciphertext and reads the passphrase off passphrase-fd
+    // either way, so this method works unmodified for both cases; password is then that message's
+    // real passphrase rather than an identity's key password. Verified directly against this
+    // machine's gpg.exe while adding symmetric-encryption support to this class.
     int DecryptBuffer( const char* password, const int passwordSize,
                       const unsigned char* inputBuffer, const int inputBufferSize,
                       const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
 
-    // Same as DecryptBuffer, ASCII-armored input instead of raw binary.
+    // Same as DecryptBuffer (including the symmetric/SKESK note above), ASCII-armored input instead
+    // of raw binary.
     int DecryptStringArmored( const char* password, const int passwordSize,
                             const char* inputString, const int inputStringSize,
                             const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
