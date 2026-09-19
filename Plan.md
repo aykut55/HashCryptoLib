@@ -1,7 +1,12 @@
 # CryptoAPI — C++ SDK Mimari ve Uygulama Planı
 
-Tarih: 10 Eylül 2026  
-Durum: Tasarım taslağı; uygulama kodlaması başlamadı.  
+Tarih: 10 Eylül 2026 (ilk taslak) — 20 Eylül 2026 itibarıyla DONDURULDU.  
+Durum: **DONDURULDU (2026-09-20).** SDK uygulaması tamamlandı ve kullanıcı kararıyla mevcut haliyle
+dondurulmuştur — §29'da listelenen açık maddeler (DidiSoft karşılaştırmasından kalanlar, native
+motorun ufak eksikleri) **şimdilik eklenmeyecek**. Bu bir terk ediliş değil, bilinçli bir durma
+noktasıdır; §29'daki liste gelecekte iş devam ederse başlangıç noktası olarak kalır. Yeni bir
+oturumda bu projeye dönüldüğünde, kullanıcı açıkça istemedikçe §29'daki maddelere kendiliğinden
+başlanmamalıdır.  
 Dosya adı: `plan.md`.  
 SDK/proje adı kullanıcı kararıyla `CryptoAPI` olarak belirlenmiştir. C++ namespace'i önceki önerideki `aycrypto`, facade sınıfı `CryptoApi`, tam sınıf adı `aycrypto::CryptoApi` olacaktır. Örneklerde `sdk` yalnız nesne değişkeninin adıdır. Microsoft'un API ailesi belgelerde `Microsoft CryptoAPI (CAPI)` olarak anılacaktır.
 
