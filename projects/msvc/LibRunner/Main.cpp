@@ -1,20 +1,386 @@
-// LibRunner.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
 #include <iostream>
+
+#include "CryptoApi.h"
+#include "CryptoApiTester.h"
+
+// Linked here instead of via the project's Linker > Input > Additional Dependencies setting;
+// the search path (LibBuilder's per-platform output directory) still comes from the project's
+// Additional Library Directories, this only supplies the library's name.
+#pragma comment(lib, "CryptoAPI_static.lib")
 
 int main()
 {
-    std::cout << "Hello World!\n";
+    try
+    {
+        std::cout << "Hello World!\n";
+        std::cout << std::endl;
+
+        CryptoApiNS::CCryptoApi cryptoApi;
+
+        std::cout << "CryptoAPI version: " << cryptoApi.GetVersion() << std::endl;
+        std::cout << std::endl;
+
+        CryptoApiNS::CCryptoApiTester cryptoApiTester;
+
+        cryptoApiTester.Run();
+
+#if 0
+        cryptoApiTester.RunEncryptDecryptFileTest();
+
+        cryptoApiTester.RunEncryptDecryptStringTest();
+
+        cryptoApiTester.RunEncryptDecryptBufferTest();
+
+        cryptoApiTester.RunEncryptDecryptBytesTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunMicrosoftProviderEncryptDecryptFileTest();
+
+        cryptoApiTester.RunMicrosoftProviderEncryptDecryptStringTest();
+
+        cryptoApiTester.RunMicrosoftProviderEncryptDecryptBufferTest();
+
+        cryptoApiTester.RunMicrosoftProviderEncryptDecryptBytesTest();
+
+        cryptoApiTester.RunCryptoPPProviderEncryptDecryptFileTest();
+
+        cryptoApiTester.RunCryptoPPProviderEncryptDecryptStringTest();
+
+        cryptoApiTester.RunCryptoPPProviderEncryptDecryptBufferTest();
+
+        cryptoApiTester.RunCryptoPPProviderEncryptDecryptBytesTest();
+
+        cryptoApiTester.RunBotanProviderEncryptDecryptFileTest();
+
+        cryptoApiTester.RunBotanProviderEncryptDecryptStringTest();
+
+        cryptoApiTester.RunBotanProviderEncryptDecryptBufferTest();
+
+        cryptoApiTester.RunBotanProviderEncryptDecryptBytesTest();
+
+        cryptoApiTester.RunOpenSslProviderEncryptDecryptFileTest();
+
+        cryptoApiTester.RunOpenSslProviderEncryptDecryptStringTest();
+
+        cryptoApiTester.RunOpenSslProviderEncryptDecryptBufferTest();
+
+        cryptoApiTester.RunOpenSslProviderEncryptDecryptBytesTest();
+
+        cryptoApiTester.RunLibgcryptProviderEncryptDecryptFileTest();
+
+        cryptoApiTester.RunLibgcryptProviderEncryptDecryptStringTest();
+
+        cryptoApiTester.RunLibgcryptProviderEncryptDecryptBufferTest();
+
+        cryptoApiTester.RunLibgcryptProviderEncryptDecryptBytesTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunMicrosoftProviderAsymmetricTest();
+
+        cryptoApiTester.RunCryptoPPProviderAsymmetricTest();
+
+        cryptoApiTester.RunBotanProviderAsymmetricTest();
+
+        cryptoApiTester.RunOpenSslProviderAsymmetricTest();
+
+        cryptoApiTester.RunLibgcryptProviderAsymmetricTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunMicrosoftProviderLegacyTest();
+
+        cryptoApiTester.RunCryptoPPProviderLegacyTest();
+
+        cryptoApiTester.RunBotanProviderLegacyTest();
+
+        cryptoApiTester.RunOpenSslProviderLegacyTest();
+
+        cryptoApiTester.RunLibgcryptProviderLegacyTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunLegacyAlgorithmsTest();  // Uzun surdu
+#endif
+
+#if 0
+        cryptoApiTester.RunEncryptStringMultilingualTest();
+
+        cryptoApiTester.RunPrimitiveDataTest();
+
+        cryptoApiTester.RunPrimitiveArrayDataTest();
+
+        cryptoApiTester.RunVectorDataTest();
+
+        cryptoApiTester.RunVectorWideStringDataTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunProviderFactoryTest();
+
+        cryptoApiTester.RunProviderFactoryFileTest();
+
+        cryptoApiTester.RunProviderFactoryStringTest();
+
+        cryptoApiTester.RunProviderFactoryBufferTest();
+
+        cryptoApiTester.RunProviderFactoryBytesTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunEncryptDecryptFileTestNonBlocking();
+
+        cryptoApiTester.RunEncryptDecryptStringTestNonBlocking();
+
+        cryptoApiTester.RunEncryptDecryptBufferTestNonBlocking();
+
+        cryptoApiTester.RunEncryptDecryptBytesTestNonBlocking();
+#endif
+
+#if 0
+        cryptoApiTester.RunMicrosoftProviderAllAlgorithmsTest();
+
+        cryptoApiTester.RunCryptoPPProviderAllAlgorithmsTest();
+
+        cryptoApiTester.RunBotanProviderAllAlgorithmsTest();
+
+        cryptoApiTester.RunOpenSslProviderAllAlgorithmsTest();
+
+        cryptoApiTester.RunLibgcryptProviderAllAlgorithmsTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunEncodingUtilsTest();
+
+        cryptoApiTester.RunAesConfigurationDemoTest();  // Uzun surdu
+
+        cryptoApiTester.RunPaddingUtilsTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunEncryptHexBase64CompositionTest();
+
+        cryptoApiTester.RunEncryptFileHexBase64CompositionTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunMicrosoftProviderHashTest();
+
+        cryptoApiTester.RunCryptoPPProviderHashTest();
+
+        cryptoApiTester.RunBotanProviderHashTest();
+
+        cryptoApiTester.RunOpenSslProviderHashTest();
+
+        cryptoApiTester.RunLibgcryptProviderHashTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunHashAlgorithmsTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunHashFileTest();
+
+        cryptoApiTester.RunHashStringTest();
+
+        cryptoApiTester.RunHashBufferTest();
+
+        cryptoApiTester.RunHashBytesTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunProviderFactoryHashTest();
+
+        cryptoApiTester.RunProviderFactoryHashFileTest();
+
+        cryptoApiTester.RunProviderFactoryHashStringTest();
+
+        cryptoApiTester.RunProviderFactoryHashBufferTest();
+
+        cryptoApiTester.RunProviderFactoryHashBytesTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunHashHexBase64CompositionTest();
+
+        cryptoApiTester.RunHashFileHexBase64CompositionTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunHashFileTestNonBlocking();
+
+        cryptoApiTester.RunHashStringTestNonBlocking();
+
+        cryptoApiTester.RunHashBufferTestNonBlocking();
+
+        cryptoApiTester.RunHashBytesTestNonBlocking();
+#endif
+
+#if 0
+        cryptoApiTester.RunMicrosoftProviderSignatureTest();
+
+        cryptoApiTester.RunCryptoPPProviderSignatureTest();
+
+        cryptoApiTester.RunBotanProviderSignatureTest();        // Uzun surdu
+
+        cryptoApiTester.RunOpenSslProviderSignatureTest();
+
+        cryptoApiTester.RunLibgcryptProviderSignatureTest();
+
+        cryptoApiTester.RunSignatureAlgorithmsTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunMicrosoftProviderKeyAgreementTest();
+
+        cryptoApiTester.RunCryptoPPProviderKeyAgreementTest();
+
+        cryptoApiTester.RunBotanProviderKeyAgreementTest();
+
+        cryptoApiTester.RunOpenSslProviderKeyAgreementTest();
+
+        cryptoApiTester.RunLibgcryptProviderKeyAgreementTest();
+
+        cryptoApiTester.RunKeyAgreementAlgorithmsTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunAESTests();  // Uzun surdu
+#endif
+
+#if 0
+        cryptoApiTester.RunSharedInstanceTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunRandomAlgorithmsTest();
+#endif
+
+#if 1
+        cryptoApiTester.RunPgpKeyGenerationTest();
+
+        cryptoApiTester.RunPgpEncryptDecryptTest();
+
+        cryptoApiTester.RunPgpSignVerifyTest();
+
+        cryptoApiTester.RunPgpClearSignTest();
+
+        cryptoApiTester.RunPgpArmorTest();
+
+        cryptoApiTester.RunPgpAliceBobTest();
+
+        cryptoApiTester.RunPgpFileEncryptDecryptTest();
+
+        cryptoApiTester.RunPgpFileSignVerifyTest();
+
+        cryptoApiTester.RunPgpEccFileStreamingTest();
+
+        // TODO: Investigate local gpg-agent socket creation failure in the two GnuPG import tests
+        // below. GnuPG reports the public key as imported, then exits with rc=2 because the agent
+        // cannot bind its socket under AppData\Local\gnupg ("No such file or directory").
+        cryptoApiTester.RunPgpGnuPgInteropTest();
+
+        cryptoApiTester.RunPgpKeyExpirationTest();
+
+        cryptoApiTester.RunPgpGnuPgRevocationInteropTest();
+
+        cryptoApiTester.RunPgpMultiRecipientEncryptDecryptTest();
+
+        cryptoApiTester.RunPgpMixedRecipientEncryptDecryptTest();
+
+        cryptoApiTester.RunPgpMultiRecipientFileEncryptDecryptTest();
+
+        cryptoApiTester.RunPgpGnuPgMultiRecipientInteropTest();
+
+        cryptoApiTester.RunPgpGnuPgMixedAlgorithmRecipientInteropTest();
+
+        cryptoApiTester.RunPgpEd25519KeyGenerationTest();
+
+        cryptoApiTester.RunPgpEd25519EncryptDecryptTest();
+
+        cryptoApiTester.RunPgpEd25519SignVerifyTest();
+
+        cryptoApiTester.RunPgpEd25519ClearSignTest();
+
+        cryptoApiTester.RunPgpGnuPgEd25519InteropTest();
+
+        cryptoApiTester.RunPgpEd25519KeyExpirationTest();
+
+        cryptoApiTester.RunPgpGnuPgEd25519RevocationInteropTest();
+
+        cryptoApiTester.RunPgpEncryptFileCompressedZipTest();
+
+        cryptoApiTester.RunPgpEncryptFileCompressedZlibTest();
+
+        cryptoApiTester.RunPgpEncryptFileCompressedEmptyFileTest();
+
+        cryptoApiTester.RunPgpEncryptFileCompressedLargeFileTest();
+
+        cryptoApiTester.RunPgpEncryptFileCompressedCancellationTest();
+
+        cryptoApiTester.RunPgpEncryptFileCompressedCorruptionTest();
+
+        cryptoApiTester.RunPgpGnuPgBzip2InteropTest();
+
+        cryptoApiTester.RunPgpGnuPgBzip2DecryptBufferInteropTest();
+
+        cryptoApiTester.RunPgpGnuPgPartialBodyLengthInteropTest();
+
+        cryptoApiTester.RunPgpInspectionEncryptedMessageTest();
+
+        cryptoApiTester.RunPgpInspectionMultiRecipientTest();
+
+        cryptoApiTester.RunPgpInspectionSignatureTest();
+
+        cryptoApiTester.RunPgpGnuPgInspectionInteropTest();
+#endif
+
+#if 0
+        cryptoApiTester.RunPgpWrapperAvailabilityTest();
+
+        cryptoApiTester.RunPgpWrapperKeyGenerationTest();
+
+        cryptoApiTester.RunPgpWrapperEncryptDecryptTest();  // FAILED, PASSED
+
+        cryptoApiTester.RunPgpWrapperSignVerifyTest();
+
+        cryptoApiTester.RunPgpWrapperClearSignTest();
+
+        cryptoApiTester.RunPgpWrapperAliceBobTest();
+
+        cryptoApiTester.RunPgpWrapperFileEncryptDecryptTest();
+
+        cryptoApiTester.RunPgpWrapperFileSignVerifyTest();
+
+        cryptoApiTester.RunPgpWrapperKeyExpirationTest();
+
+        cryptoApiTester.RunPgpWrapperKeyRevocationTest();
+
+        cryptoApiTester.RunPgpWrapperMultiRecipientEncryptTest();
+
+        cryptoApiTester.RunPgpWrapperEccKeyGenerationTest();
+
+        cryptoApiTester.RunPgpWrapperSymmetricEncryptDecryptTest();
+
+        cryptoApiTester.RunPgpWrapperKeyringListDeleteTest();
+
+        cryptoApiTester.RunPgpWrapperCompressionAlgorithmTest();
+
+        cryptoApiTester.RunPgpWrapperInspectionEncryptedMessageTest();
+
+        cryptoApiTester.RunPgpWrapperInspectionMultiRecipientTest();
+
+        cryptoApiTester.RunPgpWrapperInspectionSymmetricTest();
+
+        cryptoApiTester.RunPgpWrapperInspectionSignatureTest();
+#endif
+    }
+    catch (...)
+    {
+
+    }
+
+    return 0;
 }
-
-// Run program: Ctrl + F5 or Debug > Start Without Debugging menu
-// Debug program: F5 or Debug > Start Debugging menu
-
-// Tips for Getting Started: 
-//   1. Use the Solution Explorer window to add/manage files
-//   2. Use the Team Explorer window to connect to source control
-//   3. Use the Output window to see build output and other messages
-//   4. Use the Error List window to view errors
-//   5. Go to Project > Add New Item to create new code files, or Project > Add Existing Item to add existing code files to the project
-//   6. In the future, to open this project again, go to File > Open > Project and select the .sln file
