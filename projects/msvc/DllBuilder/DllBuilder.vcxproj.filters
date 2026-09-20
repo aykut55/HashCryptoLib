@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -13,30 +13,213 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="src">
+      <UniqueIdentifier>{f0ce8f87-e9ea-4f8a-bcce-9b5963f1a12b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Utils">
+      <UniqueIdentifier>{6F4AB120-A99D-4B03-9157-3CC920F76718}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Definitions">
+      <UniqueIdentifier>{A23B142A-6FC1-4F73-994E-D4DE13151B50}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers">
+      <UniqueIdentifier>{2B6E6E2A-8B0B-4F1E-9C7B-6C1A9C4E2F31}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\CryptoPPProvider">
+      <UniqueIdentifier>{6B0D2C4E-8A1F-4D3B-9C6E-1A2B3C4D5E60}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\MicrosoftProvider">
+      <UniqueIdentifier>{9E2D4F6A-1B3C-4D5E-8F7A-2C3B4A5D6E70}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\BotanProvider">
+      <UniqueIdentifier>{3F5A7C9E-2D4B-4F6A-9C8E-1B3D5F7A9C0E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\OpenSslProvider">
+      <UniqueIdentifier>{8D2E4A6C-1F3B-4C5D-9E7A-0B2C4D6E8F91}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Providers\LibgcryptProvider">
+      <UniqueIdentifier>{6A1C3E5D-7B9F-4A2C-8D4E-5F6A7B8C9D02}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="3rdParty">
+      <UniqueIdentifier>{5C8E2A4D-6F1B-4D3C-8A7E-9F2C4B6D8E0A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Pgp">
+      <UniqueIdentifier>{7A1C3E5F-2B4D-4A6C-8E9F-3D5B7C9E1A02}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <None Include="cpp.hint" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="framework.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="DllBuilder.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pch.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="DllBuilder.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
+      <Filter>src\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\CryptoApi.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\KeyDerivation.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\AsymmetricCipher.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\LegacyCipher.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\MacService.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\HashService.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\SignatureEngine.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\KeyAgreementService.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderFactory.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderRegistry.cpp">
+      <Filter>src\Providers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.cpp">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.cpp">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.cpp">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProvider.cpp">
+      <Filter>src\Providers\BotanProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.cpp">
+      <Filter>src\Providers\BotanProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.cpp">
+      <Filter>src\Providers\OpenSslProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.cpp">
+      <Filter>src\Providers\OpenSslProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProvider.cpp">
+      <Filter>src\Providers\LibgcryptProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.cpp">
+      <Filter>src\Providers\LibgcryptProvider</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp">
+      <Filter>3rdParty</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp">
+      <Filter>src\Pgp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp">
+      <Filter>src\Pgp</Filter>
     </ClCompile>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="pch.cpp">
+    <ClCompile Include="DllBuilder.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="DllBuilder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Utils\Utils.h">
+      <Filter>src\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Definitions\Definitions.h">
+      <Filter>src\Definitions</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\CryptoApi.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\RandomSource.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\KeyDerivation.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\AeadCipher.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\AsymmetricCipher.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\LegacyCipher.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\MacService.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\HashService.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\SignatureEngine.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\KeyAgreementService.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\AlgorithmCapabilityMatrix.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderRegistry.h">
+      <Filter>src\Providers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.h">
+      <Filter>src\Providers\MicrosoftProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.h">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.h">
+      <Filter>src\Providers\CryptoPPProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProvider.h">
+      <Filter>src\Providers\BotanProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.h">
+      <Filter>src\Providers\BotanProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.h">
+      <Filter>src\Providers\OpenSslProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.h">
+      <Filter>src\Providers\OpenSslProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProvider.h">
+      <Filter>src\Providers\LibgcryptProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.h">
+      <Filter>src\Providers\LibgcryptProvider</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h">
+      <Filter>src\Pgp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h">
+      <Filter>src\Pgp</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

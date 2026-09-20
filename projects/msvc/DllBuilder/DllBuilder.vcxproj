@@ -73,29 +73,76 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;$(ProjectDir)..\..\..\3rdParty;$(ProjectDir)..\..\..\3rdParty\botan3130\$(Platform);$(ProjectDir)..\..\..\3rdParty\openssl402\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- Botan's amalgamation headers require C++20 (std::span, concepts, etc.). -->
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
   </ItemDefinitionGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <TargetName>DllBuilder</TargetName>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <TargetName>DllBuilder</TargetName>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <TargetName>DllBuilder</TargetName>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <TargetName>DllBuilder</TargetName>
-  </PropertyGroup>
+  <!-- cryptlib.lib is built with the static CRT (MultiThreadedDebug/MultiThreaded); match it here
+       so the whole project links against the same CRT as the Crypto++ provider's dependency (same
+       reasoning as AppBuilder.vcxproj). -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- OpenSSL's libcrypto.lib is built per-Platform/Configuration under openssl402\_libs (see
+       openssl402\openssl.vcxproj and its build-scripts); enable-static-vcruntime was used when
+       building it so its CRT matches ours. Static linking also needs these system libs per
+       OpenSSL's NOTES-WINDOWS.md. -->
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\openssl402\_libs\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libcrypto.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- libcrypto.lib's PDB (ossl_static.pdb) isn't archived alongside it, so the linker warns
+           LNK4099 for every OpenSSL object; harmless (no debug info for OpenSSL internals), so
+           silence it rather than leave noise in the build log. -->
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- libgcrypt (CLibgcryptProvider, PROVIDER_LIBGCRYPT) is x64 ONLY; see AppBuilder.vcxproj's
+       identical block for the full rationale (vendored MSVC-native import lib, no Win32 build
+       exists, LibgcryptProvider.cpp compiles to an all-unsupported stub on Win32 via its
+       ARCH_X64/ARCH_WIN64 guard). libgpg-error-0.dll is copied next to the DLL only because it's a
+       runtime dependency of libgcrypt-20.dll itself, not because this project links against it. -->
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libgcrypt-20-msvc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Message>Copying the libgcrypt runtime DLLs next to the output DLL, then renaming the project-named ($(TargetName).*) build output to the product-named (CryptoAPI.*) files</Message>
+      <Command>xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgcrypt-20.dll" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-error-0.dll" "$(OutDir)"
+call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(TargetName)" "CryptoAPI" "DELETE"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- Win32 has no libgcrypt block above (it's x64-only), so it needs its own PostBuildEvent just
+       for the product-named (CryptoAPI.*) copy step. -->
+  <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
+    <PostBuildEvent>
+      <Message>Renaming the project-named ($(TargetName).*) build output to the product-named (CryptoAPI.*) files</Message>
+      <Command>call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(TargetName)" "CryptoAPI" "DELETE"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>DLL_BUILDER;ARCH_X86;ARCH_WIN32;BUILD_DEBUG;WIN32;_DEBUG;DLLBUILDER_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DLL_BUILDER;CRYPTOAPI_DLL_EXPORTS;ARCH_X86;ARCH_WIN32;BUILD_DEBUG;WIN32;_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -109,10 +156,8 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>DLL_BUILDER;ARCH_X86;ARCH_WIN32;BUILD_RELEASE;WIN32;NDEBUG;DLLBUILDER_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DLL_BUILDER;CRYPTOAPI_DLL_EXPORTS;ARCH_X86;ARCH_WIN32;BUILD_RELEASE;WIN32;NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -126,10 +171,8 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>DLL_BUILDER;ARCH_X64;ARCH_WIN64;BUILD_DEBUG;_DEBUG;DLLBUILDER_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DLL_BUILDER;CRYPTOAPI_DLL_EXPORTS;ARCH_X64;ARCH_WIN64;BUILD_DEBUG;_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -143,10 +186,8 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>DLL_BUILDER;ARCH_X64;ARCH_WIN64;BUILD_RELEASE;NDEBUG;DLLBUILDER_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DLL_BUILDER;CRYPTOAPI_DLL_EXPORTS;ARCH_X64;ARCH_WIN64;BUILD_RELEASE;NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -157,24 +198,94 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <None Include="cpp.hint" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="DllBuilder.h" />
-    <ClInclude Include="framework.h" />
-    <ClInclude Include="pch.h" />
+    <ClInclude Include="..\..\..\src\CryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Utils\Utils.h" />
+    <ClInclude Include="..\..\..\src\Definitions\Definitions.h" />
+    <ClInclude Include="..\..\..\src\Providers\RandomSource.h" />
+    <ClInclude Include="..\..\..\src\Providers\KeyDerivation.h" />
+    <ClInclude Include="..\..\..\src\Providers\AeadCipher.h" />
+    <ClInclude Include="..\..\..\src\Providers\AsymmetricCipher.h" />
+    <ClInclude Include="..\..\..\src\Providers\LegacyCipher.h" />
+    <ClInclude Include="..\..\..\src\Providers\MacService.h" />
+    <ClInclude Include="..\..\..\src\Providers\HashService.h" />
+    <ClInclude Include="..\..\..\src\Providers\SignatureEngine.h" />
+    <ClInclude Include="..\..\..\src\Providers\KeyAgreementService.h" />
+    <ClInclude Include="..\..\..\src\Providers\ProviderTypes.h" />
+    <ClInclude Include="..\..\..\src\Providers\AlgorithmCapabilityMatrix.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoProviderRegistry.h" />
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProvider.h" />
+    <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.h" />
+    <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h" />
+    <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DllBuilder.cpp" />
-    <ClCompile Include="Main.cpp" />
-    <ClCompile Include="pch.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
+    <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
+    <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\KeyDerivation.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\AsymmetricCipher.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\LegacyCipher.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\MacService.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\HashService.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\SignatureEngine.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\KeyAgreementService.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoProviderRegistry.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\MicrosoftProvider\MicrosoftProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\CryptoPPProvider\CryptoPPProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\BotanProvider\BotanProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\OpenSslProvider\OpenSslProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProvider.cpp" />
+    <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.cpp" />
+    <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp" />
+    <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp" />
+    <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
+         e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
+         $(Platform) picks the right one. -->
+    <ClCompile Include="..\..\..\3rdParty\botan3130\$(Platform)\botan_all.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
+    <ClCompile Include="Main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Same reasoning as AppBuilder.vcxproj: builds cryptlib.lib automatically (if missing/stale)
+         and orders the build so libcrypto.lib exists first; see that project's identical
+         ProjectReference block for the full rationale (including why CryptoPPModernProvider is
+         intentionally not wired in). -->
+    <ProjectReference Include="..\..\..\3rdParty\cryptopp890\cryptlib.vcxproj">
+      <Project>{c39f4b46-6e89-4074-902e-ca57073044d2}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\..\3rdParty\openssl402\openssl.vcxproj">
+      <Project>{5e6a1e2d-8c3f-4d4a-9b1e-2f7a6c9d0e11}</Project>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <!-- The built-in Clean target only removes files MSBuild itself produced (tracked via .tlog);
+       it has no knowledge of the CryptoAPI.* files rename_output.bat copies into $(OutDir) as a
+       PostBuildEvent, so Clean would otherwise leave them behind as stale orphans. -->
+  <Target Name="RemoveRenamedOutputs" AfterTargets="Clean">
+    <ItemGroup>
+      <RenamedOutputsToClean Include="$(OutDir)CryptoAPI.dll;$(OutDir)CryptoAPI.lib;$(OutDir)CryptoAPI.exp;$(OutDir)CryptoAPI.pdb" />
+    </ItemGroup>
+    <Delete Files="@(RenamedOutputsToClean)" TreatErrorsAsWarnings="true" />
+  </Target>
 </Project>

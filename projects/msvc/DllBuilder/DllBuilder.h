@@ -1,9 +1,13 @@
-// The following ifdef block is the standard way of creating macros which make exporting
-// from a DLL simpler. All files within this DLL are compiled with the DLLBUILDER_EXPORTS
-// symbol defined on the command line. This symbol should not be defined on any project
-// that uses this DLL. This way any other project whose source files include this file see
-// DLLBUILDER_API functions as being imported from a DLL, whereas this DLL sees symbols
-// defined with this macro as being exported.
+// This header is intentionally inert: CCryptoApi is exported directly via CRYPTOAPI_API in
+// ..\..\..\src\CryptoApi.h (DllBuilder.vcxproj defines CRYPTOAPI_DLL_EXPORTS), so there is nothing
+// left for this file to declare. The original Visual Studio wizard scaffolding is kept below,
+// commented out, as a placeholder in case a DLL-only helper (version query, capability probe, etc.
+// that isn't part of CCryptoApi itself) is ever needed here.
+
+// #define DLLBUILDER_API __declspec(dllexport)
+// #define DLLBUILDER_API __declspec(dllimport)
+
+/*
 #ifdef DLLBUILDER_EXPORTS
 #define DLLBUILDER_API __declspec(dllexport)
 #else
@@ -20,3 +24,4 @@ public:
 extern DLLBUILDER_API int nDllBuilder;
 
 DLLBUILDER_API int fnDllBuilder(void);
+*/

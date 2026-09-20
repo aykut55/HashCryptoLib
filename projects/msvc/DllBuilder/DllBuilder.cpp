@@ -1,10 +1,7 @@
-// DllBuilder.cpp : Defines the exported functions for the DLL.
-//
-
-#include "pch.h"
-#include "framework.h"
+// Commented out along with DllBuilder.h -- see that file's comment for why. Kept only as a
+// reference for the original Visual Studio DLL wizard scaffolding.
+/*
 #include "DllBuilder.h"
-
 
 // This is an example of an exported variable
 DLLBUILDER_API int nDllBuilder=0;
@@ -20,3 +17,4 @@ CDllBuilder::CDllBuilder()
 {
     return;
 }
+*/

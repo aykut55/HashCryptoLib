@@ -12,6 +12,20 @@
 
 #include <memory>
 
+// DLL export/import boundary for CCryptoApi as a real C++ class (not a C ABI wrapper): DllBuilder
+// defines CRYPTOAPI_DLL_EXPORTS so its own compile exports the class; a future consumer linking
+// against the DLL (e.g. DllRunner) would define CRYPTOAPI_DLL_IMPORTS to import it instead. Neither
+// macro is defined when this header is compiled directly into an executable or a static library
+// (AppBuilder, LibBuilder), so CRYPTOAPI_API expands to nothing there -- same class, same source,
+// no dllexport/dllimport overhead outside the DLL boundary.
+#if defined(CRYPTOAPI_DLL_EXPORTS)
+#define CRYPTOAPI_API __declspec(dllexport)
+#elif defined(CRYPTOAPI_DLL_IMPORTS)
+#define CRYPTOAPI_API __declspec(dllimport)
+#else
+#define CRYPTOAPI_API
+#endif
+
 namespace CryptoApiNS
 {
 
@@ -38,7 +52,16 @@ struct CCryptoApiConfig
     bool operator<(const CCryptoApiConfig& other) const;
 };
 
-class CCryptoApi
+// C4251: private std::unique_ptr<I...Cipher/Engine/Service> members below "need to have dll-
+// interface" -- harmless here since they are private, never touched across the DLL boundary
+// (~CCryptoApi() and every method that dereferences them are defined in CryptoApi.cpp, compiled
+// inside the DLL itself), and the interfaces they point to are never exported or used by callers.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4251)
+#endif
+
+class CRYPTOAPI_API CCryptoApi
 {
 public:
     virtual ~CCryptoApi();
@@ -513,6 +536,10 @@ private:
     std::unique_ptr<IKeyAgreementService> keyAgreementEngine_;
 
 };
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 } // namespace CryptoApiNS
 
