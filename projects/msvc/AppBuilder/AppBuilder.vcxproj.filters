@@ -46,12 +46,24 @@
     <Filter Include="src\Pgp">
       <UniqueIdentifier>{7A1C3E5F-2B4D-4A6C-8E9F-3D5B7C9E1A02}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Interfaces">
+      <UniqueIdentifier>{9C1D2E3F-4A5B-6C7D-8E9F-0A1B2C3D4E5F}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
       <Filter>src\Utils</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\ICryptoApi.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\ICryptoApiTester.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp">
@@ -141,6 +153,15 @@
       <Filter>src\Definitions</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\CryptoApi.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\CryptoApiFactory.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\CryptoApiTester.h">

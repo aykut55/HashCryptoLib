@@ -9,6 +9,7 @@
 
 #include "Definitions/Definitions.h"
 #include "Providers/ProviderTypes.h"
+#include "Interfaces/ICryptoApi.h"
 
 #include <memory>
 
@@ -56,12 +57,16 @@ struct CCryptoApiConfig
 // interface" -- harmless here since they are private, never touched across the DLL boundary
 // (~CCryptoApi() and every method that dereferences them are defined in CryptoApi.cpp, compiled
 // inside the DLL itself), and the interfaces they point to are never exported or used by callers.
+// C4275: ICryptoApi (CCryptoApi's base) has no dll-interface of its own -- harmless here too,
+// since it declares no data and no non-inline code; its vtable slots are fully populated by
+// CCryptoApi's own exported overrides, so nothing about ICryptoApi itself needs exporting.
 #if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable: 4251)
+#pragma warning(disable: 4275)
 #endif
 
-class CRYPTOAPI_API CCryptoApi
+class CRYPTOAPI_API CCryptoApi : public ICryptoApi
 {
 public:
     virtual ~CCryptoApi();
@@ -173,7 +178,7 @@ public:
 
     static CCryptoApi& Instance(void);
 
-    const char* GetVersion(void) const;
+    const char* GetVersion(void) const override;
 
     // Buffers contain raw bytes; password is UTF-8 and passwordSize counts bytes. Input is
     // processed in chunks so large buffers report progress; onProgress may be nullptr.
@@ -183,7 +188,7 @@ public:
                        unsigned char* outputBuffer,
                        int* outputBufferSize,
                        ProgressCallback onProgress,
-                       void* progressUserData);
+                       void* progressUserData) override;
 
     // Buffers contain raw bytes; password is UTF-8 and passwordSize counts bytes. Input is
     // processed in chunks so large buffers report progress; onProgress may be nullptr.
@@ -193,7 +198,7 @@ public:
                        unsigned char* outputBuffer,
                        int* outputBufferSize,
                        ProgressCallback onProgress,
-                       void* progressUserData);
+                       void* progressUserData) override;
 
     // Alias of EncryptBuffer with an identical chunked implementation and format.
     int EncryptBytes( const char* password, const int passwordSize,
@@ -202,7 +207,7 @@ public:
                       unsigned char* outputBuffer,
                       int* outputBufferSize,
                       ProgressCallback onProgress,
-                      void* progressUserData);
+                      void* progressUserData) override;
 
     // Alias of DecryptBuffer with an identical chunked implementation and format.
     int DecryptBytes( const char* password, const int passwordSize,
@@ -211,7 +216,7 @@ public:
                       unsigned char* outputBuffer,
                       int* outputBufferSize,
                       ProgressCallback onProgress,
-                      void* progressUserData);
+                      void* progressUserData) override;
 
     // String input and output use UTF-8 bytes; output is caller-owned and sized in bytes.
     // Input is processed in chunks so large strings report progress; onProgress may be nullptr.
@@ -221,7 +226,7 @@ public:
                        unsigned char* outputBuffer,
                        int* outputBufferSize,
                        ProgressCallback onProgress,
-                       void* progressUserData);
+                       void* progressUserData) override;
 
     // Decrypted UTF-8 bytes are written to the caller-owned char buffer; no terminator is appended.
     // Input is processed in chunks so large strings report progress; onProgress may be nullptr.
@@ -231,7 +236,7 @@ public:
                        char* outputStringBuffer,
                        int* outputStringSize,
                        ProgressCallback onProgress,
-                       void* progressUserData);
+                       void* progressUserData) override;
 
     // Password and file paths are UTF-8 strings. onProgress may be nullptr; when provided it is
     // invoked after each processed chunk with cumulative bytes and percentage complete.
@@ -239,38 +244,38 @@ public:
                      const char* inputFilePath,
                      const char* outputFilePath,
                      ProgressCallback onProgress,
-                     void* progressUserData);
+                     void* progressUserData) override;
 
     int DecryptFile( const char* password,
                      const char* inputFilePath,
                      const char* outputFilePath,
                      ProgressCallback onProgress,
-                     void* progressUserData);
+                     void* progressUserData) override;
 
     // RSA (self-contained round trip): generates a fresh key pair for this instance's
     // asymmetricAlgorithm (see the 3-argument constructor); the private key never leaves this
     // instance. Must be called once before EncryptWithPublicKey/DecryptWithPrivateKey/
     // GetMaxAsymmetricPlaintextSize/GetAsymmetricCiphertextSize; calling it again rotates to a
     // fresh key pair (old ciphertexts become undecryptable).
-    int GenerateAsymmetricKeyPair(void);
+    int GenerateAsymmetricKeyPair(void) override;
 
     // Largest plaintext EncryptWithPublicKey can accept in one call; 0 before a key pair exists.
-    int GetMaxAsymmetricPlaintextSize(void) const;
+    int GetMaxAsymmetricPlaintextSize(void) const override;
 
     // Exact ciphertext size EncryptWithPublicKey produces; 0 before a key pair exists.
-    int GetAsymmetricCiphertextSize(void) const;
+    int GetAsymmetricCiphertextSize(void) const override;
 
     // Typical use is wrapping a small symmetric key, not general-purpose data encryption --
     // inputBufferSize is bounded by GetMaxAsymmetricPlaintextSize(). No chunking, no password.
     int EncryptWithPublicKey( const unsigned char* inputBuffer, const int inputBufferSize,
                              const int outputBufferCapacity,
                              unsigned char* outputBuffer,
-                             int* outputBufferSize);
+                             int* outputBufferSize) override;
 
     int DecryptWithPrivateKey( const unsigned char* inputBuffer, const int inputBufferSize,
                               const int outputBufferCapacity,
                               unsigned char* outputBuffer,
-                              int* outputBufferSize);
+                              int* outputBufferSize) override;
 
     // Legacy cipher (CBC/CFB/ECB/RC2/DES/3DES/RC4, see the 4-argument constructor) has no
     // built-in integrity tag, so this adds Encrypt-then-MAC (HMAC-SHA256) on top: password derives
@@ -281,7 +286,7 @@ public:
                             const unsigned char* inputBuffer, const int inputBufferSize,
                             const int outputBufferCapacity,
                             unsigned char* outputBuffer,
-                            int* outputBufferSize);
+                            int* outputBufferSize) override;
 
     // Verifies the HMAC tag before decrypting anything (fail-closed): a tampered or truncated
     // input returns INVALID_DATA and never reaches the legacy cipher.
@@ -289,7 +294,7 @@ public:
                             const unsigned char* inputBuffer, const int inputBufferSize,
                             const int outputBufferCapacity,
                             unsigned char* outputBuffer,
-                            int* outputBufferSize);
+                            int* outputBufferSize) override;
 
     // ============================================================================================
     // Hash (message digest) -- see HashAlgorithm in ProviderTypes.h and the 5-argument constructor.
@@ -301,7 +306,7 @@ public:
     // Exact digest size ComputeHashBuffer/ComputeHashBytes/ComputeHashString/ComputeHashFile
     // produce for this instance's hashAlgorithm_; 0 if the algorithm is unsupported by
     // providerKind_.
-    int GetHashSize(void) const;
+    int GetHashSize(void) const override;
 
     // Buffers contain raw bytes. Input is processed in chunks so large buffers report progress;
     // onProgress may be nullptr.
@@ -310,7 +315,7 @@ public:
                           unsigned char* outputBuffer,
                           int* outputBufferSize,
                           ProgressCallback onProgress,
-                          void* progressUserData);
+                          void* progressUserData) override;
 
     // Alias of ComputeHashBuffer with an identical chunked implementation.
     int ComputeHashBytes( const unsigned char* inputBuffer, const int inputBufferSize,
@@ -318,7 +323,7 @@ public:
                          unsigned char* outputBuffer,
                          int* outputBufferSize,
                          ProgressCallback onProgress,
-                         void* progressUserData);
+                         void* progressUserData) override;
 
     // String input uses UTF-8 bytes. Input is processed in chunks so large strings report
     // progress; onProgress may be nullptr.
@@ -327,7 +332,7 @@ public:
                           unsigned char* outputBuffer,
                           int* outputBufferSize,
                           ProgressCallback onProgress,
-                          void* progressUserData);
+                          void* progressUserData) override;
 
     // File path is a UTF-8 string. Processed in chunks the same way EncryptFile/DecryptFile are
     // (see FILE_CHUNK_SIZE), so the whole file is never held in memory at once. onProgress may be
@@ -338,7 +343,7 @@ public:
                         unsigned char* outputBuffer,
                         int* outputBufferSize,
                         ProgressCallback onProgress,
-                        void* progressUserData);
+                        void* progressUserData) override;
 
     // ============================================================================================
     // Signature (sign/verify) -- see SignatureAlgorithm in ProviderTypes.h and the 6-argument
@@ -351,10 +356,10 @@ public:
     // Generates a fresh key pair for this instance's signatureAlgorithm_. Must be called once
     // before SignBuffer/VerifyBuffer/GetSignatureSize; calling it again rotates to a fresh key
     // pair (old signatures become unverifiable against this instance).
-    int GenerateSignatureKeyPair(void);
+    int GenerateSignatureKeyPair(void) override;
 
     // Exact signature size SignBuffer produces; 0 before a key pair exists.
-    int GetSignatureSize(void) const;
+    int GetSignatureSize(void) const override;
 
     // Signs inputBuffer with the private key. No chunking, no password -- the provider hashes the
     // whole buffer internally as part of the signature scheme (SHA-256 for RSA-PSS/ECDSA, Ed25519's
@@ -362,7 +367,7 @@ public:
     int SignBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
                     const int outputBufferCapacity,
                     unsigned char* outputBuffer,
-                    int* outputBufferSize);
+                    int* outputBufferSize) override;
 
     // Verifies signatureBuffer against inputBuffer with this instance's public key. Returns
     // NO_ERROR when verification executed (isValid then reports whether the signature is
@@ -372,7 +377,7 @@ public:
     // and found invalid" -- a tampered signature must never look like a technical error.
     int VerifyBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
                      const unsigned char* signatureBuffer, const int signatureBufferSize,
-                     bool* isValid);
+                     bool* isValid) override;
 
     // ============================================================================================
     // Key agreement (Diffie-Hellman style) -- see KeyAgreementAlgorithm in ProviderTypes.h and the
@@ -390,26 +395,26 @@ public:
     // DeriveSharedSecret; calling it again rotates to a fresh key pair (a shared secret already
     // derived from the old key pair is unaffected, but the peer must re-fetch the new public key
     // before a following DeriveSharedSecret() call on either side agrees again).
-    int GenerateKeyAgreementKeyPair(void);
+    int GenerateKeyAgreementKeyPair(void) override;
 
     // Exact public key size ExportKeyAgreementPublicKey() produces; 0 before a key pair exists.
-    int GetKeyAgreementPublicKeySize(void) const;
+    int GetKeyAgreementPublicKeySize(void) const override;
 
     // Exact shared secret size DeriveSharedSecret() produces; 0 before a key pair exists.
-    int GetSharedSecretSize(void) const;
+    int GetSharedSecretSize(void) const override;
 
     // Exports this instance's own public key, to be handed to the peer instance (see the section
     // comment above). No chunking, no password.
     int ExportKeyAgreementPublicKey( const int outputBufferCapacity,
                                     unsigned char* outputBuffer,
-                                    int* outputBufferSize);
+                                    int* outputBufferSize) override;
 
     // Combines this instance's private key with peerPublicKeyBuffer (as produced by the peer
     // instance's own ExportKeyAgreementPublicKey()) to compute the shared secret.
     int DeriveSharedSecret( const unsigned char* peerPublicKeyBuffer, const int peerPublicKeyBufferSize,
                            const int outputBufferCapacity,
                            unsigned char* outputBuffer,
-                           int* outputBufferSize);
+                           int* outputBufferSize) override;
 
     // ============================================================================================
     // Random byte generation -- see RandomAlgorithm in ProviderTypes.h. Unlike every other section
@@ -424,14 +429,14 @@ public:
     // ============================================================================================
 
     // Equivalent to GenerateRandomBytes(RANDOM_SYSTEM, outputBuffer, outputBufferSize) below.
-    int GenerateRandomBytes(unsigned char* outputBuffer, const int outputBufferSize);
+    int GenerateRandomBytes(unsigned char* outputBuffer, const int outputBufferSize) override;
 
     // Uses an explicit NIST SP 800-90A DRBG (RANDOM_HASH_DRBG/HMAC_DRBG/CTR_DRBG) instead of this
     // instance's provider's implicit system RNG; returns UNEXPECTED_ERROR if providerKind_ doesn't
     // support the requested randomAlgorithm (query ICryptoProviderFactory::SupportsRandomAlgorithm
     // first if that distinction matters to the caller).
     int GenerateRandomBytes( const RandomAlgorithm randomAlgorithm,
-                            unsigned char* outputBuffer, const int outputBufferSize);
+                            unsigned char* outputBuffer, const int outputBufferSize) override;
 
 protected:
 

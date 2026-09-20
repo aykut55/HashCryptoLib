@@ -1,37 +1,39 @@
 #ifndef CRYPTOAPI_CRYPTO_API_TESTER_H
 #define CRYPTOAPI_CRYPTO_API_TESTER_H
 
+#include "Interfaces/ICryptoApiTester.h"
+
 namespace CryptoApiNS
 {
 
-class CCryptoApiTester
+class CCryptoApiTester : public ICryptoApiTester
 {
 public:
     virtual ~CCryptoApiTester();
              CCryptoApiTester();
 
-    int Run(void);
+    int Run(void) override;
 
-    int RunEncryptDecryptFileTest(void);
+    int RunEncryptDecryptFileTest(void) override;
 
-    int RunEncryptDecryptStringTest(void);
+    int RunEncryptDecryptStringTest(void) override;
 
-    int RunEncryptDecryptBufferTest(void);
+    int RunEncryptDecryptBufferTest(void) override;
 
-    int RunEncryptDecryptBytesTest(void);
+    int RunEncryptDecryptBytesTest(void) override;
 
     // Hash-only analogues of RunEncryptDecryptFileTest/StringTest/BufferTest/BytesTest: no
     // password, no ciphertext, no Decrypt* counterpart (hashing is one-way) -- construct
     // CCryptoApi via the no-arg constructor (defaults to HASH_SHA256) and round-trip a known
     // payload through ComputeHashFile/String/Buffer/Bytes, verifying every shape agrees on the
     // same digest for the same content.
-    int RunHashFileTest(void);
+    int RunHashFileTest(void) override;
 
-    int RunHashStringTest(void);
+    int RunHashStringTest(void) override;
 
-    int RunHashBufferTest(void);
+    int RunHashBufferTest(void) override;
 
-    int RunHashBytesTest(void);
+    int RunHashBytesTest(void) override;
 
     // Variants of RunEncryptDecryptFileTest/StringTest/BufferTest/BytesTest that construct
     // CCryptoApi via CCryptoApi(const ProviderKind, const AeadAlgorithm) instead of the no-arg
@@ -40,37 +42,37 @@ public:
     // KDF + chunked encrypt/decrypt path end to end, not just the raw Factory/IAeadCipher path
     // RunProviderFactoryTest already covers. One full, independent method per provider/type pair
     // (no shared helper) so a failure names its own provider and payload shape directly.
-    int RunMicrosoftProviderEncryptDecryptFileTest(void);
+    int RunMicrosoftProviderEncryptDecryptFileTest(void) override;
 
-    int RunMicrosoftProviderEncryptDecryptStringTest(void);
+    int RunMicrosoftProviderEncryptDecryptStringTest(void) override;
 
-    int RunMicrosoftProviderEncryptDecryptBufferTest(void);
+    int RunMicrosoftProviderEncryptDecryptBufferTest(void) override;
 
-    int RunMicrosoftProviderEncryptDecryptBytesTest(void);
+    int RunMicrosoftProviderEncryptDecryptBytesTest(void) override;
 
-    int RunCryptoPPProviderEncryptDecryptFileTest(void);
+    int RunCryptoPPProviderEncryptDecryptFileTest(void) override;
 
-    int RunCryptoPPProviderEncryptDecryptStringTest(void);
+    int RunCryptoPPProviderEncryptDecryptStringTest(void) override;
 
-    int RunCryptoPPProviderEncryptDecryptBufferTest(void);
+    int RunCryptoPPProviderEncryptDecryptBufferTest(void) override;
 
-    int RunCryptoPPProviderEncryptDecryptBytesTest(void);
+    int RunCryptoPPProviderEncryptDecryptBytesTest(void) override;
 
-    int RunBotanProviderEncryptDecryptFileTest(void);
+    int RunBotanProviderEncryptDecryptFileTest(void) override;
 
-    int RunBotanProviderEncryptDecryptStringTest(void);
+    int RunBotanProviderEncryptDecryptStringTest(void) override;
 
-    int RunBotanProviderEncryptDecryptBufferTest(void);
+    int RunBotanProviderEncryptDecryptBufferTest(void) override;
 
-    int RunBotanProviderEncryptDecryptBytesTest(void);
+    int RunBotanProviderEncryptDecryptBytesTest(void) override;
 
-    int RunOpenSslProviderEncryptDecryptFileTest(void);
+    int RunOpenSslProviderEncryptDecryptFileTest(void) override;
 
-    int RunOpenSslProviderEncryptDecryptStringTest(void);
+    int RunOpenSslProviderEncryptDecryptStringTest(void) override;
 
-    int RunOpenSslProviderEncryptDecryptBufferTest(void);
+    int RunOpenSslProviderEncryptDecryptBufferTest(void) override;
 
-    int RunOpenSslProviderEncryptDecryptBytesTest(void);
+    int RunOpenSslProviderEncryptDecryptBytesTest(void) override;
 
     // PROVIDER_LIBGCRYPT (libgcrypt) counterparts. These four behave exactly like the Microsoft/
     // CryptoPP/Botan/OpenSSL ones above on x64; on a Win32 build there is no libgcrypt binary at
@@ -78,40 +80,40 @@ public:
     // reporting that PROVIDER_LIBGCRYPT is unavailable on this platform -- rather than FAILing, the
     // same convention RunPgpGnuPgInteropTest already uses for an optional, machine-specific
     // dependency it cannot provide itself.
-    int RunLibgcryptProviderEncryptDecryptFileTest(void);
+    int RunLibgcryptProviderEncryptDecryptFileTest(void) override;
 
-    int RunLibgcryptProviderEncryptDecryptStringTest(void);
+    int RunLibgcryptProviderEncryptDecryptStringTest(void) override;
 
-    int RunLibgcryptProviderEncryptDecryptBufferTest(void);
+    int RunLibgcryptProviderEncryptDecryptBufferTest(void) override;
 
-    int RunLibgcryptProviderEncryptDecryptBytesTest(void);
+    int RunLibgcryptProviderEncryptDecryptBytesTest(void) override;
 
     // Exercises CCryptoApi's RSA surface (GenerateAsymmetricKeyPair/EncryptWithPublicKey/
     // DecryptWithPrivateKey/GetMaxAsymmetricPlaintextSize/GetAsymmetricCiphertextSize) via the
     // 3-argument constructor, one full independent method per provider (no shared helper).
-    int RunMicrosoftProviderAsymmetricTest(void);
+    int RunMicrosoftProviderAsymmetricTest(void) override;
 
-    int RunCryptoPPProviderAsymmetricTest(void);
+    int RunCryptoPPProviderAsymmetricTest(void) override;
 
-    int RunBotanProviderAsymmetricTest(void);
+    int RunBotanProviderAsymmetricTest(void) override;
 
-    int RunOpenSslProviderAsymmetricTest(void);
+    int RunOpenSslProviderAsymmetricTest(void) override;
 
-    int RunLibgcryptProviderAsymmetricTest(void);
+    int RunLibgcryptProviderAsymmetricTest(void) override;
 
     // Exercises CCryptoApi's Legacy+MAC surface (EncryptLegacyBuffer/DecryptLegacyBuffer, LEGACY_
     // AES_256_CBC via the 4-argument constructor) -- round-trip, wrong password, tampered
     // ciphertext and tampered MAC tag must all fail closed. One full independent method per
     // provider (no shared helper).
-    int RunMicrosoftProviderLegacyTest(void);
+    int RunMicrosoftProviderLegacyTest(void) override;
 
-    int RunCryptoPPProviderLegacyTest(void);
+    int RunCryptoPPProviderLegacyTest(void) override;
 
-    int RunBotanProviderLegacyTest(void);
+    int RunBotanProviderLegacyTest(void) override;
 
-    int RunOpenSslProviderLegacyTest(void);
+    int RunOpenSslProviderLegacyTest(void) override;
 
-    int RunLibgcryptProviderLegacyTest(void);
+    int RunLibgcryptProviderLegacyTest(void) override;
 
     // Breadth companion to RunMicrosoftProviderLegacyTest/CryptoPP/Botan/OpenSsl (which each cover
     // one algorithm, LEGACY_AES_256_CBC, in depth including tamper rejection): this one loops over
@@ -121,7 +123,7 @@ public:
     // as ground truth -- supported combinations must round-trip, unsupported ones must be cleanly
     // rejected. Nothing here is hardcoded to "CBC only"; whatever each provider actually supports
     // gets exercised through the facade, not just the raw Factory.
-    int RunLegacyAlgorithmsTest(void);
+    int RunLegacyAlgorithmsTest(void) override;
 
     // Demo (not an exhaustive breadth test -- see RunLegacyAlgorithmsTest for that) showing
     // CCryptoApi's AES "richness" (key size x mode) entirely in memory over UTF-8 text, inspired
@@ -130,64 +132,64 @@ public:
     // GCM-SIV x 128/192/256) go through EncryptString/DecryptString; Legacy combos (CBC/CTR/CFB/
     // OFB/ECB x 128/192/256) go through EncryptLegacyBuffer/DecryptLegacyBuffer with the UTF-8
     // text treated as a raw byte buffer, since CCryptoApi has no EncryptLegacyString.
-    int RunAesConfigurationDemoTest(void);
+    int RunAesConfigurationDemoTest(void) override;
 
     // Exercises CUtils::HexEncode/HexDecode/Base64Encode/Base64Decode (src/Utils/Utils.h): known
     // test vectors (including the classic "Man"/"Ma"/"M" Base64 padding cases and a byte with
     // A-F hex digits to catch upper/lower-case mistakes), empty input, the BUFFER_TOO_SMALL
     // capacity-query convention, and malformed-input rejection (odd-length hex, non-hex/non-
     // base64 characters, wrong padding).
-    int RunEncodingUtilsTest(void);
+    int RunEncodingUtilsTest(void) override;
 
     // Exercises CUtils::Pad/Unpad (src/Utils/Utils.h) for all 7 PaddingScheme values: round-trip
     // over inputs both aligned to and misaligned from a 16-byte (AES) block size, known PKCS7
     // vectors, PADDING_NONE's alignment requirement, and Unpad's rejection of malformed padding
     // (bad pad-length byte, inconsistent pad bytes, wrong ISO97971 marker).
-    int RunPaddingUtilsTest(void);
+    int RunPaddingUtilsTest(void) override;
 
     // Demonstrates the two-step composition pattern for text output encoding: CCryptoApi's
     // Encrypt*/Decrypt* always move raw bytes, so a caller wanting Hex or Base64 text chains a
     // CUtils encode/decode step on top (Encrypt -> HexEncode/Base64Encode; Base64Decode/HexDecode
     // -> Decrypt). No new API surface on CCryptoApi itself -- see the aes_richness_design_track
     // memory entry recording this as the resolved design.
-    int RunEncryptHexBase64CompositionTest(void);
+    int RunEncryptHexBase64CompositionTest(void) override;
 
     // File-based analogue of RunEncryptHexBase64CompositionTest: EncryptFile always writes raw
     // ciphertext bytes to disk, so getting a Hex/Base64 *text* file means reading that binary file
     // back into memory, running it through CUtils::HexEncode/Base64Encode, and writing the result
     // as its own text file -- then reversing the same steps (read text file -> HexDecode/
     // Base64Decode -> write binary file -> DecryptFile) to recover the original.
-    int RunEncryptFileHexBase64CompositionTest(void);
+    int RunEncryptFileHexBase64CompositionTest(void) override;
 
     // Hash analogue of RunEncryptHexBase64CompositionTest/RunEncryptFileHexBase64CompositionTest:
     // a digest is just raw bytes like ciphertext is, so the same CUtils::HexEncode/Base64Encode
     // (and decode-back) composition applies -- ComputeHash* -> HexEncode/Base64Encode -> HexDecode/
     // Base64Decode -> compare against the original digest bytes. In-memory and file-based variants.
-    int RunHashHexBase64CompositionTest(void);
+    int RunHashHexBase64CompositionTest(void) override;
 
-    int RunHashFileHexBase64CompositionTest(void);
+    int RunHashFileHexBase64CompositionTest(void) override;
 
     // Exercises CCryptoApi's Hash surface (GetHashSize/ComputeHashBuffer/ComputeHashString/
     // ComputeHashFile via the 5-argument constructor, HASH_SHA256) -- known FIPS 180-4 test
     // vectors (empty string and "abc"), cross-checks that Buffer/String/File all produce the same
     // digest for equivalent content, and confirms GetHashSize() matches the actual output size.
     // One full independent method per provider (no shared helper).
-    int RunMicrosoftProviderHashTest(void);
+    int RunMicrosoftProviderHashTest(void) override;
 
-    int RunCryptoPPProviderHashTest(void);
+    int RunCryptoPPProviderHashTest(void) override;
 
-    int RunBotanProviderHashTest(void);
+    int RunBotanProviderHashTest(void) override;
 
-    int RunOpenSslProviderHashTest(void);
+    int RunOpenSslProviderHashTest(void) override;
 
-    int RunLibgcryptProviderHashTest(void);
+    int RunLibgcryptProviderHashTest(void) override;
 
     // Breadth companion to the 5 Run<Vendor>ProviderHashTest methods (which each cover HASH_SHA256
     // in depth): loops every ProviderKind x every HashAlgorithm value via CCryptoApi's 5-argument
     // constructor + ComputeHashBuffer, cross-checked against
     // ICryptoProviderFactory::SupportsHashAlgorithm() as ground truth -- supported combinations
     // must produce a digest matching GetHashSize(), unsupported ones must be cleanly rejected.
-    int RunHashAlgorithmsTest(void);
+    int RunHashAlgorithmsTest(void) override;
 
     // Exercises CCryptoApi's Signature surface (GenerateSignatureKeyPair/GetSignatureSize/
     // SignBuffer/VerifyBuffer via the 6-argument or Signature-only 2-argument constructor) --
@@ -196,18 +198,18 @@ public:
     // values x all 5 providers is RunSignatureAlgorithmsTest's job, not this one's): Microsoft/
     // OpenSSL use ECDSA-P256 (supported everywhere), CryptoPP uses RSA-PSS-2048, Botan uses
     // Ed25519. One full independent method per provider (no shared helper).
-    int RunMicrosoftProviderSignatureTest(void);
+    int RunMicrosoftProviderSignatureTest(void) override;
 
-    int RunCryptoPPProviderSignatureTest(void);
+    int RunCryptoPPProviderSignatureTest(void) override;
 
-    int RunBotanProviderSignatureTest(void);
+    int RunBotanProviderSignatureTest(void) override;
 
-    int RunOpenSslProviderSignatureTest(void);
+    int RunOpenSslProviderSignatureTest(void) override;
 
     // libgcrypt's own diversity pick: SIGNATURE_DSA_SHA256_2048, the one SignatureAlgorithm value
     // none of the other four dedicated per-provider signature tests exercises (Microsoft/OpenSSL
     // take ECDSA-P256, CryptoPP RSA-PSS-2048, Botan Ed25519) -- and one CNG cannot do at all.
-    int RunLibgcryptProviderSignatureTest(void);
+    int RunLibgcryptProviderSignatureTest(void) override;
 
     // Breadth companion to the 5 Run<Vendor>ProviderSignatureTest methods: loops every
     // ProviderKind x every SignatureAlgorithm value via CCryptoApi's Signature-only 2-argument
@@ -216,7 +218,7 @@ public:
     // combinations must round-trip, unsupported ones (e.g. SIGNATURE_ED25519 on Microsoft, see
     // the "honest unsupported" note on CMicrosoftProvider's SignatureAlgorithmName) must be
     // cleanly rejected.
-    int RunSignatureAlgorithmsTest(void);
+    int RunSignatureAlgorithmsTest(void) override;
 
     // Exercises CCryptoApi's Key agreement surface (GenerateKeyAgreementKeyPair/
     // GetKeyAgreementPublicKeySize/GetSharedSecretSize/ExportKeyAgreementPublicKey/
@@ -231,19 +233,19 @@ public:
     // Microsoft/CryptoPP use ECDH-P256 (Microsoft's only supported value -- see
     // ccryptoapi_factory_unification_goal memory on CNG's lack of standard X25519), Botan/OpenSSL
     // use X25519. One full independent method per provider (no shared helper).
-    int RunMicrosoftProviderKeyAgreementTest(void);
+    int RunMicrosoftProviderKeyAgreementTest(void) override;
 
-    int RunCryptoPPProviderKeyAgreementTest(void);
+    int RunCryptoPPProviderKeyAgreementTest(void) override;
 
-    int RunBotanProviderKeyAgreementTest(void);
+    int RunBotanProviderKeyAgreementTest(void) override;
 
-    int RunOpenSslProviderKeyAgreementTest(void);
+    int RunOpenSslProviderKeyAgreementTest(void) override;
 
     // Libgcrypt takes KEYAGREEMENT_ECDH_P256 here: unlike Botan/OpenSSL (which use libgcrypt-style
     // high-level ECDH), this provider derives P-256 through libgcrypt's LOW-LEVEL gcry_mpi_ec_*
     // point arithmetic (its gcry_pk_encrypt "ecdh" path is an ephemeral ECIES construction, not a
     // static-static agreement), so this is the path most worth covering in depth for it.
-    int RunLibgcryptProviderKeyAgreementTest(void);
+    int RunLibgcryptProviderKeyAgreementTest(void) override;
 
     // Breadth companion to the 5 Run<Vendor>ProviderKeyAgreementTest methods: loops every
     // ProviderKind x every KeyAgreementAlgorithm value, each iteration creating a fresh alice/bob
@@ -252,7 +254,7 @@ public:
     // against ICryptoProviderFactory::SupportsKeyAgreementAlgorithm() as ground truth -- supported
     // combinations must agree on a shared secret, unsupported ones (KEYAGREEMENT_X25519 on
     // Microsoft) must be cleanly rejected.
-    int RunKeyAgreementAlgorithmsTest(void);
+    int RunKeyAgreementAlgorithmsTest(void) override;
 
     // Full AES parameter matrix: 13 AEAD (GCM/CCM/EAX/SIV/GCM-SIV x supported key sizes) + 15
     // Legacy (CBC/CTR/CFB/OFB/ECB x 128/192/256) = 28 algorithm/mode/key-size combinations, x 5
@@ -263,7 +265,7 @@ public:
     // lacking that mode, asserts correctly-unsupported) via EncryptBuffer/DecryptBuffer (AEAD) or
     // EncryptLegacyBuffer/DecryptLegacyBuffer (Legacy). Support/non-support per block is taken
     // directly from each C*Provider.cpp's own AeadAlgorithmName/LegacyAlgorithmName switch.
-    int RunAESTests(void);
+    int RunAESTests(void) override;
 
     // Exercises CCryptoApi::GetShared()'s Multiton cache: same-config calls must return the exact
     // same instance (identity, not just equal state), different-config calls must return different
@@ -273,7 +275,7 @@ public:
     // it, a fresh GetShared() call for a previously-used config must come back with no key pair
     // (GetSignatureSize()==0), proving the old cached instance was actually destroyed and a new one
     // built, not silently reused.
-    int RunSharedInstanceTest(void);
+    int RunSharedInstanceTest(void) override;
 
     // Loops every ProviderKind x every RandomAlgorithm value (5x4=20 combinations) via
     // CCryptoApi::GenerateRandomBytes(algorithm, ...), cross-checked against
@@ -282,52 +284,52 @@ public:
     // would silently pass a broken RNG returning all-zeros or a fixed buffer), unsupported ones
     // (e.g. RANDOM_CTR_DRBG on Microsoft/CryptoPP/Botan, RANDOM_HASH_DRBG on Microsoft/Botan) must
     // be cleanly rejected.
-    int RunRandomAlgorithmsTest(void);
+    int RunRandomAlgorithmsTest(void) override;
 
     // Round-trips EncryptString/DecryptString over English, Turkish and Japanese UTF-8 text to
     // confirm the API treats input as opaque UTF-8 bytes regardless of script/encoding width.
-    int RunEncryptStringMultilingualTest(void);
+    int RunEncryptStringMultilingualTest(void) override;
 
     // Round-trips scalar char/short/int/long/float/double values (including zero, min/max,
     // negative, NaN and infinity) through EncryptBuffer/DecryptBuffer, byte-exact.
-    int RunPrimitiveDataTest(void);
+    int RunPrimitiveDataTest(void) override;
 
     // Same as RunPrimitiveDataTest but for whole arrays of each primitive type.
-    int RunPrimitiveArrayDataTest(void);
+    int RunPrimitiveArrayDataTest(void) override;
 
     // Round-trips data held in std::vector containers: a vector<std::string> (each element
     // encrypted independently via EncryptString/DecryptString) and vector<short>/vector<double>
     // (each encrypted as one contiguous buffer via EncryptBuffer/DecryptBuffer).
-    int RunVectorDataTest(void);
+    int RunVectorDataTest(void) override;
 
     // Round-trips a std::vector<std::wstring> by converting each element to UTF-8 before
     // EncryptString and back to std::wstring after DecryptString (CCryptoApi's string API is
     // UTF-8 only; wide strings are not passed to it directly).
-    int RunVectorWideStringDataTest(void);
+    int RunVectorWideStringDataTest(void) override;
 
     // Exercises the provider/algorithm Factory pattern (CreateProviderFactory) directly: for each
     // ProviderKind, requests a factory, uses it to construct an IAeadCipher/ILegacyCipher for one
     // algorithm known to be supported and one known to be unsupported by that specific provider,
     // and round-trips data purely through the abstract interfaces the factory returns.
-    int RunProviderFactoryTest(void);
+    int RunProviderFactoryTest(void) override;
 
     // File-based analogue of RunEncryptDecryptFileTest, but driven entirely by the Factory
     // pattern instead of CCryptoApi's fixed CMicrosoftProvider: for each ProviderKind, writes an
     // input file, encrypts it to disk via IAeadCipher::EncryptChunked (with progress reporting,
     // just like EncryptFile), decrypts it back from disk via DecryptChunked with a second cipher
     // instance from the same factory, and compares bytes.
-    int RunProviderFactoryFileTest(void);
+    int RunProviderFactoryFileTest(void) override;
 
     // In-memory analogues of RunEncryptDecryptStringTest/BufferTest/BytesTest, driven by the
     // Factory pattern: for each ProviderKind, round-trips the same payload shape (text, binary
     // buffer, raw bytes) purely through a factory-selected IAeadCipher (AES-256-GCM). Just like
     // CCryptoApi's own EncryptBuffer/EncryptBytes (both thin wrappers over the same private
     // helper), the Buffer and Bytes variants here share one internal round-trip routine too.
-    int RunProviderFactoryStringTest(void);
+    int RunProviderFactoryStringTest(void) override;
 
-    int RunProviderFactoryBufferTest(void);
+    int RunProviderFactoryBufferTest(void) override;
 
-    int RunProviderFactoryBytesTest(void);
+    int RunProviderFactoryBytesTest(void) override;
 
     // Hash analogues of RunProviderFactoryTest/FileTest/StringTest/BufferTest/BytesTest, driven
     // entirely by the Factory pattern (ICryptoProviderFactory::CreateHashService) instead of
@@ -337,15 +339,15 @@ public:
     // String/Buffer/Bytes variants cross-check the raw Factory-computed digest against
     // CCryptoApi::ComputeHashBuffer (via the Hash-only 2-argument constructor) for the same
     // content, proving the facade doesn't diverge from the lower-level Factory it wraps.
-    int RunProviderFactoryHashTest(void);
+    int RunProviderFactoryHashTest(void) override;
 
-    int RunProviderFactoryHashFileTest(void);
+    int RunProviderFactoryHashFileTest(void) override;
 
-    int RunProviderFactoryHashStringTest(void);
+    int RunProviderFactoryHashStringTest(void) override;
 
-    int RunProviderFactoryHashBufferTest(void);
+    int RunProviderFactoryHashBufferTest(void) override;
 
-    int RunProviderFactoryHashBytesTest(void);
+    int RunProviderFactoryHashBytesTest(void) override;
 
     // Selects PROVIDER_MICROSOFT via the Factory and exercises every AeadAlgorithm/
     // LegacySymmetricAlgorithm/AsymmetricAlgorithm value the enums define: algorithms Microsoft/
@@ -354,69 +356,69 @@ public:
     // SupportsAeadAlgorithm/SupportsLegacyAlgorithm/SupportsAsymmetricAlgorithm. Nothing here is
     // hardcoded to "GCM only" -- whatever CreateProviderFactory(PROVIDER_MICROSOFT) reports as
     // supported gets tested.
-    int RunMicrosoftProviderAllAlgorithmsTest(void);
+    int RunMicrosoftProviderAllAlgorithmsTest(void) override;
 
     // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_CRYPTOPP instead.
-    int RunCryptoPPProviderAllAlgorithmsTest(void);
+    int RunCryptoPPProviderAllAlgorithmsTest(void) override;
 
     // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_BOTAN instead.
-    int RunBotanProviderAllAlgorithmsTest(void);
+    int RunBotanProviderAllAlgorithmsTest(void) override;
 
     // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_OPENSSL instead.
-    int RunOpenSslProviderAllAlgorithmsTest(void);
+    int RunOpenSslProviderAllAlgorithmsTest(void) override;
 
     // Same as RunMicrosoftProviderAllAlgorithmsTest, but selecting PROVIDER_LIBGCRYPT instead. On x64
     // this is the widest of the five (libgcrypt supports every AeadAlgorithm, every
     // LegacySymmetricAlgorithm and every AsymmetricAlgorithm value the enums define); on Win32 all
     // of them are verified as correctly rejected instead, since no x86 libgcrypt binary exists.
-    int RunLibgcryptProviderAllAlgorithmsTest(void);
+    int RunLibgcryptProviderAllAlgorithmsTest(void) override;
 
     // Demonstrates that CCryptoApi's blocking calls can be driven from a background thread the
     // caller owns; CCryptoApi itself stays synchronous by design (see Rules.md/Plan.md ABI notes).
-    int RunEncryptDecryptFileTestNonBlocking(void);
+    int RunEncryptDecryptFileTestNonBlocking(void) override;
 
-    int RunEncryptDecryptStringTestNonBlocking(void);
+    int RunEncryptDecryptStringTestNonBlocking(void) override;
 
-    int RunEncryptDecryptBufferTestNonBlocking(void);
+    int RunEncryptDecryptBufferTestNonBlocking(void) override;
 
-    int RunEncryptDecryptBytesTestNonBlocking(void);
+    int RunEncryptDecryptBytesTestNonBlocking(void) override;
 
     // Hash analogues of RunEncryptDecryptFileTestNonBlocking/StringTestNonBlocking/
     // BufferTestNonBlocking/BytesTestNonBlocking, driving RunHashFileTest/StringTest/BufferTest/
     // BytesTest from a background thread via the same runNonBlocking helper.
-    int RunHashFileTestNonBlocking(void);
+    int RunHashFileTestNonBlocking(void) override;
 
-    int RunHashStringTestNonBlocking(void);
+    int RunHashStringTestNonBlocking(void) override;
 
-    int RunHashBufferTestNonBlocking(void);
+    int RunHashBufferTestNonBlocking(void) override;
 
-    int RunHashBytesTestNonBlocking(void);
+    int RunHashBytesTestNonBlocking(void) override;
 
     // Generates an identity via CPgpEngine::GenerateKeyPair, checks GetKeyId reports a 16-hex-char
     // Key ID, and round-trips ExportPublicKeyArmored/ExportSecretKeyArmored through the
     // capacity=0 BUFFER_TOO_SMALL query convention before checking both exports carry the
     // expected "-----BEGIN PGP ... KEY BLOCK-----" armor framing.
-    int RunPgpKeyGenerationTest(void);
+    int RunPgpKeyGenerationTest(void) override;
 
     // Two CPgpEngine identities (alice/bob) exchange public keys via ExportPublicKeyArmored/
     // ImportPeerPublicKey, then round-trip a binary buffer through EncryptBuffer/DecryptBuffer
     // and a UTF-8 string through EncryptStringArmored/DecryptStringArmored, both byte-exact.
-    int RunPgpEncryptDecryptTest(void);
+    int RunPgpEncryptDecryptTest(void) override;
 
     // alice signs a buffer with SignBuffer; bob (having imported alice's public key) verifies it
     // with VerifyBuffer. A bit-flipped signature is confirmed to verify as *isValid=false (not a
     // technical error), matching CCryptoApi::VerifyBuffer's own convention.
-    int RunPgpSignVerifyTest(void);
+    int RunPgpSignVerifyTest(void) override;
 
     // alice produces a clear-signed block via ClearSignString; bob verifies it via
     // VerifyClearSignedString. Tampering with the clear-signed body text is confirmed to flip
     // *isValid to false.
-    int RunPgpClearSignTest(void);
+    int RunPgpClearSignTest(void) override;
 
     // Round-trips EncryptStringArmored/DecryptStringArmored (exercising the ASCII armor + CRC24
     // path end to end), then flips one base64 character in the armored message and confirms
     // DecryptStringArmored fails closed (INVALID_DATA) instead of returning corrupted plaintext.
-    int RunPgpArmorTest(void);
+    int RunPgpArmorTest(void) override;
 
     // End-to-end scenario test with four independent identities (Bob, Alice, Carol, Dave), each
     // generating its own PGP key pair (GenerateKeyPair) and exporting its public key
@@ -434,24 +436,24 @@ public:
     // (DecryptBuffer) and verifies the signature against Bob's public key (VerifyBuffer),
     // confirming both the recovered document bytes and the signature's validity; Dave's copy is
     // additionally tampered with to confirm a corrupted signature is correctly rejected.
-    int RunPgpAliceBobTest(void);
+    int RunPgpAliceBobTest(void) override;
 
     // Streaming (chunked) CPgpEngine::EncryptFile/DecryptFile round-trip over a real, several-
     // megabyte file (large enough to exercise multiple PGP_FILE_CHUNK_SIZE chunks, not just a
     // single one), reusing WriteTesterFile/ReadTesterFile/PrintFileProgress the same way
     // RunEncryptDecryptFileTest does. Also re-encrypts, flips one ciphertext byte, and confirms
     // DecryptFile fails closed (the MDC check catches it) instead of producing corrupted output.
-    int RunPgpFileEncryptDecryptTest(void);
+    int RunPgpFileEncryptDecryptTest(void) override;
 
     // Streaming (chunked) CPgpEngine::SignFile/VerifyFile over a real file, same size/generation
     // pattern as RunPgpFileEncryptDecryptTest. Also flips one byte in the detached signature file
     // and confirms VerifyFile reports it as invalid rather than erroring out.
-    int RunPgpFileSignVerifyTest(void);
+    int RunPgpFileSignVerifyTest(void) override;
 
     // ECC file encryption/decryption and detached signing/verification across chunk boundaries;
     // checks ECC-only and both mixed RSA/ECC recipient orders, compressed EncryptBuffer output,
     // and corruption rejection.
-    int RunPgpEccFileStreamingTest(void);
+    int RunPgpEccFileStreamingTest(void) override;
 
     // Cross-checks CPgpEngine against a real, installed GnuPG (Gpg4win) binary -- SKIPPED (not
     // FAILED, returns NO_ERROR) when gpg.exe isn't found at one of the common install paths,
@@ -465,13 +467,13 @@ public:
     // reliably fails when spawned through a piped/non-console child process on Windows
     // (confirmed while building this test), a test-harness limitation unrelated to CPgpEngine's
     // own correctness -- the other 4 directions already exercise the same sign/verify code path.
-    int RunPgpGnuPgInteropTest(void);
+    int RunPgpGnuPgInteropTest(void) override;
 
     // Internal-only (no GnuPG needed) round-trip of CPgpEngine's expiration API: generates one
     // identity with the 4-argument GenerateKeyPair (must report GetKeyExpirationSeconds()==0)
     // and another with the 5-argument overload's expirationSeconds set to a non-zero value (must
     // echo that exact value back).
-    int RunPgpKeyExpirationTest(void);
+    int RunPgpKeyExpirationTest(void) override;
 
     // Cross-checks GenerateKeyPair's expiration overload and RevokeKeyArmored against real
     // GnuPG -- SKIPPED (not FAILED) when gpg.exe isn't found, same convention as
@@ -479,7 +481,7 @@ public:
     // confirms via "gpg --with-colons --list-keys" that the parsed expiry field is non-empty;
     // then produces a revocation certificate (RevokeKeyArmored), imports it into the same
     // keyring, and confirms the key's validity field flips to 'r' (revoked).
-    int RunPgpGnuPgRevocationInteropTest(void);
+    int RunPgpGnuPgRevocationInteropTest(void) override;
 
     // Internal-only (no GnuPG needed) multi-recipient round-trip: bob imports alice's public key
     // (ImportPeerPublicKey, the primary recipient) and carol's public key
@@ -489,17 +491,17 @@ public:
     // packets). A fourth identity (dave, never imported as a recipient) is confirmed unable to
     // decrypt either ciphertext (INVALID_DATA), proving the recipient list is actually enforced
     // rather than every ciphertext being universally decryptable.
-    int RunPgpMultiRecipientEncryptDecryptTest(void);
+    int RunPgpMultiRecipientEncryptDecryptTest(void) override;
 
     // Encrypt one message for mixed RSA and Ed25519/X25519 recipients, with each algorithm
     // serving as the primary and additional recipient in turn. Both decrypt; a third key cannot.
-    int RunPgpMixedRecipientEncryptDecryptTest(void);
+    int RunPgpMixedRecipientEncryptDecryptTest(void) override;
 
     // Same multi-recipient scenario as RunPgpMultiRecipientEncryptDecryptTest, but through the
     // streaming EncryptFile API (bob) and DecryptFile (alice, then carol, both against the exact
     // same encrypted file) -- same WriteTesterFile/ReadTesterFile file-based pattern as
     // RunPgpFileEncryptDecryptTest.
-    int RunPgpMultiRecipientFileEncryptDecryptTest(void);
+    int RunPgpMultiRecipientFileEncryptDecryptTest(void) override;
 
     // Cross-checks multi-recipient encryption against two REAL, independently GnuPG-generated
     // identities -- SKIPPED (not FAILED) when gpg.exe isn't found, same convention as
@@ -511,7 +513,7 @@ public:
     // (ImportPeerPublicKey + ImportAdditionalRecipientPublicKey) and EncryptStringArmored's ONCE;
     // the resulting single ciphertext is then handed to EACH gpg identity's own homedir in turn
     // ("gpg --decrypt") and both must independently recover the original plaintext.
-    int RunPgpGnuPgMultiRecipientInteropTest(void);
+    int RunPgpGnuPgMultiRecipientInteropTest(void) override;
 
     // Mixed-algorithm analogue of RunPgpGnuPgMultiRecipientInteropTest: recipient 1 is generated by
     // real gpg as an ordinary RSA identity ("--quick-generate-key ... default"), recipient 2 as a
@@ -525,25 +527,25 @@ public:
     // recover the original plaintext -- proving true multi-recipient interop across two DIFFERENT
     // recipient algorithms against real GnuPG, not just this engine talking to itself (that internal
     // check is RunPgpMixedRecipientEncryptDecryptTest).
-    int RunPgpGnuPgMixedAlgorithmRecipientInteropTest(void);
+    int RunPgpGnuPgMixedAlgorithmRecipientInteropTest(void) override;
 
     // Generates an Ed25519/X25519 identity (the CPgpEngine(PGP_KEY_ALGORITHM_ED25519_X25519)
     // constructor) and checks GetKeyAlgorithm() reports it back, then otherwise mirrors
     // RunPgpKeyGenerationTest exactly (GetKeyId, ExportPublicKeyArmored/ExportSecretKeyArmored
     // round-tripped through the capacity=0 BUFFER_TOO_SMALL convention, armor framing checks).
-    int RunPgpEd25519KeyGenerationTest(void);
+    int RunPgpEd25519KeyGenerationTest(void) override;
 
     // Ed25519/X25519 analogue of RunPgpEncryptDecryptTest -- both alice and bob are
     // PGP_KEY_ALGORITHM_ED25519_X25519 identities; same buffer + armored-string round-trip checks.
-    int RunPgpEd25519EncryptDecryptTest(void);
+    int RunPgpEd25519EncryptDecryptTest(void) override;
 
     // Ed25519/X25519 analogue of RunPgpSignVerifyTest (Ed25519-SHA512 detached signatures instead
     // of RSA-PKCS#1v1.5-SHA256), including the same bit-flipped-signature negative check.
-    int RunPgpEd25519SignVerifyTest(void);
+    int RunPgpEd25519SignVerifyTest(void) override;
 
     // Ed25519/X25519 analogue of RunPgpClearSignTest, including the same tampered-body negative
     // check.
-    int RunPgpEd25519ClearSignTest(void);
+    int RunPgpEd25519ClearSignTest(void) override;
 
     // Cross-checks a PGP_KEY_ALGORITHM_ED25519_X25519 identity against a real, installed GnuPG --
     // SKIPPED (not FAILED) when gpg.exe isn't found, same convention as RunPgpGnuPgInteropTest.
@@ -554,14 +556,14 @@ public:
     // decrypts (DecryptStringArmored, exercising the ECDH/AES-KeyWrap decrypt path against a REAL
     // gpg-produced PKESK, not just this engine's own); this engine signs (SignBuffer, Ed25519) and
     // gpg verifies; this engine clear-signs (ClearSignString) and gpg verifies.
-    int RunPgpGnuPgEd25519InteropTest(void);
+    int RunPgpGnuPgEd25519InteropTest(void) override;
 
     // Internal-only (no GnuPG needed) round-trip of CPgpEngine's expiration API against Ed25519/
     // X25519 identities: generates one identity with the 4-argument GenerateKeyPair (must report
     // GetKeyExpirationSeconds()==0) and another with the 5-argument overload's expirationSeconds
     // set to a non-zero value (must echo that exact value back) -- same shape as
     // RunPgpKeyExpirationTest, using CPgpEngine(PGP_KEY_ALGORITHM_ED25519_X25519) instead.
-    int RunPgpEd25519KeyExpirationTest(void);
+    int RunPgpEd25519KeyExpirationTest(void) override;
 
     // Cross-checks GenerateKeyPair's expiration overload and RevokeKeyArmored against real GnuPG
     // for an Ed25519/X25519 identity -- SKIPPED (not FAILED) when gpg.exe isn't found, same
@@ -571,7 +573,7 @@ public:
     // (RevokeKeyArmored), imports it into the same keyring, and confirms the key's validity field
     // flips to 'r' (revoked) -- same shape as RunPgpGnuPgRevocationInteropTest, using an Ed25519/
     // X25519 identity instead of RSA.
-    int RunPgpGnuPgEd25519RevocationInteropTest(void);
+    int RunPgpGnuPgEd25519RevocationInteropTest(void) override;
 
     // ============================================================================================
     // CPgpEngine::EncryptFileCompressed -- additive counterpart of RunPgpFileEncryptDecryptTest for
@@ -585,35 +587,35 @@ public:
     // DecryptFile (unchanged, already reads ZIP). Also checks the compressed output is actually
     // smaller than the (highly compressible) plaintext, confirming compression really ran rather
     // than the packet merely claiming algorithm 1.
-    int RunPgpEncryptFileCompressedZipTest(void);
+    int RunPgpEncryptFileCompressedZipTest(void) override;
 
     // ZLIB-compressed analogue of RunPgpEncryptFileCompressedZipTest (PGP_COMPRESSION_ALGORITHM_ZLIB
     // instead of ZIP).
-    int RunPgpEncryptFileCompressedZlibTest(void);
+    int RunPgpEncryptFileCompressedZlibTest(void) override;
 
     // Zero-byte input file through EncryptFileCompressed -> DecryptFile, confirming the temp-file/
     // Compressed-Data-packet machinery degrades correctly to an empty result instead of erroring on
     // the edge case of nothing to compress.
-    int RunPgpEncryptFileCompressedEmptyFileTest(void);
+    int RunPgpEncryptFileCompressedEmptyFileTest(void) override;
 
     // Several-megabyte input (multiple PGP_FILE_CHUNK_SIZE chunks in both the compress pass and the
     // encrypt pass) through EncryptFileCompressed -> DecryptFile, same round-trip shape as
     // RunPgpFileEncryptDecryptTest but exercising the two-pass compressed path across chunk
     // boundaries.
-    int RunPgpEncryptFileCompressedLargeFileTest(void);
+    int RunPgpEncryptFileCompressedLargeFileTest(void) override;
 
     // Cancellation mid-stream (CancelAfterThirdChunk, same helper RunEncryptFileDecryptFileTest's
     // own cancellation check uses) during EncryptFileCompressed's first (compress-to-temp-file)
     // pass over a multi-chunk input; confirms the call returns OPERATION_CANCELLED and that BOTH
     // the ".pgpztmp" temporary file and the real output file are absent afterward -- the specific
     // cleanup-on-every-exit-path guarantee EncryptFileCompressed's own comment documents.
-    int RunPgpEncryptFileCompressedCancellationTest(void);
+    int RunPgpEncryptFileCompressedCancellationTest(void) override;
 
     // Flips one byte of EncryptFileCompressed's output and confirms DecryptFile fails closed
     // (non-NO_ERROR, and never produces the original plaintext) instead of silently accepting
     // corrupted compressed ciphertext -- compressed analogue of RunPgpFileEncryptDecryptTest's own
     // corruption check.
-    int RunPgpEncryptFileCompressedCorruptionTest(void);
+    int RunPgpEncryptFileCompressedCorruptionTest(void) override;
 
     // Real-GnuPG interop for the new BZip2 decode path -- SKIPPED (not FAILED) when gpg.exe isn't
     // found, same convention as RunPgpGnuPgInteropTest. A real "gpg --compress-algo bzip2 --encrypt"
@@ -621,12 +623,12 @@ public:
     // emits ZIP/ZLIB), and this engine's DecryptFile must still read it back correctly via the
     // from-scratch BZip2 decoder -- mirrors RunPgpGnuPgEd25519InteropTest's own "gpg ZLIB file ->
     // our DecryptFile" direction, with bzip2 in place of zlib.
-    int RunPgpGnuPgBzip2InteropTest(void);
+    int RunPgpGnuPgBzip2InteropTest(void) override;
 
     // Same scenario as RunPgpGnuPgBzip2InteropTest, through DecryptBuffer instead of DecryptFile --
     // regression test for a real bug: DecryptBuffer's buffer-path Compressed Data dispatch had no
     // BZip2 case at all until this was fixed, even though it was documented as already supported.
-    int RunPgpGnuPgBzip2DecryptBufferInteropTest(void);
+    int RunPgpGnuPgBzip2DecryptBufferInteropTest(void) override;
 
     // Cross-checks CPgpEngine's reader against real GnuPG's new-format PARTIAL BODY LENGTH framing
     // (RFC 4880 section 4.2.2.4) -- SKIPPED (not FAILED) when gpg.exe isn't found, same convention
@@ -646,7 +648,7 @@ public:
     // the SEIP packet's own length octet is checked to be in the 224-254 partial range directly in
     // the raw bytes, and "gpg --list-packets" is used as an independent second opinion on the
     // nested packets.
-    int RunPgpGnuPgPartialBodyLengthInteropTest(void);
+    int RunPgpGnuPgPartialBodyLengthInteropTest(void) override;
 
     // Internal-only (no GnuPG needed) exercise of CPgpEngine's read-only inspection API over an
     // ENCRYPTED message: alice encrypts one buffer to bob (EncryptBuffer) and one string
@@ -658,7 +660,7 @@ public:
     // recipient, and ListSigningKeyIds/ListSignatures finding none (an encrypted message's
     // signatures, if any, are unreachable). The capacity=0 BUFFER_TOO_SMALL query convention is
     // exercised on every List* call.
-    int RunPgpInspectionEncryptedMessageTest(void);
+    int RunPgpInspectionEncryptedMessageTest(void) override;
 
     // Internal-only (no GnuPG needed) check that ListEncryptionKeyIds enumerates ALL recipients of
     // a real multi-recipient message, not just the first: bob encrypts once to alice alone and
@@ -668,7 +670,7 @@ public:
     // Key IDs, in PKESK order. Note these are the recipients' ENCRYPTION SUBKEY Key IDs (what a
     // PKESK packet addresses), which is why they are established from the engine's own
     // single-recipient output rather than from GetPeerKeyId (the peer's MASTER key).
-    int RunPgpInspectionMultiRecipientTest(void);
+    int RunPgpInspectionMultiRecipientTest(void) override;
 
     // Internal-only (no GnuPG needed) exercise of the signature side of the inspection API over
     // UNENCRYPTED input: alice's SignBuffer detached signature must report exactly one signature
@@ -678,7 +680,7 @@ public:
     // IsPublicKeyEncrypted/IsPasswordEncrypted/IsIntegrityProtected all false and GetCompression
     // the -1 "provably not compressed" sentinel -- the honest answers for input that carries no
     // ciphertext at all, and the case that distinguishes -1 from the encrypted -2.
-    int RunPgpInspectionSignatureTest(void);
+    int RunPgpInspectionSignatureTest(void) override;
 
     // Cross-checks CPgpEngine's inspection API against real GnuPG's own "gpg --list-packets"
     // verdict on the very same bytes -- SKIPPED (not FAILED) when gpg.exe isn't found, same
@@ -687,7 +689,7 @@ public:
     // Key ID ListEncryptionKeyIds reports is required to match the one gpg's own listing prints,
     // and a detached signature THIS engine produced is listed by gpg and its printed issuer key
     // id, sigclass and digest algorithm required to match what ListSignatures reports.
-    int RunPgpGnuPgInspectionInteropTest(void);
+    int RunPgpGnuPgInspectionInteropTest(void) override;
 
     // ============================================================================================
     // CPgpEngineWrapper -- parallel test suite for the gpg.exe-backed engine (see
@@ -702,31 +704,31 @@ public:
     // actually at one of the well-known Gpg4win install paths on this machine (same two paths
     // FindGpgExecutable in this file itself probes) -- the one test in this suite that still runs
     // (and asserts something meaningful) even when GnuPG is NOT installed.
-    int RunPgpWrapperAvailabilityTest(void);
+    int RunPgpWrapperAvailabilityTest(void) override;
 
     // Generates an identity via CPgpEngineWrapper::GenerateKeyPair (real "gpg --batch --gen-key"),
     // checks GetKeyId reports a 16-hex-char Key ID, and round-trips ExportPublicKeyArmored/
     // ExportSecretKeyArmored through the capacity=0 BUFFER_TOO_SMALL query convention before
     // checking both exports carry the expected "-----BEGIN PGP ... KEY BLOCK-----" armor framing --
     // same shape as RunPgpKeyGenerationTest, against the real gpg-backed engine instead.
-    int RunPgpWrapperKeyGenerationTest(void);
+    int RunPgpWrapperKeyGenerationTest(void) override;
 
     // Two CPgpEngineWrapper identities (alice/bob) exchange public keys via
     // ExportPublicKeyArmored/ImportPeerPublicKey (real "gpg --import"), then round-trip a binary
     // buffer through EncryptBuffer/DecryptBuffer and a UTF-8 string through
     // EncryptStringArmored/DecryptStringArmored, both byte-exact, via real "gpg --encrypt"/
     // "gpg --decrypt".
-    int RunPgpWrapperEncryptDecryptTest(void);
+    int RunPgpWrapperEncryptDecryptTest(void) override;
 
     // alice signs a buffer with SignBuffer (real "gpg --detach-sign"); bob (having imported
     // alice's public key) verifies it with VerifyBuffer (real "gpg --verify"). A bit-flipped
     // signature is confirmed to verify as *isValid=false (not a technical error).
-    int RunPgpWrapperSignVerifyTest(void);
+    int RunPgpWrapperSignVerifyTest(void) override;
 
     // alice produces a clear-signed block via ClearSignString (real "gpg --clear-sign"); bob
     // verifies it via VerifyClearSignedString (real "gpg --verify"). Tampering with the
     // clear-signed body text is confirmed to flip *isValid to false.
-    int RunPgpWrapperClearSignTest(void);
+    int RunPgpWrapperClearSignTest(void) override;
 
     // Four CPgpEngineWrapper identities (bob/alice/carol/dave), same shape as RunPgpAliceBobTest but
     // against the real gpg-backed engine: bob signs one document via SignBuffer, then encrypts the
@@ -735,24 +737,24 @@ public:
     // real multi-recipient encryption on its own). All three independently DecryptBuffer their own
     // ciphertext and VerifyBuffer bob's signature; dave's copy is additionally tampered with to
     // confirm a corrupted signature is correctly rejected.
-    int RunPgpWrapperAliceBobTest(void);
+    int RunPgpWrapperAliceBobTest(void) override;
 
     // Streaming file-path CPgpEngineWrapper::EncryptFile/DecryptFile round-trip over a real file on
     // disk (WriteTesterFile/ReadTesterFile, same convention as RunPgpFileEncryptDecryptTest), gpg
     // operating directly on the file paths. Also re-encrypts, flips one ciphertext byte, and
     // confirms DecryptFile fails closed (INVALID_DATA) instead of producing corrupted output.
-    int RunPgpWrapperFileEncryptDecryptTest(void);
+    int RunPgpWrapperFileEncryptDecryptTest(void) override;
 
     // CPgpEngineWrapper::SignFile/VerifyFile over a real file, same size/generation pattern as
     // RunPgpWrapperFileEncryptDecryptTest. Also flips one byte in the detached signature file and
     // confirms VerifyFile reports it as invalid rather than erroring out.
-    int RunPgpWrapperFileSignVerifyTest(void);
+    int RunPgpWrapperFileSignVerifyTest(void) override;
 
     // Internal round-trip of CPgpEngineWrapper's expiration API against real gpg: generates one
     // identity with the 4-argument GenerateKeyPair (must report GetKeyExpirationSeconds()==0) and
     // another with the 5-argument overload's expirationSeconds set to a non-zero value (must echo
     // that exact value back) -- same shape as RunPgpKeyExpirationTest.
-    int RunPgpWrapperKeyExpirationTest(void);
+    int RunPgpWrapperKeyExpirationTest(void) override;
 
     // Generates an identity with a 30-day expiration (real "gpg --batch --gen-key"), exports its
     // public key (ExportPublicKeyArmored) and a revocation certificate (RevokeKeyArmored), then
@@ -762,7 +764,7 @@ public:
     // after importing the revocation certificate, that the key's validity field flips to 'r'
     // (revoked) -- same external-verification shape as RunPgpGnuPgRevocationInteropTest, sourcing
     // the key material from CPgpEngineWrapper instead of CPgpEngine.
-    int RunPgpWrapperKeyRevocationTest(void);
+    int RunPgpWrapperKeyRevocationTest(void) override;
 
     // Extra capability beyond CPgpEngine: real multi-recipient encryption. Three independent
     // CPgpEngineWrapper identities (alice/bob/carol) each import each other's public keys; bob
@@ -770,7 +772,7 @@ public:
     // ids at once (one shared-session-key ciphertext, confirmed via GetImportedPeerKeyCount/
     // GetImportedPeerKeyId), and both alice and carol independently DecryptBuffer the SAME
     // ciphertext bytes back to the original plaintext.
-    int RunPgpWrapperMultiRecipientEncryptTest(void);
+    int RunPgpWrapperMultiRecipientEncryptTest(void) override;
 
     // Extra capability beyond CPgpEngine: real ECC/EdDSA identities. Generates an Ed25519/Cv25519
     // identity via GenerateKeyPairEcc, checks GetKeyId still reports a 16-hex-char Key ID and both
@@ -778,7 +780,7 @@ public:
     // alice (RSA, via the ordinary GenerateKeyPair) and an ECC bob exchange public keys and
     // round-trip EncryptBuffer/DecryptBuffer and SignBuffer/VerifyBuffer against each other,
     // confirming an ECC identity interoperates with an RSA one through the same gpg keyring.
-    int RunPgpWrapperEccKeyGenerationTest(void);
+    int RunPgpWrapperEccKeyGenerationTest(void) override;
 
     // Extra capability beyond CPgpEngine: symmetric-only ("passphrase") encryption. A SINGLE
     // CPgpEngineWrapper instance that NEVER calls GenerateKeyPair/GenerateKeyPairEcc round-trips a
@@ -788,7 +790,7 @@ public:
     // (see this class's own header comment on EncryptBufferSymmetric for the investigation this
     // confirms). A wrong-passphrase DecryptBuffer attempt is confirmed to fail rather than silently
     // succeed.
-    int RunPgpWrapperSymmetricEncryptDecryptTest(void);
+    int RunPgpWrapperSymmetricEncryptDecryptTest(void) override;
 
     // Extra capability beyond CPgpEngine: ground-truth keyring introspection/removal. bob generates
     // an identity and imports alice's public key, then GetKeyringKeyCount/GetKeyringListing/
@@ -798,7 +800,7 @@ public:
     // bob's OWN key id. DeleteOwnIdentity is then confirmed to reset bob's own identity state
     // (GetKeyId empty, exported key sizes 0, keyring count 0) and to allow a fresh GenerateKeyPair
     // call afterward in the same homedir.
-    int RunPgpWrapperKeyringListDeleteTest(void);
+    int RunPgpWrapperKeyringListDeleteTest(void) override;
 
     // Extra capability beyond CPgpEngine: real gpg "--compress-algo" selection. bob encrypts the
     // SAME highly-compressible plaintext to alice four times, once per PgpCompressionAlgorithm
@@ -809,7 +811,7 @@ public:
     // algorithm actually reached gpg rather than merely round-tripping under gpg's own default.
     // Also exercises the PgpCompressionAlgorithm-taking EncryptBufferMultiRecipient overload once
     // (bob addressing both alice and carol) to confirm that overload compiles and works too.
-    int RunPgpWrapperCompressionAlgorithmTest(void);
+    int RunPgpWrapperCompressionAlgorithmTest(void) override;
 
     // gpg-backed mirror of RunPgpInspectionEncryptedMessageTest: bob encrypts a buffer and a
     // string to alice through real gpg, and CPgpEngineWrapper's inspection API (real
@@ -818,20 +820,20 @@ public:
     // for AEAD-capable recipients, and a SEIP packet, tag 18, otherwise -- both are integrity
     // protected), GetCompression the -2 "cannot tell without decrypting" sentinel, and
     // ListEncryptionKeyIds exactly one recipient Key ID.
-    int RunPgpWrapperInspectionEncryptedMessageTest(void);
+    int RunPgpWrapperInspectionEncryptedMessageTest(void) override;
 
     // gpg-backed mirror of RunPgpInspectionMultiRecipientTest, using this class's own real
     // multi-recipient capability: bob encrypts ONE buffer via EncryptBufferMultiRecipient to both
     // alice and carol, and ListEncryptionKeyIds must report two recipient Key IDs -- the same two
     // that the corresponding single-recipient messages to alice and to carol report on their own.
-    int RunPgpWrapperInspectionMultiRecipientTest(void);
+    int RunPgpWrapperInspectionMultiRecipientTest(void) override;
 
     // Inspection of a passphrase-only (SKESK) message, which only this engine can produce:
     // EncryptBufferSymmetric's output must report IsPasswordEncrypted true, IsPublicKeyEncrypted
     // false, ListEncryptionKeyIds zero recipients (a symmetric message addresses no key at all),
     // and IsIntegrityProtected true. The same instance's ordinary public-key EncryptBuffer output
     // is inspected alongside it as the mirror-image control (password false, public-key true).
-    int RunPgpWrapperInspectionSymmetricTest(void);
+    int RunPgpWrapperInspectionSymmetricTest(void) override;
 
     // gpg-backed mirror of RunPgpInspectionSignatureTest: alice's SignBuffer detached signature
     // and ClearSignString output are inspected through real "gpg --list-packets" and must report
@@ -839,7 +841,7 @@ public:
     // and 01 (canonical text document) respectively -- the clear-signed case also exercising this
     // class's extraction of the trailing signature block, without which gpg's own listing never
     // mentions the signature at all.
-    int RunPgpWrapperInspectionSignatureTest(void);
+    int RunPgpWrapperInspectionSignatureTest(void) override;
 
 protected:
 

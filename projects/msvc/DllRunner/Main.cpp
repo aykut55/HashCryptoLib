@@ -1,20 +1,74 @@
-// DllRunner.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
 #include <iostream>
+
+#include "DllLoader/CryptoApiDllLoader.h"
 
 int main()
 {
-    std::cout << "Hello World!\n";
+    std::string dllFileName = "CryptoApi.dll";
+
+    CryptoApiNS::CCryptoApiDllLoader* pCryptoApiDllLoader = nullptr;
+
+	CryptoApiNS::ICryptoApi* pCryptoApi = nullptr;
+
+    try
+    {
+        std::cout << "Hello World!\n";
+        std::cout << std::endl;
+
+        pCryptoApiDllLoader = new CryptoApiNS::CCryptoApiDllLoader();
+
+        if (pCryptoApiDllLoader)
+        {
+            pCryptoApiDllLoader->SetFileName(dllFileName);
+
+            if (pCryptoApiDllLoader->LoadLibrary())
+            {
+                std::cout << "CryptoApi.dll loaded successfully." << std::endl;
+            }
+            else
+            {
+                std::cout << "Failed to load CryptoApi.dll." << std::endl;
+            }
+
+            if (pCryptoApiDllLoader->IsLoaded())
+            {
+                pCryptoApi = pCryptoApiDllLoader->GetCryptoApiObject();
+
+                if (pCryptoApi)
+                {
+                    std::cout << std::endl;
+
+                    std::cout << "CryptoAPI version: " << pCryptoApi->GetVersion() << std::endl;
+
+                    std::cout << std::endl;
+
+                    // testleri kostur..
+                    CryptoApiNS::ICryptoApiTester* pCryptoApiTester = pCryptoApiDllLoader->GetCryptoApiTesterObject();
+
+                    if (pCryptoApiTester)
+                    {
+                        pCryptoApiTester->RunEncryptDecryptFileTest();
+
+                        pCryptoApiTester->RunEncryptDecryptStringTest();
+
+                        pCryptoApiTester->RunEncryptDecryptBufferTest();
+
+                        pCryptoApiTester->RunEncryptDecryptBytesTest();
+
+                        pCryptoApiDllLoader->DestroyCryptoApiTesterObject(pCryptoApiTester);
+                    }
+                }
+
+                pCryptoApiDllLoader->DestroyCryptoApiObject(pCryptoApi);
+            }
+        }
+
+        delete pCryptoApiDllLoader;
+    }
+    catch (...)
+    {
+
+    }
+
+    return 0;
 }
-
-// Run program: Ctrl + F5 or Debug > Start Without Debugging menu
-// Debug program: F5 or Debug > Start Debugging menu
-
-// Tips for Getting Started: 
-//   1. Use the Solution Explorer window to add/manage files
-//   2. Use the Team Explorer window to connect to source control
-//   3. Use the Output window to see build output and other messages
-//   4. Use the Error List window to view errors
-//   5. Go to Project > Add New Item to create new code files, or Project > Add Existing Item to add existing code files to the project
-//   6. In the future, to open this project again, go to File > Open > Project and select the .sln file

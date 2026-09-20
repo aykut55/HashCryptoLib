@@ -13,10 +13,21 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="src\DllLoader">
+      <UniqueIdentifier>{8b2c5b6a-9d3e-4a2f-9b7e-5c1a2d3e4f60}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\DllLoader\CryptoApiDllLoader.cpp">
+      <Filter>src\DllLoader</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\src\DllLoader\CryptoApiDllLoader.h">
+      <Filter>src\DllLoader</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

@@ -74,6 +74,13 @@
     <ClCompile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <!-- DllRunner only needs src for CryptoApiDllLoader.h/CryptoApi.h's own type declarations
+           (CCryptoApi, ErrorCode, ProviderKind, etc.); unlike AppBuilder/DllBuilder/LibBuilder it
+           does not compile the crypto engine itself, so it needs none of their 3rdParty include
+           dirs, static-CRT matching, or ProjectReferences CryptoAPI.dll is loaded and its
+           exports resolved entirely at runtime via CCryptoApiDllLoader (LoadLibrary/GetProcAddress),
+           not linked against at compile time. -->
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -133,6 +140,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\..\src\DllLoader\CryptoApiDllLoader.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\..\src\DllLoader\CryptoApiDllLoader.cpp" />
     <ClCompile Include="Main.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

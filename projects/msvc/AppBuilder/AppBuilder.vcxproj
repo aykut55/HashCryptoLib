@@ -190,6 +190,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\src\CryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h" />
+    <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
     <ClInclude Include="..\..\..\src\Definitions\Definitions.h" />
@@ -221,6 +224,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ICryptoApi.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ICryptoApiTester.cpp" />
+    <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
     <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp" />
