@@ -1,7 +1,12 @@
 #include <iostream>
+#include <string>
+#include <vector>
+#include <cstring>
 
 #include "CryptoApi.h"
 #include "CryptoApiTester.h"
+#include "Pgp/PgpEngine.h"
+#include "Pgp/PgpEngineWrapper.h"
 
 // Linked here instead of via the project's Linker > Input > Additional Dependencies setting;
 // the search path (LibBuilder's per-platform output directory) still comes from the project's
@@ -18,6 +23,136 @@ int main()
         CryptoApiNS::CCryptoApi cryptoApi;
 
         std::cout << "CryptoAPI version: " << cryptoApi.GetVersion() << std::endl;
+        std::cout << std::endl;
+
+        // IPgpEngine/IPgpEngineWrapper exercised through their interface pointers even though
+        // this is a static link (no DLL boundary to cross) -- proves the new interface layer
+        // itself (CPgpEngine : public IPgpEngine / CPgpEngineWrapper : public IPgpEngineWrapper,
+        // see Pgp/PgpEngine.h/PgpEngineWrapper.h) compiles and dispatches correctly on its own,
+        // independent of DllRunner's DLL-boundary round trip (see DllRunner/Main.cpp). Same
+        // Alice-to-Alice self-contained round trip: GenerateKeyPair, export this instance's own
+        // public key, re-import it as its own peer, encrypt, decrypt, compare.
+        {
+            CryptoApiNS::IPgpEngine* pPgpEngine = new CryptoApiNS::CPgpEngine();
+
+            const char* userId = "LibRunner Test <librunner@example.com>";
+            const char* password = "LibRunnerTestPassword123";
+            const char* plaintext = "Hello from LibRunner via IPgpEngine!";
+
+            int rc = pPgpEngine->GenerateKeyPair(userId, static_cast<int>(strlen(userId)),
+                                                password, static_cast<int>(strlen(password)));
+
+            if (rc == CryptoApiNS::NO_ERROR)
+            {
+                int pubKeySize = 0;
+                pPgpEngine->ExportPublicKeyArmored(0, nullptr, &pubKeySize);
+
+                std::vector<char> pubKeyBuffer(pubKeySize);
+                pPgpEngine->ExportPublicKeyArmored(pubKeySize, pubKeyBuffer.data(), &pubKeySize);
+
+                pPgpEngine->ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(pubKeyBuffer.data()), pubKeySize);
+
+                int cipherSize = 0;
+                pPgpEngine->EncryptStringArmored(plaintext, static_cast<int>(strlen(plaintext)), 0, nullptr, &cipherSize);
+
+                std::vector<char> cipherBuffer(cipherSize);
+                pPgpEngine->EncryptStringArmored(plaintext, static_cast<int>(strlen(plaintext)), cipherSize, cipherBuffer.data(), &cipherSize);
+
+                int plainSize = 0;
+                pPgpEngine->DecryptStringArmored(password, static_cast<int>(strlen(password)),
+                                                cipherBuffer.data(), cipherSize, 0, nullptr, &plainSize);
+
+                std::vector<unsigned char> plainBuffer(plainSize);
+                pPgpEngine->DecryptStringArmored(password, static_cast<int>(strlen(password)),
+                                                cipherBuffer.data(), cipherSize, plainSize, plainBuffer.data(), &plainSize);
+
+                std::string decrypted(reinterpret_cast<char*>(plainBuffer.data()), plainSize);
+
+                std::cout << "IPgpEngine (static link) EncryptStringArmored/DecryptStringArmored round trip: "
+                          << (decrypted == plaintext ? "PASSED" : "FAILED") << std::endl;
+            }
+            else
+            {
+                std::cout << "IPgpEngine::GenerateKeyPair failed, rc=" << rc << std::endl;
+            }
+
+            delete pPgpEngine;
+        }
+
+        {
+            // Two separate engine instances (each its own isolated --homedir), not a self-import:
+            // gpg's own "--import" reports a key already present in the keyring (as it would be
+            // right after this same instance's own GenerateKeyPair) as "unchanged" rather than
+            // "IMPORTED", which importPeerPublicKeyCommon (Pgp/PgpEngineWrapper.cpp) treats as
+            // INVALID_DATA, not success -- verified directly against this machine's gpg.exe while
+            // wiring this test up. Matches CCryptoApiTester::RunPgpWrapperEncryptDecryptTest's own
+            // Alice/Bob pattern; see DllRunner/Main.cpp for the identical DLL-boundary version.
+            CryptoApiNS::IPgpEngineWrapper* pAlice = new CryptoApiNS::CPgpEngineWrapper();
+            CryptoApiNS::IPgpEngineWrapper* pBob = new CryptoApiNS::CPgpEngineWrapper();
+
+            if (pAlice->IsGnuPgAvailable())
+            {
+                const char* aliceUserId = "LibRunner Alice <librunner-alice@example.com>";
+                const char* alicePassword = "LibRunnerAlicePassword123";
+                const char* bobUserId = "LibRunner Bob <librunner-bob@example.com>";
+                const char* bobPassword = "LibRunnerBobPassword123";
+                const char* plaintext = "Hello Bob from LibRunner via IPgpEngineWrapper!";
+
+                int rc = pAlice->GenerateKeyPair(aliceUserId, static_cast<int>(strlen(aliceUserId)),
+                                                alicePassword, static_cast<int>(strlen(alicePassword)));
+                int rcBob = (rc == CryptoApiNS::NO_ERROR)
+                    ? pBob->GenerateKeyPair(bobUserId, static_cast<int>(strlen(bobUserId)),
+                                            bobPassword, static_cast<int>(strlen(bobPassword)))
+                    : rc;
+
+                if (rc == CryptoApiNS::NO_ERROR && rcBob == CryptoApiNS::NO_ERROR)
+                {
+                    int alicePubKeySize = 0;
+                    pAlice->ExportPublicKeyArmored(0, nullptr, &alicePubKeySize);
+                    std::vector<char> alicePubKeyBuffer(alicePubKeySize);
+                    pAlice->ExportPublicKeyArmored(alicePubKeySize, alicePubKeyBuffer.data(), &alicePubKeySize);
+
+                    int bobPubKeySize = 0;
+                    pBob->ExportPublicKeyArmored(0, nullptr, &bobPubKeySize);
+                    std::vector<char> bobPubKeyBuffer(bobPubKeySize);
+                    pBob->ExportPublicKeyArmored(bobPubKeySize, bobPubKeyBuffer.data(), &bobPubKeySize);
+
+                    pAlice->ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(bobPubKeyBuffer.data()), bobPubKeySize);
+                    pBob->ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(alicePubKeyBuffer.data()), alicePubKeySize);
+
+                    int cipherSize = 0;
+                    pAlice->EncryptStringArmored(plaintext, static_cast<int>(strlen(plaintext)), 0, nullptr, &cipherSize);
+
+                    std::vector<char> cipherBuffer(cipherSize);
+                    pAlice->EncryptStringArmored(plaintext, static_cast<int>(strlen(plaintext)), cipherSize, cipherBuffer.data(), &cipherSize);
+
+                    int plainSize = 0;
+                    pBob->DecryptStringArmored(bobPassword, static_cast<int>(strlen(bobPassword)),
+                                                cipherBuffer.data(), cipherSize, 0, nullptr, &plainSize);
+
+                    std::vector<unsigned char> plainBuffer(plainSize);
+                    pBob->DecryptStringArmored(bobPassword, static_cast<int>(strlen(bobPassword)),
+                                                cipherBuffer.data(), cipherSize, plainSize, plainBuffer.data(), &plainSize);
+
+                    std::string decrypted(reinterpret_cast<char*>(plainBuffer.data()), plainSize);
+
+                    std::cout << "IPgpEngineWrapper (static link) Alice->Bob EncryptStringArmored/DecryptStringArmored round trip: "
+                              << (decrypted == plaintext ? "PASSED" : "FAILED") << std::endl;
+                }
+                else
+                {
+                    std::cout << "IPgpEngineWrapper::GenerateKeyPair failed, alice rc=" << rc << " bob rc=" << rcBob << std::endl;
+                }
+            }
+            else
+            {
+                std::cout << "IPgpEngineWrapper: GnuPG not available, skipping round trip." << std::endl;
+            }
+
+            delete pAlice;
+            delete pBob;
+        }
+
         std::cout << std::endl;
 
         CryptoApiNS::CCryptoApiTester cryptoApiTester;

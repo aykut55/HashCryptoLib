@@ -2,77 +2,40 @@
 #define AYCRYPTO_PGP_ENGINE_H
 
 #include "Definitions/Definitions.h"
+#include "Interfaces/IPgpEngine.h"
 
 #include <memory>
+
+// DLL export/import boundary for CPgpEngine as a real C++ class -- same reasoning and same macro
+// name as CryptoApi.h's own CRYPTOAPI_API (redefining it identically here is harmless: both headers
+// are commonly included in the same translation unit, e.g. ScriptPgpEngine.cpp, and an identical
+// macro redefinition is not an error). DllBuilder defines CRYPTOAPI_DLL_EXPORTS so its own compile
+// exports the class; a future consumer linking against the DLL at compile time (rather than through
+// CreatePgpEngine()/IPgpEngine, see CryptoApiFactory.h) would define CRYPTOAPI_DLL_IMPORTS to
+// import it instead. Neither macro is defined when this header is compiled directly into an
+// executable or a static library (AppBuilder, LibBuilder), so CRYPTOAPI_API expands to nothing
+// there.
+#if defined(CRYPTOAPI_DLL_EXPORTS)
+#define CRYPTOAPI_API __declspec(dllexport)
+#elif defined(CRYPTOAPI_DLL_IMPORTS)
+#define CRYPTOAPI_API __declspec(dllimport)
+#else
+#define CRYPTOAPI_API
+#endif
 
 namespace CryptoApiNS
 {
 
-// Which public-key algorithm family GenerateKeyPair() below uses for this instance's own identity
-// -- fixed at construction (see the two constructors below), never changed afterward.
-// PGP_KEY_ALGORITHM_RSA (the default -- also what the no-arg and rsaKeyBits constructors select)
-// pairs an RSA master key with an RSA encryption subkey, exactly as documented on GenerateKeyPair
-// itself. PGP_KEY_ALGORITHM_ED25519_X25519 instead pairs an Ed25519 (RFC 8032, OpenPGP algorithm
-// ID 22, "EdDSA Legacy") master signing key with an X25519 (RFC 7748, OpenPGP algorithm ID 18,
-// ECDH over Curve25519) encryption subkey -- the same "ed25519" default identity shape real GnuPG
-// produces (verified by generating one with a local GnuPG install and inspecting its exported
-// packets byte-for-byte), so identities from either implementation interoperate. Note this
-// describes THIS instance's OWN identity only: the peer key imported via ImportPeerPublicKey/
-// ImportAdditionalRecipientPublicKey below carries its own, independently-detected algorithm per
-// key (RSA and Ed25519/X25519 peers can be mixed freely, including as multiple recipients of the
-// same EncryptBuffer call).
-enum PgpKeyAlgorithm
-{
-    PGP_KEY_ALGORITHM_RSA           = 0,
-    PGP_KEY_ALGORITHM_ED25519_X25519 = 1
-};
+// C4251/C4275: see CryptoApi.h's own identical pragma block for why both are harmless here --
+// impl_ is private and never touched across the DLL boundary, and IPgpEngine (this class's base)
+// declares no data and no non-inline code of its own.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4251)
+#pragma warning(disable: 4275)
+#endif
 
-// Which RFC 4880 Compressed Data packet (tag 8, section 5.6) encoding EncryptFileCompressed below
-// uses -- values match the OpenPGP compression algorithm registry (section 9.3) directly, so they
-// double as the wire octet. Named PgpFileCompressionAlgorithm rather than PgpCompressionAlgorithm
-// to avoid colliding with PgpEngineWrapper.h's own like-named (but NONE/ZIP/ZLIB/BZIP2, gpg
-// "--compress-algo") enum -- the two are unrelated types in the same namespace, and both headers
-// are commonly included together (e.g. CryptoApiTester.cpp). PGP_FILE_COMPRESSION_ALGORITHM_ZIP is
-// raw DEFLATE (RFC 1951, no zlib header/trailer -- confusingly called "ZIP" by RFC 4880, nothing to
-// do with the .zip archive format); PGP_FILE_COMPRESSION_ALGORITHM_ZLIB adds the RFC 1950 zlib
-// wrapper (2-byte header, 4-byte Adler-32 trailer). DecryptFile/DecryptBuffer already read back
-// either one (plus uncompressed and BZip2) regardless of which this instance is constructed with --
-// this enum only selects what EncryptFileCompressed itself produces.
-enum PgpFileCompressionAlgorithm
-{
-    PGP_FILE_COMPRESSION_ALGORITHM_ZIP  = 1,
-    PGP_FILE_COMPRESSION_ALGORITHM_ZLIB = 2
-};
-
-// The two negative sentinel values GetCompression() (see the message-inspection section at the end
-// of the class below) writes into its compressionAlgorithm out-parameter when there is no
-// Compressed Data packet octet to report. Any NON-negative value it writes instead is the literal
-// RFC 4880 section 9.3 compression algorithm octet a real, visible Compressed Data packet (tag 8)
-// declared: 0 = uncompressed, 1 = ZIP, 2 = ZLIB, 3 = BZip2. Deliberately two distinct sentinels
-// rather than one, because "this message is definitely not compressed" and "this message may or
-// may not be compressed, but nobody can tell without the decryption key" are genuinely different
-// answers and collapsing them would make the API lie about the encrypted case.
-enum PgpCompressionInspectionResult
-{
-    PGP_COMPRESSION_NOT_PRESENT              = -1,
-    PGP_COMPRESSION_UNKNOWN_NEEDS_DECRYPTION = -2
-};
-
-// Fixed per-record byte sizes (NUL terminator included) of the packed, fixed-stride records the
-// three List* inspection methods at the end of the class below write into the caller's output
-// buffer -- record i always starts at outputBuffer + i * <the matching size here>, so a caller can
-// index straight into the buffer without scanning for separators, and Lua/other bindings can slice
-// it the same way. ListEncryptionKeyIds/ListSigningKeyIds write "XXXXXXXXXXXXXXXX\0" (16 uppercase
-// hex chars of the 8-byte Key ID); ListSignatures writes "XXXXXXXXXXXXXXXX:TT:HH\0" (the same 16
-// hex chars, then the RFC 4880 5.2.1 signature type octet and the section 9.4 hash algorithm octet,
-// each as 2 uppercase hex chars).
-enum PgpInspectionRecordSize
-{
-    PGP_INSPECTION_KEY_ID_RECORD_SIZE    = 17,
-    PGP_INSPECTION_SIGNATURE_RECORD_SIZE = 23
-};
-
-class CPgpEngine
+class CRYPTOAPI_API CPgpEngine : public IPgpEngine
 {
 public:
     virtual ~CPgpEngine();
@@ -92,7 +55,7 @@ public:
 
     // Which algorithm this instance's own identity uses -- fixed at construction (see the two
     // constructors above), independent of whether GenerateKeyPair() has been called yet.
-    PgpKeyAlgorithm GetKeyAlgorithm(void) const;
+    PgpKeyAlgorithm GetKeyAlgorithm(void) const override;
 
     // ============================================================================================
     // Identity (own key pair) -- RFC 4880 v4 keys: for PGP_KEY_ALGORITHM_RSA (the default), one
@@ -109,7 +72,7 @@ public:
     // ============================================================================================
 
     int GenerateKeyPair( const char* userId, const int userIdSize,
-                        const char* password, const int passwordSize);
+                        const char* password, const int passwordSize) override;
 
     // Same as the 4-argument overload above, plus a Key Expiration Time subpacket (RFC 4880
     // 5.2.3.6, type 9) on both the self-certification and subkey-binding signatures:
@@ -118,29 +81,29 @@ public:
     // with 0).
     int GenerateKeyPair( const char* userId, const int userIdSize,
                         const char* password, const int passwordSize,
-                        const unsigned int expirationSeconds);
+                        const unsigned int expirationSeconds) override;
 
     // What GenerateKeyPair's expirationSeconds argument was last called with (0 if never called,
     // or if the 4-argument overload -- which always means "never expires" -- was used).
-    unsigned int GetKeyExpirationSeconds(void) const;
+    unsigned int GetKeyExpirationSeconds(void) const override;
 
     // Exact ASCII-armored size ExportPublicKeyArmored/ExportSecretKeyArmored would need; 0 before
     // GenerateKeyPair() succeeds. capacity=0/buffer=nullptr queries the required size (see
     // BUFFER_TOO_SMALL convention on the methods below).
-    int GetPublicKeyArmoredSize(void) const;
-    int GetSecretKeyArmoredSize(void) const;
+    int GetPublicKeyArmoredSize(void) const override;
+    int GetSecretKeyArmoredSize(void) const override;
 
     // "-----BEGIN PGP PUBLIC KEY BLOCK-----": master key + encryption subkey + userId + both
     // binding signatures, no secret material.
-    int ExportPublicKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+    int ExportPublicKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // "-----BEGIN PGP PRIVATE KEY BLOCK-----": same packets as above plus both private keys,
     // S2K-protected with this instance's GenerateKeyPair() password.
-    int ExportSecretKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+    int ExportSecretKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // Hex Key ID (8 bytes / 16 hex chars + null terminator) of this instance's own master key;
     // empty string before GenerateKeyPair() succeeds. outputBufferCapacity must be >= 17.
-    int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const;
+    int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const override;
 
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
     // with. Produces a standalone RFC 4880 key revocation certificate (signature type 0x20),
@@ -154,7 +117,7 @@ public:
     // reasonText may be nullptr/0-length for no human-readable reason.
     int RevokeKeyArmored( const char* password, const int passwordSize,
                          const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
-                         const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                         const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
     // Peer key (the other party's public key) -- unlike GenerateKeyPair() above, this instance
@@ -165,11 +128,11 @@ public:
     // detected automatically from the first bytes.
     // ============================================================================================
 
-    int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize);
+    int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) override;
 
     // Hex Key ID of the most recently imported peer master key; empty string before
     // ImportPeerPublicKey() succeeds.
-    int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const;
+    int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const override;
 
     // Adds ANOTHER recipient's public key to an internal list used ONLY by EncryptBuffer/
     // EncryptStringArmored/EncryptFile below -- never by VerifyBuffer/VerifyClearSignedString/
@@ -187,7 +150,7 @@ public:
     // this instance's own GetKeyAlgorithm() and the primary peer's -- recipients of different
     // algorithms may be mixed freely in the same call sequence. Encrypt* keeps working exactly as
     // before (single PKESK, to the ImportPeerPublicKey peer only) when this is never called.
-    int ImportAdditionalRecipientPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize);
+    int ImportAdditionalRecipientPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) override;
 
     // ============================================================================================
     // Encrypt (to the imported peer's encryption subkey, plus any ImportAdditionalRecipientPublicKey
@@ -205,23 +168,23 @@ public:
     // ImportPeerPublicKey() must have succeeded first. No chunking -- inputBufferSize is bounded
     // by available memory in one call.
     int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
-                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptBuffer, ASCII-armored ("-----BEGIN PGP MESSAGE-----") text output instead of
     // raw binary.
     int EncryptStringArmored( const char* inputString, const int inputStringSize,
-                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
     // with. Decompresses ZIP/ZLIB/uncompressed literal bodies (whichever the sender used).
     int DecryptBuffer( const char* password, const int passwordSize,
                       const unsigned char* inputBuffer, const int inputBufferSize,
-                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as DecryptBuffer, ASCII-armored input instead of raw binary.
     int DecryptStringArmored( const char* password, const int passwordSize,
                             const char* inputString, const int inputStringSize,
-                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
     // Sign (with this instance's own master key) / Verify (against the imported peer's master
@@ -237,14 +200,14 @@ public:
     // with. No chunking, no compression.
     int SignBuffer( const char* password, const int passwordSize,
                    const unsigned char* inputBuffer, const int inputBufferSize,
-                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // ImportPeerPublicKey() must have succeeded first. Returns NO_ERROR when verification
     // executed (isValid then reports whether the signature is cryptographically valid) or an
     // error code when verification could not run at all; *isValid is only meaningful when the
     // return value is NO_ERROR (same convention as CCryptoApi::VerifyBuffer).
     int VerifyBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
-                     const unsigned char* signatureBuffer, const int signatureBufferSize, bool* isValid);
+                     const unsigned char* signatureBuffer, const int signatureBufferSize, bool* isValid) override;
 
     // ============================================================================================
     // Clear-sign -- RFC 4880 section 7 framing ("-----BEGIN PGP SIGNED MESSAGE-----" / "Hash:
@@ -255,11 +218,11 @@ public:
     // GenerateKeyPair() must have succeeded first; password must match the one it was called with.
     int ClearSignString( const char* password, const int passwordSize,
                         const char* inputString, const int inputStringSize,
-                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
     // VerifyBuffer above.
-    int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid);
+    int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid) override;
 
     // ============================================================================================
     // File-based streaming variants -- unlike EncryptBuffer/SignBuffer above (which hold the
@@ -281,7 +244,7 @@ public:
 
     // ImportPeerPublicKey() must have succeeded first.
     int EncryptFile( const char* inputFilePath, const char* outputFilePath,
-                    ProgressCallback onProgress, void* progressUserData);
+                    ProgressCallback onProgress, void* progressUserData) override;
 
     // Same as EncryptFile above (same recipients, same SEIP/MDC framing), except the plaintext is
     // wrapped in a Compressed Data packet (tag 8) using compressionAlgorithm instead of being
@@ -299,7 +262,7 @@ public:
     // progress against its own total. ImportPeerPublicKey() must have succeeded first.
     int EncryptFileCompressed( const char* inputFilePath, const char* outputFilePath,
                              const PgpFileCompressionAlgorithm compressionAlgorithm,
-                             ProgressCallback onProgress, void* progressUserData);
+                             ProgressCallback onProgress, void* progressUserData) override;
 
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
     // with. Accepts an uncompressed literal packet such as EncryptFile produces, or a compressed
@@ -313,19 +276,19 @@ public:
     // one buffering exception described above, which is unrelated to the framing).
     int DecryptFile( const char* password, const int passwordSize,
                     const char* inputFilePath, const char* outputFilePath,
-                    ProgressCallback onProgress, void* progressUserData);
+                    ProgressCallback onProgress, void* progressUserData) override;
 
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
     // with. signatureFilePath receives the raw (non-armored) detached signature packet, same
     // format SignBuffer produces.
     int SignFile( const char* password, const int passwordSize,
                  const char* inputFilePath, const char* signatureFilePath,
-                 ProgressCallback onProgress, void* progressUserData);
+                 ProgressCallback onProgress, void* progressUserData) override;
 
     // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
     // VerifyBuffer above.
     int VerifyFile( const char* inputFilePath, const char* signatureFilePath,
-                   bool* isValid, ProgressCallback onProgress, void* progressUserData);
+                   bool* isValid, ProgressCallback onProgress, void* progressUserData) override;
 
     // ============================================================================================
     // Message inspection (read-only) -- answer structural questions about an OpenPGP message
@@ -365,7 +328,7 @@ public:
     // be both public-key and password encrypted at once (both PKESK and SKESK packets), so this
     // and IsPasswordEncrypted below are independent questions, not two halves of one.
     int IsPublicKeyEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
-                             bool* isPublicKeyEncrypted) const;
+                             bool* isPublicKeyEncrypted) const override;
 
     // *isPasswordEncrypted receives true when the message carries a Symmetric-Key Encrypted
     // Session Key packet (SKESK, tag 3) -- i.e. a passphrase alone can open it. CPgpEngine itself
@@ -373,7 +336,7 @@ public:
     // does, via EncryptBufferSymmetric), but real gpg's "--symmetric" output is read correctly
     // here.
     int IsPasswordEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
-                            bool* isPasswordEncrypted) const;
+                            bool* isPasswordEncrypted) const override;
 
     // *isIntegrityProtected receives true when the encrypted payload is wrapped in a Sym.
     // Encrypted Integrity Protected Data packet (SEIP, tag 18, the MDC-protected packet this
@@ -385,7 +348,7 @@ public:
     // simply because there is no ciphertext there to protect -- call IsPublicKeyEncrypted/
     // IsPasswordEncrypted first if the two cases must be told apart.
     int IsIntegrityProtected( const unsigned char* inputBuffer, const int inputBufferSize,
-                             bool* isIntegrityProtected) const;
+                             bool* isIntegrityProtected) const override;
 
     // *compressionAlgorithm receives the RFC 4880 section 9.3 compression algorithm octet declared
     // by the first Compressed Data packet (tag 8) reachable WITHOUT decrypting (0 = uncompressed,
@@ -397,7 +360,7 @@ public:
     // cases (the answer is in the out-parameter, not the return code); INVALID_DATA only when the
     // input is not parseable as OpenPGP packets at all.
     int GetCompression( const unsigned char* inputBuffer, const int inputBufferSize,
-                       int* compressionAlgorithm) const;
+                       int* compressionAlgorithm) const override;
 
     // Enumerates the Key ID of every PKESK packet -- the recipient keys the message is encrypted
     // to -- in the order they appear in the message, without decrypting anything. *keyIdCount
@@ -412,7 +375,7 @@ public:
     // failure.
     int ListEncryptionKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
                              const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
-                             int* keyIdCount) const;
+                             int* keyIdCount) const override;
 
     // Enumerates the issuer Key ID of every signature this parser can reach without decrypting --
     // Signature packets (tag 2, e.g. SignBuffer/SignFile detached signatures and the signature
@@ -425,7 +388,7 @@ public:
     // count still matches ListSignatures below.
     int ListSigningKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
-                          int* keyIdCount) const;
+                          int* keyIdCount) const override;
 
     // Richer form of ListSigningKeyIds above, over exactly the same set of signature packets and
     // in the same order: each record is PGP_INSPECTION_SIGNATURE_RECORD_SIZE bytes of
@@ -439,7 +402,7 @@ public:
     // counts always agree), since its field layout is not one this parser claims to know.
     int ListSignatures( const unsigned char* inputBuffer, const int inputBufferSize,
                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
-                       int* signatureCount) const;
+                       int* signatureCount) const override;
 
 protected:
 
@@ -451,6 +414,10 @@ private:
     std::unique_ptr<Impl> impl_;
 
 };
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 } // namespace CryptoApiNS
 

@@ -51,3 +51,55 @@ void DestroyCryptoApiTester(CryptoApiNS::ICryptoApiTester* pCryptoApiTester)
     }
 }
 // -----------------------------------------------------------------------------
+
+CryptoApiNS::IPgpEngine* CreatePgpEngine(void)
+{
+    try
+    {
+        return new CryptoApiNS::CPgpEngine();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+void DestroyPgpEngine(CryptoApiNS::IPgpEngine* pPgpEngine)
+{
+    try
+    {
+        delete pPgpEngine;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+CryptoApiNS::IPgpEngineWrapper* CreatePgpEngineWrapper(void)
+{
+    try
+    {
+        return new CryptoApiNS::CPgpEngineWrapper();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+void DestroyPgpEngineWrapper(CryptoApiNS::IPgpEngineWrapper* pPgpEngineWrapper)
+{
+    try
+    {
+        delete pPgpEngineWrapper;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------

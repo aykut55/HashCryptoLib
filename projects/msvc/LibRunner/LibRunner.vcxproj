@@ -142,17 +142,24 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
   <!-- CryptoAPI_static.lib itself is linked via #pragma comment(lib, "CryptoAPI_static.lib") in
        Main.cpp rather than an AdditionalDependencies entry here, but the linker still needs a
        search path to resolve that name, hence these AdditionalLibraryDirectories entries.
-       LibBuilder.vcxproj's own output directory differs by platform (MSBuild's default OutDir is
-       "$(Configuration)\" for Win32 but "$(Platform)\$(Configuration)\" for x64), so, unlike the
-       single cryptlib/openssl paths above, this needs its own per-platform condition. -->
+       $(SolutionDir)$(Platform)\$(Configuration)\ (x64) / $(SolutionDir)$(Configuration)\ (Win32)
+       is where every project in All.sln actually lands its output (MSBuild's default OutDir when
+       none of these vcxproj overrides it, which none do), NOT a path relative to LibBuilder's own
+       ProjectDir. A stale $(ProjectDir)..\LibBuilder\... variant of this comment/path used to sit
+       here, pointing at a per-project output folder nothing else in the solution writes to; it
+       silently resolved to a real but STALE CryptoAPI_static.lib left over in that folder from a
+       build that predates this repo's later changes, which the linker preferred over the freshly
+       built one in $(SolutionDir)$(Platform)\$(Configuration)\, only surfaced once a symbol's own
+       mangled name changed (CPgpEngine::GenerateKeyPair becoming virtual, deriving from
+       IPgpEngine, 2026-09-21) and the stale copy no longer had a matching one (LNK2019). -->
   <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
     <Link>
-      <AdditionalLibraryDirectories>$(ProjectDir)..\LibBuilder\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(SolutionDir)$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <Link>
-      <AdditionalLibraryDirectories>$(ProjectDir)..\LibBuilder\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(SolutionDir)$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">

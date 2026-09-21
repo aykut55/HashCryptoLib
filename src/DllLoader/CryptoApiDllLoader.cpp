@@ -108,6 +108,46 @@ bool CCryptoApiDllLoader::LoadLibrary(void)
             FreeLibrary(hDll);
             return isLoaded;
         }
+
+        CreatePgpEngine = (CreatePgpEngineFunc)::GetProcAddress(hDll, "CreatePgpEngine");
+        if (!CreatePgpEngine)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        DestroyPgpEngine = (DestroyPgpEngineFunc)::GetProcAddress(hDll, "DestroyPgpEngine");
+        if (!DestroyPgpEngine)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        CreatePgpEngineWrapper = (CreatePgpEngineWrapperFunc)::GetProcAddress(hDll, "CreatePgpEngineWrapper");
+        if (!CreatePgpEngineWrapper)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        DestroyPgpEngineWrapper = (DestroyPgpEngineWrapperFunc)::GetProcAddress(hDll, "DestroyPgpEngineWrapper");
+        if (!DestroyPgpEngineWrapper)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
     }
     catch (...)
     {
@@ -203,6 +243,68 @@ void CCryptoApiDllLoader::DestroyCryptoApiTesterObject(ICryptoApiTester* pCrypto
     {
         DestroyCryptoApiTester(pCryptoApiTester);
         pCryptoApiTester = 0;
+    }
+    catch (...)
+    {
+
+    }
+}
+//---------------------------------------------------------------------------
+
+IPgpEngine* CCryptoApiDllLoader::GetPgpEngineObject()
+{
+    IPgpEngine* pPgpEngine = 0;
+
+    try
+    {
+        pPgpEngine = CreatePgpEngine();
+    }
+    catch (...)
+    {
+
+    }
+
+    return pPgpEngine;
+}
+//---------------------------------------------------------------------------
+
+void CCryptoApiDllLoader::DestroyPgpEngineObject(IPgpEngine* pPgpEngine)
+{
+    try
+    {
+        DestroyPgpEngine(pPgpEngine);
+        pPgpEngine = 0;
+    }
+    catch (...)
+    {
+
+    }
+}
+//---------------------------------------------------------------------------
+
+IPgpEngineWrapper* CCryptoApiDllLoader::GetPgpEngineWrapperObject()
+{
+    IPgpEngineWrapper* pPgpEngineWrapper = 0;
+
+    try
+    {
+        pPgpEngineWrapper = CreatePgpEngineWrapper();
+    }
+    catch (...)
+    {
+
+    }
+
+    return pPgpEngineWrapper;
+}
+//---------------------------------------------------------------------------
+
+void CCryptoApiDllLoader::DestroyPgpEngineWrapperObject(IPgpEngineWrapper* pPgpEngineWrapper)
+{
+    try
+    {
+        DestroyPgpEngineWrapper(pPgpEngineWrapper);
+        pPgpEngineWrapper = 0;
     }
     catch (...)
     {

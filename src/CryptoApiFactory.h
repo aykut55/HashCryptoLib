@@ -3,6 +3,8 @@
 
 #include "CryptoApi.h"
 #include "CryptoApiTester.h"
+#include "Pgp/PgpEngine.h"
+#include "Pgp/PgpEngineWrapper.h"
 
 // extern "C" DLL entry points resolved by CCryptoApiDllLoader via GetProcAddress (see
 // DllLoader/CryptoApiDllLoader.h) -- not part of the CryptoApiNS namespace since C linkage cannot
@@ -15,5 +17,18 @@ extern "C" CRYPTOAPI_API void					  DestroyCryptoApi(CryptoApiNS::ICryptoApi* pC
 
 extern "C" CRYPTOAPI_API CryptoApiNS::ICryptoApiTester* CreateCryptoApiTester(void);
 extern "C" CRYPTOAPI_API void						  DestroyCryptoApiTester(CryptoApiNS::ICryptoApiTester* pCryptoApiTester);
+
+// Same reasoning as CreateCryptoApi/DestroyCryptoApi above, for CPgpEngine/IPgpEngine. Always
+// default-constructs (new CryptoApiNS::CPgpEngine()) -- CPgpEngine's other two constructors
+// (rsaKeyBits/keyAlgorithm) are unreachable through this DLL boundary, the same limitation
+// CreateCryptoApi() already has for CCryptoApi's own many constructor overloads (see that
+// function's .cpp comment).
+extern "C" CRYPTOAPI_API CryptoApiNS::IPgpEngine* CreatePgpEngine(void);
+extern "C" CRYPTOAPI_API void					  DestroyPgpEngine(CryptoApiNS::IPgpEngine* pPgpEngine);
+
+// Same reasoning, for CPgpEngineWrapper/IPgpEngineWrapper. Always default-constructs; the
+// rsaKeyBits constructor is unreachable through this DLL boundary for the same reason.
+extern "C" CRYPTOAPI_API CryptoApiNS::IPgpEngineWrapper* CreatePgpEngineWrapper(void);
+extern "C" CRYPTOAPI_API void						  DestroyPgpEngineWrapper(CryptoApiNS::IPgpEngineWrapper* pPgpEngineWrapper);
 
 #endif

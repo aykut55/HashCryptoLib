@@ -75,6 +75,12 @@
     <ClCompile Include="..\..\..\src\Interfaces\ICryptoApiTester.cpp">
       <Filter>src\Interfaces</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\IPgpEngine.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\IPgpEngineWrapper.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -201,6 +207,12 @@
       <Filter>src\Interfaces</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h">
       <Filter>src\Interfaces</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h">

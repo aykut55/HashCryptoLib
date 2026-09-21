@@ -19,6 +19,8 @@
 #include <string>
 #include "Interfaces/ICryptoApi.h"
 #include "Interfaces/ICryptoApiTester.h"
+#include "Interfaces/IPgpEngine.h"
+#include "Interfaces/IPgpEngineWrapper.h"
 //---------------------------------------------------------------------------
 
 namespace CryptoApiNS
@@ -26,10 +28,14 @@ namespace CryptoApiNS
 
 class CCryptoApiDllLoader
 {
-    typedef ICryptoApi*       (*CreateCryptoApiFunc)();
-    typedef void              (*DestroyCryptoApiFunc)(ICryptoApi*);
-    typedef ICryptoApiTester* (*CreateCryptoApiTesterFunc)();
-    typedef void              (*DestroyCryptoApiTesterFunc)(ICryptoApiTester*);
+    typedef ICryptoApi*        (*CreateCryptoApiFunc)();
+    typedef void                (*DestroyCryptoApiFunc)(ICryptoApi*);
+    typedef ICryptoApiTester*  (*CreateCryptoApiTesterFunc)();
+    typedef void                (*DestroyCryptoApiTesterFunc)(ICryptoApiTester*);
+    typedef IPgpEngine*         (*CreatePgpEngineFunc)();
+    typedef void                (*DestroyPgpEngineFunc)(IPgpEngine*);
+    typedef IPgpEngineWrapper*  (*CreatePgpEngineWrapperFunc)();
+    typedef void                (*DestroyPgpEngineWrapperFunc)(IPgpEngineWrapper*);
 
 public:
     virtual ~CCryptoApiDllLoader();
@@ -47,6 +53,12 @@ public:
                                                                                             // this instead of delete, since the instance was allocated inside the DLL.
     ICryptoApiTester* GetCryptoApiTesterObject();                                           // Instance
     void              DestroyCryptoApiTesterObject(ICryptoApiTester* pCryptoApiTester);     // Same reasoning as DestroyCryptoApiObject above.
+
+    IPgpEngine*        GetPgpEngineObject();                                                 // Instance
+    void               DestroyPgpEngineObject(IPgpEngine* pPgpEngine);                       // Same reasoning as DestroyCryptoApiObject above.
+    IPgpEngineWrapper* GetPgpEngineWrapperObject();                                          // Instance
+    void               DestroyPgpEngineWrapperObject(IPgpEngineWrapper* pPgpEngineWrapper);  // Same reasoning as DestroyCryptoApiObject above.
+
     void*             GetProcAddress(const char* functionName);                             // Resolves functionName's address in the DLL loaded by LoadLibrary() above; returns nullptr if
                                                                                             // LoadLibrary() has not succeeded yet, or the DLL has no export by that exact name.
 protected:
@@ -58,6 +70,10 @@ private:
     DestroyCryptoApiFunc DestroyCryptoApi;
     CreateCryptoApiTesterFunc CreateCryptoApiTester;
     DestroyCryptoApiTesterFunc DestroyCryptoApiTester;
+    CreatePgpEngineFunc CreatePgpEngine;
+    DestroyPgpEngineFunc DestroyPgpEngine;
+    CreatePgpEngineWrapperFunc CreatePgpEngineWrapper;
+    DestroyPgpEngineWrapperFunc DestroyPgpEngineWrapper;
     bool isLoaded;
     bool isUnloaded;
 };

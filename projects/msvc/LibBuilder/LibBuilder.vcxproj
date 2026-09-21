@@ -181,6 +181,8 @@
     <ClInclude Include="..\..\..\src\CryptoApi.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h" />
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
@@ -215,6 +217,8 @@
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ICryptoApi.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ICryptoApiTester.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\IPgpEngine.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\IPgpEngineWrapper.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />

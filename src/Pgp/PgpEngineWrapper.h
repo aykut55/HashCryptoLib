@@ -2,31 +2,33 @@
 #define AYCRYPTO_PGP_ENGINE_WRAPPER_H
 
 #include "Definitions/Definitions.h"
+#include "Interfaces/IPgpEngineWrapper.h"
 
 #include <memory>
+
+// DLL export/import boundary for CPgpEngineWrapper as a real C++ class -- same reasoning and same
+// macro name as CryptoApi.h's/PgpEngine.h's own CRYPTOAPI_API (redefining it identically here is
+// harmless: all three headers are commonly included in the same translation unit, and an identical
+// macro redefinition is not an error).
+#if defined(CRYPTOAPI_DLL_EXPORTS)
+#define CRYPTOAPI_API __declspec(dllexport)
+#elif defined(CRYPTOAPI_DLL_IMPORTS)
+#define CRYPTOAPI_API __declspec(dllimport)
+#else
+#define CRYPTOAPI_API
+#endif
 
 namespace CryptoApiNS
 {
 
-// ====================================================================================================
-// PgpCompressionAlgorithm -- selects which RFC 4880 5.2.3.9 compression algorithm (or none) real
-// gpg's own "--compress-algo" option applies to a message's Literal Data packet before encryption,
-// for the EncryptBuffer/EncryptStringArmored/EncryptBufferMultiRecipient/
-// EncryptStringArmoredMultiRecipient overloads below that accept one. Numeric values match RFC
-// 4880's own Compression Algorithm registry: 0=uncompressed, 1=ZIP (RFC 1951; also gpg's own
-// default when no --compress-algo is given at all, verified against this machine's gpg.exe while
-// building this feature), 2=ZLIB (RFC 1950), 3=BZIP2. The overloads WITHOUT a
-// PgpCompressionAlgorithm argument are completely unaffected by this enum and keep using gpg's own
-// default exactly as before -- this is purely additive.
-// ====================================================================================================
-
-enum PgpCompressionAlgorithm
-{
-    PGP_COMPRESSION_ALGORITHM_NONE  = 0,
-    PGP_COMPRESSION_ALGORITHM_ZIP   = 1,
-    PGP_COMPRESSION_ALGORITHM_ZLIB  = 2,
-    PGP_COMPRESSION_ALGORITHM_BZIP2 = 3
-};
+// C4251/C4275: see CryptoApi.h's own identical pragma block for why both are harmless here --
+// impl_ is private and never touched across the DLL boundary, and IPgpEngineWrapper (this class's
+// base) declares no data and no non-inline code of its own.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4251)
+#pragma warning(disable: 4275)
+#endif
 
 // ====================================================================================================
 // CPgpEngineWrapper -- unlike CPgpEngine (which reimplements RFC 4880 itself on top of CryptoPP),
@@ -62,7 +64,7 @@ enum PgpCompressionAlgorithm
 // this class's own test suite (RunPgpWrapper*Test in CryptoApiTester.cpp/.h).
 // ====================================================================================================
 
-class CPgpEngineWrapper
+class CRYPTOAPI_API CPgpEngineWrapper : public IPgpEngineWrapper
 {
 public:
     virtual ~CPgpEngineWrapper();
@@ -79,7 +81,7 @@ public:
     // ImportPeerPublicKey to have run first). See the class comment above for what this reuses.
     // ============================================================================================
 
-    bool IsGnuPgAvailable(void) const;
+    bool IsGnuPgAvailable(void) const override;
 
     // ============================================================================================
     // Identity (own key pair) -- delegates to "gpg --batch --gen-key" with a generated parameter
@@ -93,13 +95,13 @@ public:
     // ============================================================================================
 
     int GenerateKeyPair( const char* userId, const int userIdSize,
-                        const char* password, const int passwordSize);
+                        const char* password, const int passwordSize) override;
 
     // Same as the 4-argument overload above, plus a real gpg key expiration date computed as "now +
     // expirationSeconds"; 0 means never expires (identical behavior to the 4-argument overload).
     int GenerateKeyPair( const char* userId, const int userIdSize,
                         const char* password, const int passwordSize,
-                        const unsigned int expirationSeconds);
+                        const unsigned int expirationSeconds) override;
 
     // ============================================================================================
     // Extra capability beyond CPgpEngine: real ECC/EdDSA identities. Same contract as
@@ -112,38 +114,38 @@ public:
     // ============================================================================================
 
     int GenerateKeyPairEcc( const char* userId, const int userIdSize,
-                           const char* password, const int passwordSize);
+                           const char* password, const int passwordSize) override;
 
     int GenerateKeyPairEcc( const char* userId, const int userIdSize,
                            const char* password, const int passwordSize,
-                           const unsigned int expirationSeconds);
+                           const unsigned int expirationSeconds) override;
 
     // What the expirationSeconds argument was last called with, across GenerateKeyPair AND
     // GenerateKeyPairEcc (0 if neither has been called yet, or if a 4-argument overload -- always
     // "never expires" -- was used last).
-    unsigned int GetKeyExpirationSeconds(void) const;
+    unsigned int GetKeyExpirationSeconds(void) const override;
 
     // Exact ASCII-armored size ExportPublicKeyArmored/ExportSecretKeyArmored would need; 0 before
     // GenerateKeyPair()/GenerateKeyPairEcc() succeeds. capacity=0/buffer=nullptr queries the
     // required size (see BUFFER_TOO_SMALL convention on the methods below).
-    int GetPublicKeyArmoredSize(void) const;
-    int GetSecretKeyArmoredSize(void) const;
+    int GetPublicKeyArmoredSize(void) const override;
+    int GetSecretKeyArmoredSize(void) const override;
 
     // "-----BEGIN PGP PUBLIC KEY BLOCK-----" as produced by "gpg --armor --export", captured once
     // right after key generation and cached (mirrors CPgpEngine's own ownPublicKeyArmored cache).
-    int ExportPublicKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+    int ExportPublicKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // "-----BEGIN PGP PRIVATE KEY BLOCK-----" as produced by "gpg --armor --export-secret-keys"
     // (captured once right after key generation, using the password GenerateKeyPair/
     // GenerateKeyPairEcc was called with, and cached -- same no-password-parameter contract as
     // CPgpEngine's own ExportSecretKeyArmored, for the same reason: the password was already
     // consumed once at generation/export time).
-    int ExportSecretKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+    int ExportSecretKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // Hex Key ID (8 bytes / 16 hex chars + null terminator) of this instance's own master key, as
     // reported by gpg itself; empty string before GenerateKeyPair()/GenerateKeyPairEcc() succeeds.
     // outputBufferCapacity must be >= 17.
-    int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const;
+    int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const override;
 
     // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
     // it was called with. Delegates to "gpg --generate-revocation" (scripted via --command-fd/
@@ -157,7 +159,7 @@ public:
     // 0-length for no human-readable reason.
     int RevokeKeyArmored( const char* password, const int passwordSize,
                          const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
-                         const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                         const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
     // Peer key(s) (the other party's public key) -- imported into this instance's own isolated gpg
@@ -167,20 +169,20 @@ public:
     // CPgpEngine's single-peer convention by reporting the MOST RECENTLY imported one.
     // ============================================================================================
 
-    int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize);
+    int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) override;
 
     // Hex Key ID of the most recently imported peer master key; empty string before
     // ImportPeerPublicKey() succeeds at least once.
-    int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const;
+    int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const override;
 
     // Extra capability beyond CPgpEngine: how many distinct peer keys ImportPeerPublicKey has
     // successfully imported into this instance's keyring so far (0 if none).
-    int GetImportedPeerKeyCount(void) const;
+    int GetImportedPeerKeyCount(void) const override;
 
     // Extra capability beyond CPgpEngine: hex Key ID of the peerIndex-th imported peer key (0-based,
     // in import order); INVALID_ARGUMENT if peerIndex is out of range. outputBufferCapacity must be
     // >= 17.
-    int GetImportedPeerKeyId(const int peerIndex, char* outputBuffer, const int outputBufferCapacity) const;
+    int GetImportedPeerKeyId(const int peerIndex, char* outputBuffer, const int outputBufferCapacity) const override;
 
     // ============================================================================================
     // Extra capability beyond CPgpEngine: ground-truth keyring introspection/removal, sourced
@@ -201,17 +203,17 @@ public:
     // the colon-format records; callers parsing this text should key off the documented
     // "pub:"/"fpr:"/etc. line prefixes, same as this class's own internal parsing does, and ignore
     // anything else.
-    int GetKeyringListing(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const;
+    int GetKeyringListing(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const override;
 
     // How many distinct public keys "gpg --with-colons --list-keys" currently reports (own identity
     // plus every imported peer) -- ground truth, unlike GetImportedPeerKeyCount above. 0 if none or
     // if gpg could not be queried.
-    int GetKeyringKeyCount(void) const;
+    int GetKeyringKeyCount(void) const override;
 
     // Hex Key ID (16 hex chars) of the keyIndex-th public key (0-based, in gpg's own listing order)
     // currently in the keyring; INVALID_ARGUMENT if keyIndex is out of range. outputBufferCapacity
     // must be >= 17.
-    int GetKeyringKeyId(const int keyIndex, char* outputBuffer, const int outputBufferCapacity) const;
+    int GetKeyringKeyId(const int keyIndex, char* outputBuffer, const int outputBufferCapacity) const override;
 
     // Removes one specific imported peer public key from the real keyring (real
     // "gpg --delete-key <id>"); keyId should be a hex Key ID GetImportedPeerKeyId or
@@ -219,7 +221,7 @@ public:
     // use DeleteOwnIdentity below for that). Also removes it from this instance's own
     // peer-tracking list if present there, so GetImportedPeerKeyCount/GetImportedPeerKeyId reflect
     // the keyring again afterward.
-    int DeletePeerPublicKey(const char* keyId, const int keyIdSize);
+    int DeletePeerPublicKey(const char* keyId, const int keyIdSize) override;
 
     // Removes THIS instance's own identity (secret AND public key) from the real keyring (real
     // "gpg --delete-secret-and-public-key", scripted with the full fingerprint gpg's own batch
@@ -230,7 +232,7 @@ public:
     // returns an empty string, ExportPublicKeyArmored/ExportSecretKeyArmored report size 0,
     // GetKeyExpirationSeconds returns 0, and GenerateKeyPair/GenerateKeyPairEcc may be called again
     // afterward to create a fresh identity in the same homedir.
-    int DeleteOwnIdentity(void);
+    int DeleteOwnIdentity(void) override;
 
     // ============================================================================================
     // Encrypt (to the imported peer's key) / Decrypt (with this instance's own secret key) --
@@ -242,7 +244,7 @@ public:
     // same single-recipient convention as CPgpEngine's own EncryptBuffer -- see
     // EncryptBufferMultiRecipient below for more than one recipient at once).
     int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
-                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptBuffer, plus an explicit PgpCompressionAlgorithm override (real gpg's own
     // "--compress-algo") instead of gpg's own default. See the PgpCompressionAlgorithm comment
@@ -250,18 +252,18 @@ public:
     // is not one of them.
     int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
                       const PgpCompressionAlgorithm compressionAlgorithm,
-                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptBuffer, ASCII-armored ("-----BEGIN PGP MESSAGE-----") text output instead of
     // raw binary (gpg's own "--armor --encrypt").
     int EncryptStringArmored( const char* inputString, const int inputStringSize,
-                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptStringArmored, plus an explicit PgpCompressionAlgorithm override -- same
     // contract as the EncryptBuffer overload above.
     int EncryptStringArmored( const char* inputString, const int inputStringSize,
                              const PgpCompressionAlgorithm compressionAlgorithm,
-                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                             const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
     // Extra capability beyond CPgpEngine: symmetric-only ("passphrase") encryption -- no recipient
@@ -286,13 +288,13 @@ public:
     // reused across calls.
     int EncryptBufferSymmetric( const char* passphrase, const int passphraseSize,
                                const unsigned char* inputBuffer, const int inputBufferSize,
-                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptBufferSymmetric, ASCII-armored text output instead of raw binary (gpg's own
     // "--armor --symmetric").
     int EncryptStringArmoredSymmetric( const char* passphrase, const int passphraseSize,
                                       const char* inputString, const int inputStringSize,
-                                      const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                                      const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
     // Extra capability beyond CPgpEngine: real multi-recipient encryption -- one shared session key,
@@ -304,26 +306,26 @@ public:
 
     int EncryptBufferMultiRecipient( const unsigned char* inputBuffer, const int inputBufferSize,
                                     const char* const* recipientKeyIds, const int recipientCount,
-                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptBufferMultiRecipient, plus an explicit PgpCompressionAlgorithm override -- same
     // contract as the EncryptBuffer compression overload above.
     int EncryptBufferMultiRecipient( const unsigned char* inputBuffer, const int inputBufferSize,
                                     const char* const* recipientKeyIds, const int recipientCount,
                                     const PgpCompressionAlgorithm compressionAlgorithm,
-                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptBufferMultiRecipient, ASCII-armored text output instead of raw binary.
     int EncryptStringArmoredMultiRecipient( const char* inputString, const int inputStringSize,
                                            const char* const* recipientKeyIds, const int recipientCount,
-                                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // Same as EncryptStringArmoredMultiRecipient, plus an explicit PgpCompressionAlgorithm
     // override -- same contract as the EncryptBuffer compression overload above.
     int EncryptStringArmoredMultiRecipient( const char* inputString, const int inputStringSize,
                                            const char* const* recipientKeyIds, const int recipientCount,
                                            const PgpCompressionAlgorithm compressionAlgorithm,
-                                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first for a public-key-encrypted
     // (PKESK) message; password must match the one it was called with. Delegates to "gpg --decrypt";
@@ -337,13 +339,13 @@ public:
     // machine's gpg.exe while adding symmetric-encryption support to this class.
     int DecryptBuffer( const char* password, const int passwordSize,
                       const unsigned char* inputBuffer, const int inputBufferSize,
-                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // Same as DecryptBuffer (including the symmetric/SKESK note above), ASCII-armored input instead
     // of raw binary.
     int DecryptStringArmored( const char* password, const int passwordSize,
                             const char* inputString, const int inputStringSize,
-                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
     // Sign (with this instance's own key) / Verify (against an imported peer's key) -- delegates to
@@ -354,14 +356,14 @@ public:
     // it was called with.
     int SignBuffer( const char* password, const int passwordSize,
                    const unsigned char* inputBuffer, const int inputBufferSize,
-                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize);
+                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // ImportPeerPublicKey() must have succeeded first. Returns NO_ERROR when "gpg --verify" ran
     // (isValid then reports whether it reported a good signature) or an error code when it could
     // not run at all; *isValid is only meaningful when the return value is NO_ERROR (same
     // convention as CCryptoApi::VerifyBuffer and CPgpEngine::VerifyBuffer).
     int VerifyBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
-                     const unsigned char* signatureBuffer, const int signatureBufferSize, bool* isValid);
+                     const unsigned char* signatureBuffer, const int signatureBufferSize, bool* isValid) override;
 
     // ============================================================================================
     // Clear-sign -- delegates to "gpg --clear-sign" / "gpg --verify".
@@ -371,11 +373,11 @@ public:
     // it was called with.
     int ClearSignString( const char* password, const int passwordSize,
                         const char* inputString, const int inputStringSize,
-                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize);
+                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
     // VerifyBuffer above.
-    int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid);
+    int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid) override;
 
     // ============================================================================================
     // File-based variants -- unlike CPgpEngine's own streaming chunked implementation (needed there
@@ -391,24 +393,24 @@ public:
     // ImportPeerPublicKey() must have succeeded first (encrypts to the most recently imported peer,
     // same convention as EncryptBuffer).
     int EncryptFile( const char* inputFilePath, const char* outputFilePath,
-                    ProgressCallback onProgress, void* progressUserData);
+                    ProgressCallback onProgress, void* progressUserData) override;
 
     // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
     // it was called with.
     int DecryptFile( const char* password, const int passwordSize,
                     const char* inputFilePath, const char* outputFilePath,
-                    ProgressCallback onProgress, void* progressUserData);
+                    ProgressCallback onProgress, void* progressUserData) override;
 
     // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
     // it was called with. signatureFilePath receives gpg's raw (non-armored) detached signature.
     int SignFile( const char* password, const int passwordSize,
                  const char* inputFilePath, const char* signatureFilePath,
-                 ProgressCallback onProgress, void* progressUserData);
+                 ProgressCallback onProgress, void* progressUserData) override;
 
     // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
     // VerifyBuffer above.
     int VerifyFile( const char* inputFilePath, const char* signatureFilePath,
-                   bool* isValid, ProgressCallback onProgress, void* progressUserData);
+                   bool* isValid, ProgressCallback onProgress, void* progressUserData) override;
 
     // ============================================================================================
     // Message inspection (read-only) -- the gpg-backed mirror of CPgpEngine's own seven inspection
@@ -443,13 +445,13 @@ public:
     // *isPublicKeyEncrypted receives true when gpg reports at least one Public-Key Encrypted
     // Session Key packet (tag 1). Same contract as CPgpEngine::IsPublicKeyEncrypted.
     int IsPublicKeyEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
-                             bool* isPublicKeyEncrypted) const;
+                             bool* isPublicKeyEncrypted) const override;
 
     // *isPasswordEncrypted receives true when gpg reports a Symmetric-Key Encrypted Session Key
     // packet (tag 3) -- i.e. what EncryptBufferSymmetric/EncryptStringArmoredSymmetric above
     // produce. Same contract as CPgpEngine::IsPasswordEncrypted.
     int IsPasswordEncrypted( const unsigned char* inputBuffer, const int inputBufferSize,
-                            bool* isPasswordEncrypted) const;
+                            bool* isPasswordEncrypted) const override;
 
     // *isIntegrityProtected receives true for a Sym. Encrypted Integrity Protected Data packet
     // (tag 18) or an AEAD Encrypted Data packet (tag 20) -- note recent GnuPG (2.5.x, this
@@ -459,7 +461,7 @@ public:
     // "false also means no encrypted-data packet at all" caveat CPgpEngine::IsIntegrityProtected
     // documents.
     int IsIntegrityProtected( const unsigned char* inputBuffer, const int inputBufferSize,
-                             bool* isIntegrityProtected) const;
+                             bool* isIntegrityProtected) const override;
 
     // *compressionAlgorithm receives the RFC 4880 section 9.3 compression algorithm octet of the
     // first Compressed Data packet gpg reports (0 = uncompressed, 1 = ZIP, 2 = ZLIB, 3 = BZIP2 --
@@ -473,7 +475,7 @@ public:
     // or compare against the literals.) Returns NO_ERROR in all three cases; INVALID_DATA only
     // when gpg could not make sense of the input as OpenPGP packets at all.
     int GetCompression( const unsigned char* inputBuffer, const int inputBufferSize,
-                       int* compressionAlgorithm) const;
+                       int* compressionAlgorithm) const override;
 
     // Enumerates the recipient Key ID of every PKESK packet gpg reports, in listing order.
     // *keyIdCount receives the number of records (always set on success, even when zero) and the
@@ -484,7 +486,7 @@ public:
     // NO_ERROR with *outputBufferSize = 0, not BUFFER_TOO_SMALL.
     int ListEncryptionKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
                              const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
-                             int* keyIdCount) const;
+                             int* keyIdCount) const override;
 
     // Enumerates the issuer Key ID of every Signature (tag 2) and One-Pass Signature (tag 4)
     // packet gpg reports, in listing order -- covering detached signatures (SignBuffer/SignFile
@@ -494,7 +496,7 @@ public:
     // "????????????????", exactly as CPgpEngine::ListSigningKeyIds does.
     int ListSigningKeyIds( const unsigned char* inputBuffer, const int inputBufferSize,
                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
-                          int* keyIdCount) const;
+                          int* keyIdCount) const override;
 
     // Richer form of ListSigningKeyIds above, over the same signature packets in the same order:
     // each record is 23 bytes of "XXXXXXXXXXXXXXXX:TT:HH\0" -- issuer Key ID, RFC 4880 section
@@ -504,7 +506,7 @@ public:
     // count/BUFFER_TOO_SMALL semantics as the two methods above.
     int ListSignatures( const unsigned char* inputBuffer, const int inputBufferSize,
                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
-                       int* signatureCount) const;
+                       int* signatureCount) const override;
 
 protected:
 
@@ -516,6 +518,10 @@ private:
     std::unique_ptr<Impl> impl_;
 
 };
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 } // namespace CryptoApiNS
 
