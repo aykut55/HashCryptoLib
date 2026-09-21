@@ -55,6 +55,17 @@ public:
     int RunLuaBridgeLegacyScriptPgpSignVerifyTest(void);
     int RunLuaBridgeLegacyScriptPgpWrapperAvailabilityTest(void);
 
+    int RunChaiScriptHashTest(void);
+    int RunChaiScriptEncryptDecryptTest(void);
+    int RunChaiScriptAsymmetricTest(void);
+    int RunChaiScriptSignatureTest(void);
+    int RunChaiScriptKeyAgreementTest(void);
+    int RunChaiScriptRandomTest(void);
+    int RunChaiScriptPgpKeyGenerationTest(void);
+    int RunChaiScriptPgpEncryptDecryptTest(void);
+    int RunChaiScriptPgpSignVerifyTest(void);
+    int RunChaiScriptPgpWrapperAvailabilityTest(void);
+
 protected:
 
 private:

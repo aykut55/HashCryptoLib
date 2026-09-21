@@ -122,3 +122,14 @@ Win64/
 3rdParty/scripts/luaBridge30/Images/
 3rdParty/scripts/luaBridge30/.github/
 3rdParty/scripts/luaBridge30/ThirdParty/
+
+# ChaiScript vendor tree (3rdParty/scripts/chaiscript610): same policy as above. Only include/ is
+# needed to build (header-only); unittests/samples/src/contrib/cmake/performance_tests/static_libs
+# are the upstream repo's own test suite, CLI interpreter, and build scaffolding, not needed here.
+3rdParty/scripts/chaiscript610/unittests/
+3rdParty/scripts/chaiscript610/samples/
+3rdParty/scripts/chaiscript610/src/
+3rdParty/scripts/chaiscript610/contrib/
+3rdParty/scripts/chaiscript610/cmake/
+3rdParty/scripts/chaiscript610/performance_tests/
+3rdParty/scripts/chaiscript610/static_libs/

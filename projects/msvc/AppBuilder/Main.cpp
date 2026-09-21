@@ -1,3 +1,6 @@
+#include <exception>
+#include <iostream>
+
 #include "CryptoApiTester.h"
 #include "Scripts/ScriptEngineTester.h"
 
@@ -444,15 +447,54 @@ int runTestsViaLuaScriptEngineLuaBridgeLegacy()
     return 0;
 }
 
+int runTestsViaChaiScriptEngine()
+{
+    CryptoApiNS::CScriptEngineTester scriptEngineTester;
+
+    scriptEngineTester.RunChaiScriptHashTest();
+
+    scriptEngineTester.RunChaiScriptEncryptDecryptTest();
+
+    scriptEngineTester.RunChaiScriptAsymmetricTest();
+
+    scriptEngineTester.RunChaiScriptSignatureTest();
+
+    scriptEngineTester.RunChaiScriptKeyAgreementTest();
+
+    scriptEngineTester.RunChaiScriptRandomTest();
+
+    scriptEngineTester.RunChaiScriptPgpKeyGenerationTest();
+
+    scriptEngineTester.RunChaiScriptPgpEncryptDecryptTest();
+
+    scriptEngineTester.RunChaiScriptPgpSignVerifyTest();
+
+    scriptEngineTester.RunChaiScriptPgpWrapperAvailabilityTest();
+
+    return 0;
+}
+
 int main()
 {
+    std::cout << std::endl << "runTestsViaCryptoApiTester()...." << std::endl;
+
     //runTestsViaCryptoApiTester();
+
+    std::cout << std::endl << "runTestsViaLuaScriptEngineSol()...." << std::endl;
 
     runTestsViaLuaScriptEngineSol();
 
+    std::cout << std::endl << "runTestsViaLuaScriptEngineLuaBridge()...." << std::endl;
+
     runTestsViaLuaScriptEngineLuaBridge();
 
+    std::cout << std::endl << "runTestsViaLuaScriptEngineLuaBridgeLegacy()...." << std::endl;
+
     runTestsViaLuaScriptEngineLuaBridgeLegacy();
+
+    std::cout << std::endl << "runTestsViaChaiScriptEngine()...." << std::endl;
+
+    runTestsViaChaiScriptEngine();
 
     return 0;
 }

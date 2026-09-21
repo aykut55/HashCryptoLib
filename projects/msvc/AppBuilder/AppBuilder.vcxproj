@@ -99,6 +99,14 @@
        ambiguous (whichever directory happens to be searched first wins for BOTH engines, silently
        compiling one of them against the wrong library). Each engine's own AdditionalIncludeDirectories
        override below (on its ClCompile item) prepends only the ONE directory it actually needs. -->
+  <!-- ChaiScript (3rdParty\scripts\chaiscript610\include, header-only): third scripting binding
+       library, see CChaiScriptEngine. No separate interpreter runtime to build/link, pure C++,
+       unlike Lua's lua547.lib. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\chaiscript610\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <!-- cryptlib.lib is built with the static CRT (MultiThreadedDebug/MultiThreaded); match it here
        so the whole project links against the same CRT as the Crypto++ provider's dependency. -->
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
@@ -246,6 +254,7 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -296,6 +305,11 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
     </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.cpp">
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\luaBridge210\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <!-- ChaiScript's add()/fun()/constructor<>() registration is template-heavy the same way
+         sol2's/LuaBridge's is (arguably more so); /bigobj for the same reason. -->
+    <ClCompile Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
          e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;

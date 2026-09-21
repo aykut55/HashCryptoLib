@@ -3,6 +3,7 @@
 #include "LuaScript/LuaScriptEngineSol.h"
 #include "LuaScript/LuaScriptEngineLuaBridge.h"
 #include "LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
+#include "ChaiScript/ChaiScriptEngine.h"
 
 #include <exception>
 #include <iostream>
@@ -1129,6 +1130,374 @@ int CScriptEngineTester::RunLuaBridgeLegacyScriptPgpWrapperAvailabilityTest(void
     catch (...)
     {
         std::cout << "RunLuaBridgeLegacyScriptPgpWrapperAvailabilityTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptHashTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var api = CryptoApi();\n"
+            "var digestA = api.ComputeHashString(\"The quick brown fox jumps over the lazy dog\");\n"
+            "var digestB = api.ComputeHashString(\"The quick brown fox jumps over the lazy dog\");\n"
+            "global ok = (digestA.size() == api.GetHashSize()) && (digestA.size() == digestB.size());\n"
+            "for (auto i = 0; i < digestA.size(); ++i) {\n"
+            "    if (digestA[i] != digestB[i]) { ok = false; }\n"
+            "}\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptHashTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptHashTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptHashTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptHashTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptEncryptDecryptTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var api = CryptoApi();\n"
+            "var password = \"s3cr3t-chaiscript-password\";\n"
+            "var plaintext = \"Hello from ChaiScript!\";\n"
+            "var ciphertext = api.EncryptString(password, plaintext);\n"
+            "var decrypted = api.DecryptString(password, ciphertext);\n"
+            "global ok = (decrypted == plaintext);\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptEncryptDecryptTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptEncryptDecryptTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptEncryptDecryptTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptEncryptDecryptTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptAsymmetricTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var api = CryptoApi();\n"
+            "api.GenerateAsymmetricKeyPair();\n"
+            "var plaintext = \"RSA round trip via ChaiScript\";\n"
+            "var inputBytes = ToBytes(plaintext);\n"
+            "var ciphertext = api.EncryptWithPublicKey(inputBytes);\n"
+            "var decryptedBytes = api.DecryptWithPrivateKey(ciphertext);\n"
+            "var decryptedText = ToStringFromBytes(decryptedBytes);\n"
+            "global ok = (decryptedText == plaintext) && (ciphertext.size() == api.GetAsymmetricCiphertextSize());\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptAsymmetricTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptAsymmetricTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptAsymmetricTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptAsymmetricTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptSignatureTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var api = CryptoApi();\n"
+            "api.GenerateSignatureKeyPair();\n"
+            "var message = \"Sign this message from ChaiScript\";\n"
+            "var inputBytes = ToBytes(message);\n"
+            "var signature = api.SignBuffer(inputBytes);\n"
+            "global ok = api.VerifyBuffer(inputBytes, signature) && (signature.size() == api.GetSignatureSize());\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptSignatureTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptSignatureTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptSignatureTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptSignatureTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptKeyAgreementTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var alice = CryptoApi();\n"
+            "var bob = CryptoApi();\n"
+            "alice.GenerateKeyAgreementKeyPair();\n"
+            "bob.GenerateKeyAgreementKeyPair();\n"
+            "var alicePublic = alice.ExportKeyAgreementPublicKey();\n"
+            "var bobPublic = bob.ExportKeyAgreementPublicKey();\n"
+            "var aliceSecret = alice.DeriveSharedSecret(bobPublic);\n"
+            "var bobSecret = bob.DeriveSharedSecret(alicePublic);\n"
+            "global ok = (aliceSecret.size() == bobSecret.size()) && (aliceSecret.size() == alice.GetSharedSecretSize());\n"
+            "for (auto i = 0; i < aliceSecret.size(); ++i) {\n"
+            "    if (aliceSecret[i] != bobSecret[i]) { ok = false; }\n"
+            "}\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptKeyAgreementTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptKeyAgreementTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptKeyAgreementTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptKeyAgreementTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptRandomTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var api = CryptoApi();\n"
+            "var randomBytes = api.GenerateRandomBytes(32);\n"
+            "global ok = (randomBytes.size() == 32);\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptRandomTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptRandomTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptRandomTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptRandomTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptPgpKeyGenerationTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var pgp = PgpEngine();\n"
+            "pgp.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-chaiscript-pw\");\n"
+            "var keyId = pgp.GetKeyId();\n"
+            "global ok = (keyId.size() == 16);\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptPgpKeyGenerationTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptPgpKeyGenerationTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptPgpKeyGenerationTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptPgpKeyGenerationTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptPgpEncryptDecryptTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var alice = PgpEngine();\n"
+            "var bob = PgpEngine();\n"
+            "alice.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-chaiscript-pw\");\n"
+            "bob.GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-chaiscript-pw\");\n"
+            "alice.ImportPeerPublicKey(bob.ExportPublicKeyArmored());\n"
+            "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored());\n"
+            "var plaintext = \"Hello Bob, this message was encrypted entirely from ChaiScript.\";\n"
+            "var ciphertext = alice.EncryptStringArmored(plaintext);\n"
+            "var decryptedBytes = bob.DecryptStringArmored(\"bob-chaiscript-pw\", ciphertext);\n"
+            "var decryptedText = ToStringFromBytes(decryptedBytes);\n"
+            "global ok = (decryptedText == plaintext);\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptPgpEncryptDecryptTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptPgpEncryptDecryptTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptPgpEncryptDecryptTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptPgpEncryptDecryptTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptPgpSignVerifyTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var alice = PgpEngine();\n"
+            "var bob = PgpEngine();\n"
+            "alice.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-chaiscript-pw\");\n"
+            "bob.GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-chaiscript-pw\");\n"
+            "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored());\n"
+            "var message = \"This clear-signed message comes from ChaiScript.\";\n"
+            "var signedMessage = alice.ClearSignString(\"alice-chaiscript-pw\", message);\n"
+            "global ok = bob.VerifyClearSignedString(signedMessage);\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptPgpSignVerifyTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptPgpSignVerifyTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptPgpSignVerifyTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptPgpSignVerifyTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptPgpWrapperAvailabilityTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var wrapper = PgpEngineWrapper();\n"
+            "global gnupgAvailable = wrapper.IsGnuPgAvailable();\n"
+            "global ok = true;\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptPgpWrapperAvailabilityTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptPgpWrapperAvailabilityTest: PASSED (GnuPG available=" << (chaiEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptPgpWrapperAvailabilityTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptPgpWrapperAvailabilityTest: FAILED unknown exception" << std::endl;
         return UNEXPECTED_ERROR;
     }
 }
