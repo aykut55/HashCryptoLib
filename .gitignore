@@ -109,3 +109,16 @@ Win64/
 3rdParty/openssl402/_libs/
 3rdParty/openssl402/_install/
 3rdParty/openssl402/_build_*/
+
+# Lua/LuaBridge/LuaBridge3 vendor trees (3rdParty/scripts): same "trim the upstream repo's own
+# test/doc/CI scaffolding" policy as openssl402 above. Only src/ (lua547), Source/ (luaBridge210),
+# and Distribution/ (luaBridge30, the amalgamated header actually included) are needed to build.
+3rdParty/scripts/lua547/doc/
+3rdParty/scripts/luaBridge210/Tests/
+3rdParty/scripts/luaBridge210/.github/
+3rdParty/scripts/luaBridge210/third_party/
+3rdParty/scripts/luaBridge30/Tests/
+3rdParty/scripts/luaBridge30/Benchmarks/
+3rdParty/scripts/luaBridge30/Images/
+3rdParty/scripts/luaBridge30/.github/
+3rdParty/scripts/luaBridge30/ThirdParty/
