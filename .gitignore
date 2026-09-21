@@ -133,3 +133,11 @@ Win64/
 3rdParty/scripts/chaiscript610/cmake/
 3rdParty/scripts/chaiscript610/performance_tests/
 3rdParty/scripts/chaiscript610/static_libs/
+
+# CPython embed (3rdParty/scripts/python312): same "don't commit build artifacts, only
+# sources/headers" policy as libgcryptbundle11241's bin/*.dll + lib/*.lib. python312/bin/*.dll and
+# python312/libs/*.lib are already covered by the generic *.dll/*.lib rules near the top of this
+# file; *.pyd (CPython's own DLL-with-a-different-extension convention for compiled extension
+# modules) is not, so it needs its own line here. See 3rdParty/PYTHON_EMBED.md for exactly how to
+# regenerate 3rdParty/scripts/python312/bin and .../libs/python312.lib from scratch.
+3rdParty/scripts/python312/bin/*.pyd

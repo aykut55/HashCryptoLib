@@ -151,11 +151,38 @@
       <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libgcrypt-20-msvc.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <!-- PostBuildEvent's <Command> is a single project property, not batched %()-style item
+         metadata: a second ItemDefinitionGroup under the same 'x64' condition setting its own
+         PostBuildEvent/Command would silently OVERWRITE this one rather than append to it (MSBuild
+         property semantics, last one evaluated wins). CPythonScriptEngine's own runtime DLL/stdlib
+         copy step (see the Python block below) is therefore appended into THIS SAME Command instead
+         of living in its own ItemDefinitionGroup, even though its include/lib/link settings do live
+         in their own dedicated block (AdditionalIncludeDirectories/AdditionalLibraryDirectories/
+         AdditionalDependencies genuinely are %()-batched and merge safely across groups). -->
     <PostBuildEvent>
-      <Message>Copying the libgcrypt runtime DLLs next to the output executable</Message>
+      <Message>Copying the libgcrypt and Python runtime DLLs/stdlib next to the output executable</Message>
       <Command>xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgcrypt-20.dll" "$(OutDir)"
-xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-error-0.dll" "$(OutDir)"</Command>
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-error-0.dll" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\*.dll" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\*.pyd" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.zip" "$(OutDir)"</Command>
     </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- CPythonScriptEngine (fourth scripting binding library, see PythonScriptEngine.h/.cpp) embeds
+       CPython via pybind11; like libgcrypt, this is x64 ONLY: python.org's Windows embeddable
+       package (the practical source for a manually-vendored DLL+stdlib, see
+       3rdParty/PYTHON_EMBED.md for exactly how 3rdParty\scripts\python312 was assembled) ships amd64
+       binaries only, no Win32/x86 build. No Win32/x86 configuration links this; PythonScriptEngine.cpp
+       compiles to an all-unsupported stub there (its own ARCH_X64/ARCH_WIN64 guard), same precedent
+       as LibgcryptProvider.cpp, keeping all 4 configurations buildable per Rules.md. The import
+       library (3rdParty\scripts\python312\libs\python312.lib) was hand-generated from
+       python312.dll's own export table via dumpbin+lib.exe; python.org's embeddable package does
+       not ship one; see 3rdParty/PYTHON_EMBED.md. -->
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <Link>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\python312\libs;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>python312.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -255,6 +282,7 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h" />
     <ClInclude Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.h" />
+    <ClInclude Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -309,6 +337,19 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
     <!-- ChaiScript's add()/fun()/constructor<>() registration is template-heavy the same way
          sol2's/LuaBridge's is (arguably more so); /bigobj for the same reason. -->
     <ClCompile Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <!-- pybind11's py::class_/py::init<>()/py::enum_ registration is template-heavy the same way
+         sol2's/LuaBridge's/ChaiScript's is; /bigobj for the same reason. Compiled on ALL 4
+         configurations (Rules.md requires every configuration to build) but only does real work on
+         x64; see the ARCH_X64/ARCH_WIN64 guard at the top of PythonScriptEngine.cpp, same
+         precedent as LibgcryptProvider.cpp's own x64-only guard. Python/pybind11 include paths are
+         added here rather than in a project-wide ItemDefinitionGroup because pybind11/Python.h must
+         never be visible to any OTHER translation unit (it also drags in Windows.h and redefines
+         NO_ERROR/EncryptFile/DecryptFile the same way ChaiScript's own headers do; see that file's
+         own top-of-file comment for the full reasoning). -->
+    <ClCompile Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.cpp">
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\pybind11310\include;$(ProjectDir)..\..\..\3rdParty\scripts\python312\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for

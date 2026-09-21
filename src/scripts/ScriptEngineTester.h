@@ -66,6 +66,17 @@ public:
     int RunChaiScriptPgpSignVerifyTest(void);
     int RunChaiScriptPgpWrapperAvailabilityTest(void);
 
+    int RunPythonScriptHashTest(void);
+    int RunPythonScriptEncryptDecryptTest(void);
+    int RunPythonScriptAsymmetricTest(void);
+    int RunPythonScriptSignatureTest(void);
+    int RunPythonScriptKeyAgreementTest(void);
+    int RunPythonScriptRandomTest(void);
+    int RunPythonScriptPgpKeyGenerationTest(void);
+    int RunPythonScriptPgpEncryptDecryptTest(void);
+    int RunPythonScriptPgpSignVerifyTest(void);
+    int RunPythonScriptPgpWrapperAvailabilityTest(void);
+
 protected:
 
 private:

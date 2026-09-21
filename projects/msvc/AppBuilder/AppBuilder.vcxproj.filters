@@ -58,6 +58,9 @@
     <Filter Include="src\Scripts\ChaiScript">
       <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e63}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Scripts\PythonScript">
+      <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e64}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
@@ -176,6 +179,9 @@
     </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.cpp">
       <Filter>src\Scripts\ChaiScript</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.cpp">
+      <Filter>src\Scripts\PythonScript</Filter>
     </ClCompile>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
@@ -304,6 +310,9 @@
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.h">
       <Filter>src\Scripts\ChaiScript</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.h">
+      <Filter>src\Scripts\PythonScript</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

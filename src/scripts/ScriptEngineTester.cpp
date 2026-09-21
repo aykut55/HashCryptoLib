@@ -4,6 +4,7 @@
 #include "LuaScript/LuaScriptEngineLuaBridge.h"
 #include "LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
 #include "ChaiScript/ChaiScriptEngine.h"
+#include "PythonScript/PythonScriptEngine.h"
 
 #include <exception>
 #include <iostream>
@@ -1498,6 +1499,374 @@ int CScriptEngineTester::RunChaiScriptPgpWrapperAvailabilityTest(void)
     catch (...)
     {
         std::cout << "RunChaiScriptPgpWrapperAvailabilityTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptHashTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "api = CryptoApi()\n"
+            "digestA = api.ComputeHashString(\"The quick brown fox jumps over the lazy dog\")\n"
+            "digestB = api.ComputeHashString(\"The quick brown fox jumps over the lazy dog\")\n"
+            "ok = (len(digestA) == api.GetHashSize()) and (len(digestA) == len(digestB))\n"
+            "for i in range(len(digestA)):\n"
+            "    if digestA[i] != digestB[i]:\n"
+            "        ok = False\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptHashTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptHashTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptHashTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptHashTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptEncryptDecryptTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "api = CryptoApi()\n"
+            "password = \"s3cr3t-python-password\"\n"
+            "plaintext = \"Hello from Python!\"\n"
+            "ciphertext = api.EncryptString(password, plaintext)\n"
+            "decrypted = api.DecryptString(password, ciphertext)\n"
+            "ok = (decrypted == plaintext)\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptEncryptDecryptTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptEncryptDecryptTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptEncryptDecryptTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptEncryptDecryptTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptAsymmetricTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "api = CryptoApi()\n"
+            "api.GenerateAsymmetricKeyPair()\n"
+            "plaintext = \"RSA round trip via Python\"\n"
+            "inputBytes = ToBytes(plaintext)\n"
+            "ciphertext = api.EncryptWithPublicKey(inputBytes)\n"
+            "decryptedBytes = api.DecryptWithPrivateKey(ciphertext)\n"
+            "decryptedText = ToStringFromBytes(decryptedBytes)\n"
+            "ok = (decryptedText == plaintext) and (len(ciphertext) == api.GetAsymmetricCiphertextSize())\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptAsymmetricTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptAsymmetricTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptAsymmetricTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptAsymmetricTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptSignatureTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "api = CryptoApi()\n"
+            "api.GenerateSignatureKeyPair()\n"
+            "message = \"Sign this message from Python\"\n"
+            "inputBytes = ToBytes(message)\n"
+            "signature = api.SignBuffer(inputBytes)\n"
+            "ok = api.VerifyBuffer(inputBytes, signature) and (len(signature) == api.GetSignatureSize())\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptSignatureTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptSignatureTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptSignatureTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptSignatureTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptKeyAgreementTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "alice = CryptoApi()\n"
+            "bob = CryptoApi()\n"
+            "alice.GenerateKeyAgreementKeyPair()\n"
+            "bob.GenerateKeyAgreementKeyPair()\n"
+            "alicePublic = alice.ExportKeyAgreementPublicKey()\n"
+            "bobPublic = bob.ExportKeyAgreementPublicKey()\n"
+            "aliceSecret = alice.DeriveSharedSecret(bobPublic)\n"
+            "bobSecret = bob.DeriveSharedSecret(alicePublic)\n"
+            "ok = (len(aliceSecret) == len(bobSecret)) and (len(aliceSecret) == alice.GetSharedSecretSize())\n"
+            "for i in range(len(aliceSecret)):\n"
+            "    if aliceSecret[i] != bobSecret[i]:\n"
+            "        ok = False\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptKeyAgreementTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptKeyAgreementTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptKeyAgreementTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptKeyAgreementTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptRandomTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "api = CryptoApi()\n"
+            "randomBytes = api.GenerateRandomBytes(32)\n"
+            "ok = (len(randomBytes) == 32)\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptRandomTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptRandomTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptRandomTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptRandomTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptPgpKeyGenerationTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "pgp = PgpEngine()\n"
+            "pgp.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-python-pw\")\n"
+            "keyId = pgp.GetKeyId()\n"
+            "ok = (len(keyId) == 16)\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptPgpKeyGenerationTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptPgpKeyGenerationTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptPgpKeyGenerationTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptPgpKeyGenerationTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptPgpEncryptDecryptTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "alice = PgpEngine()\n"
+            "bob = PgpEngine()\n"
+            "alice.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-python-pw\")\n"
+            "bob.GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-python-pw\")\n"
+            "alice.ImportPeerPublicKey(bob.ExportPublicKeyArmored())\n"
+            "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored())\n"
+            "plaintext = \"Hello Bob, this message was encrypted entirely from Python.\"\n"
+            "ciphertext = alice.EncryptStringArmored(plaintext)\n"
+            "decryptedBytes = bob.DecryptStringArmored(\"bob-python-pw\", ciphertext)\n"
+            "decryptedText = ToStringFromBytes(decryptedBytes)\n"
+            "ok = (decryptedText == plaintext)\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptPgpEncryptDecryptTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptPgpEncryptDecryptTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptPgpEncryptDecryptTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptPgpEncryptDecryptTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptPgpSignVerifyTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "alice = PgpEngine()\n"
+            "bob = PgpEngine()\n"
+            "alice.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-python-pw\")\n"
+            "bob.GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-python-pw\")\n"
+            "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored())\n"
+            "message = \"This clear-signed message comes from Python.\"\n"
+            "signedMessage = alice.ClearSignString(\"alice-python-pw\", message)\n"
+            "ok = bob.VerifyClearSignedString(signedMessage)\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptPgpSignVerifyTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptPgpSignVerifyTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptPgpSignVerifyTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptPgpSignVerifyTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptPgpWrapperAvailabilityTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "wrapper = PgpEngineWrapper()\n"
+            "gnupgAvailable = wrapper.IsGnuPgAvailable()\n"
+            "ok = True\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptPgpWrapperAvailabilityTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptPgpWrapperAvailabilityTest: PASSED (GnuPG available=" << (pythonEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptPgpWrapperAvailabilityTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptPgpWrapperAvailabilityTest: FAILED unknown exception" << std::endl;
         return UNEXPECTED_ERROR;
     }
 }

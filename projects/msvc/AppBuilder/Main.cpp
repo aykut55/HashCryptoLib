@@ -474,27 +474,96 @@ int runTestsViaChaiScriptEngine()
     return 0;
 }
 
+int runTestsViaPythonScriptEngine()
+{
+    CryptoApiNS::CScriptEngineTester scriptEngineTester;
+
+    scriptEngineTester.RunPythonScriptHashTest();
+
+    scriptEngineTester.RunPythonScriptEncryptDecryptTest();
+
+    scriptEngineTester.RunPythonScriptAsymmetricTest();
+
+    scriptEngineTester.RunPythonScriptSignatureTest();
+
+    scriptEngineTester.RunPythonScriptKeyAgreementTest();
+
+    scriptEngineTester.RunPythonScriptRandomTest();
+
+    scriptEngineTester.RunPythonScriptPgpKeyGenerationTest();
+
+    scriptEngineTester.RunPythonScriptPgpEncryptDecryptTest();
+
+    scriptEngineTester.RunPythonScriptPgpSignVerifyTest();
+
+    scriptEngineTester.RunPythonScriptPgpWrapperAvailabilityTest();
+
+    return 0;
+}
+
 int main()
 {
-    std::cout << std::endl << "runTestsViaCryptoApiTester()...." << std::endl;
+    std::cout << std::endl;
+
+    std::cout << "runTestsViaCryptoApiTester()...." << std::endl;
+
+    std::cout << std::endl;
 
     //runTestsViaCryptoApiTester();
 
-    std::cout << std::endl << "runTestsViaLuaScriptEngineSol()...." << std::endl;
+
+
+    std::cout << std::endl;
+
+    std::cout << "runTestsViaLuaScriptEngineSol()...." << std::endl;
+
+    std::cout << std::endl;
 
     runTestsViaLuaScriptEngineSol();
 
-    std::cout << std::endl << "runTestsViaLuaScriptEngineLuaBridge()...." << std::endl;
+
+
+    std::cout << std::endl;
+
+    std::cout << "runTestsViaLuaScriptEngineLuaBridge()...." << std::endl;
+
+    std::cout << std::endl;
 
     runTestsViaLuaScriptEngineLuaBridge();
 
-    std::cout << std::endl << "runTestsViaLuaScriptEngineLuaBridgeLegacy()...." << std::endl;
+
+
+    std::cout << std::endl;
+
+    std::cout << "runTestsViaLuaScriptEngineLuaBridgeLegacy()...." << std::endl;
+
+    std::cout << std::endl;
 
     runTestsViaLuaScriptEngineLuaBridgeLegacy();
 
-    std::cout << std::endl << "runTestsViaChaiScriptEngine()...." << std::endl;
+
+
+    std::cout << std::endl;
+
+    std::cout << "runTestsViaChaiScriptEngine()...." << std::endl;
+
+    std::cout << std::endl;
 
     runTestsViaChaiScriptEngine();
+
+
+
+    std::cout << std::endl;
+
+    std::cout << "runTestsViaPythonScriptEngine()...." << std::endl; 
+    
+    std::cout << std::endl;
+
+    runTestsViaPythonScriptEngine();
+
+
+
+    std::cout << std::endl;
 
     return 0;
 }
