@@ -1,6 +1,7 @@
 #include "CryptoApiTester.h"
+#include "Scripts/ScriptEngineTester.h"
 
-int main()
+int runTestsViaCryptoApiTester()
 {
     CryptoApiNS::CCryptoApiTester cryptoApiTester;
 
@@ -240,7 +241,7 @@ int main()
     cryptoApiTester.RunRandomAlgorithmsTest();
 #endif
 
-#if 1
+#if 0
     cryptoApiTester.RunPgpKeyGenerationTest();
 
     cryptoApiTester.RunPgpEncryptDecryptTest();
@@ -358,6 +359,100 @@ int main()
 
     cryptoApiTester.RunPgpWrapperInspectionSignatureTest();
 #endif
+
+    return 0;
+}
+
+int runTestsViaLuaScriptEngineSol()
+{
+    CryptoApiNS::CScriptEngineTester scriptEngineTester;
+
+    scriptEngineTester.RunLuaScriptHashTest();
+
+    scriptEngineTester.RunLuaScriptEncryptDecryptTest();
+
+    scriptEngineTester.RunLuaScriptAsymmetricTest();
+
+    scriptEngineTester.RunLuaScriptSignatureTest();
+
+    scriptEngineTester.RunLuaScriptKeyAgreementTest();
+
+    scriptEngineTester.RunLuaScriptRandomTest();
+
+    scriptEngineTester.RunLuaScriptPgpKeyGenerationTest();
+
+    scriptEngineTester.RunLuaScriptPgpEncryptDecryptTest();
+
+    scriptEngineTester.RunLuaScriptPgpSignVerifyTest();
+
+    scriptEngineTester.RunLuaScriptPgpWrapperAvailabilityTest();
+
+    return 0;
+}
+
+int runTestsViaLuaScriptEngineLuaBridge()
+{
+    CryptoApiNS::CScriptEngineTester scriptEngineTester;
+
+    scriptEngineTester.RunLuaBridgeScriptHashTest();
+
+    scriptEngineTester.RunLuaBridgeScriptEncryptDecryptTest();
+
+    scriptEngineTester.RunLuaBridgeScriptAsymmetricTest();
+
+    scriptEngineTester.RunLuaBridgeScriptSignatureTest();
+
+    scriptEngineTester.RunLuaBridgeScriptKeyAgreementTest();
+
+    scriptEngineTester.RunLuaBridgeScriptRandomTest();
+
+    scriptEngineTester.RunLuaBridgeScriptPgpKeyGenerationTest();
+
+    scriptEngineTester.RunLuaBridgeScriptPgpEncryptDecryptTest();
+
+    scriptEngineTester.RunLuaBridgeScriptPgpSignVerifyTest();
+
+    scriptEngineTester.RunLuaBridgeScriptPgpWrapperAvailabilityTest();
+
+    return 0;
+}
+
+int runTestsViaLuaScriptEngineLuaBridgeLegacy()
+{
+    CryptoApiNS::CScriptEngineTester scriptEngineTester;
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptHashTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptEncryptDecryptTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptAsymmetricTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptSignatureTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptKeyAgreementTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptRandomTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptPgpKeyGenerationTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptPgpEncryptDecryptTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptPgpSignVerifyTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptPgpWrapperAvailabilityTest();
+
+    return 0;
+}
+
+int main()
+{
+    //runTestsViaCryptoApiTester();
+
+    runTestsViaLuaScriptEngineSol();
+
+    runTestsViaLuaScriptEngineLuaBridge();
+
+    runTestsViaLuaScriptEngineLuaBridgeLegacy();
 
     return 0;
 }

@@ -82,6 +82,23 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
   </ItemDefinitionGroup>
+  <!-- Lua (3rdParty\scripts\lua547, built by Lua547.vcxproj below) and sol2 (3rdParty\scripts\sol330,
+       header-only, its own single/sol/{sol,config,forward}.hpp layout): the Lua scripting engine's
+       binding library. Own dedicated block, kept separate from the shared include line above so this
+       dependency can be isolated/rolled back on its own, matching how OpenSSL/libgcrypt are each
+       wired in their own blocks. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\lua547\src;$(ProjectDir)..\..\..\3rdParty\scripts\sol330;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- LuaBridge3 (3rdParty\scripts\luaBridge30\Distribution\LuaBridge\LuaBridge.h, amalgamated) and
+       classic LuaBridge 2.10 (3rdParty\scripts\luaBridge210\Source\LuaBridge\LuaBridge.h, plain
+       header set) both publish a header at the SAME relative path "LuaBridge/LuaBridge.h": adding
+       both directories to the project-wide include path here would make #include <LuaBridge/...>
+       ambiguous (whichever directory happens to be searched first wins for BOTH engines, silently
+       compiling one of them against the wrong library). Each engine's own AdditionalIncludeDirectories
+       override below (on its ClCompile item) prepends only the ONE directory it actually needs. -->
   <!-- cryptlib.lib is built with the static CRT (MultiThreadedDebug/MultiThreaded); match it here
        so the whole project links against the same CRT as the Crypto++ provider's dependency. -->
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
@@ -221,6 +238,14 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
     <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptException.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngine.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptEngineTester.h" />
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -252,6 +277,26 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
     <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApi.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngine.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptEngineTester.cpp" />
+    <!-- sol2's usertype/overload registration for CryptoApi/PgpEngine/PgpEngineWrapper's many
+         methods generates a large number of sections; /bigobj avoids hitting the COFF section-count
+         limit here, same precedent as the Botan amalgamation .cpp below. -->
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <!-- LuaBridge3's addConstructor/addFunction overload registration is template-heavy the same
+         way sol2's is; /bigobj for the same reason. -->
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.cpp">
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\luaBridge30\Distribution;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.cpp">
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\luaBridge210\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
          e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
          $(Platform) picks the right one. -->
@@ -272,6 +317,11 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
          wasn't worth blocking on. -->
     <ProjectReference Include="..\..\..\3rdParty\cryptopp890\cryptlib.vcxproj">
       <Project>{c39f4b46-6e89-4074-902e-ca57073044d2}</Project>
+    </ProjectReference>
+    <!-- Builds lua547.lib automatically (if missing/stale) and links it in, same auto-linking
+         pattern as cryptlib.vcxproj above. -->
+    <ProjectReference Include="..\..\..\3rdParty\scripts\lua547\Lua547.vcxproj">
+      <Project>{7f3e9a2c-4b1d-4e6a-9c8f-2d5b6a7e1f30}</Project>
     </ProjectReference>
     <!-- Makefile-type project (see 3rdParty\openssl402\openssl.vcxproj); this only orders the
          build so libcrypto.lib exists first. It does not auto-link like a normal ProjectReference
