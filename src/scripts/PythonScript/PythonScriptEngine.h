@@ -6,6 +6,10 @@
 namespace CryptoApiNS
 {
 
+class CScriptCryptoApiDll;
+class CScriptPgpEngineDll;
+class CScriptPgpEngineWrapperDll;
+
 // Fourth scripting binding library over the same CScriptCryptoApi/CScriptPgpEngine/
 // CScriptPgpEngineWrapper facade layer the Lua/ChaiScript engines use -- see registerBindings() in
 // the .cpp for the exact binding list. pybind11 embeds a full CPython interpreter (x64 ONLY -- see
@@ -48,6 +52,20 @@ public:
     bool GetGlobalBool(const std::string& name);
     int GetGlobalInt(const std::string& name);
     std::string GetGlobalString(const std::string& name);
+
+    // Exposes an already-constructed CScriptCryptoApiDll/CScriptPgpEngineDll/
+    // CScriptPgpEngineWrapperDll (each wrapping a DLL-hosted ICryptoApi*/IPgpEngine*/
+    // IPgpEngineWrapper*, see CCryptoApiDllLoader) to this interpreter's __main__ globals as
+    // "cryptoApi"/"pgpEngine"/"pgpEngineWrapper", instead of a script constructing a
+    // CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper of its own (those wrap a LOCAL,
+    // owned CCryptoApi/CPgpEngine/CPgpEngineWrapper -- a genuinely different type, see
+    // ScriptCryptoApiDll.h's own header comment for why). The pointed-to instance's lifetime
+    // remains the caller's responsibility; this engine never constructs or destroys it. On a
+    // Win32 build (no CPython vendored) these are silent no-ops, matching every other method's
+    // own x64-only degradation convention above.
+    void SetDllCryptoApi(CScriptCryptoApiDll* api);
+    void SetDllPgpEngine(CScriptPgpEngineDll* engine);
+    void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
 
 protected:
 

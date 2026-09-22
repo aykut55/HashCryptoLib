@@ -96,6 +96,15 @@ namespace py = pybind11;
 #endif
 
 #include "../ScriptException.h"
+#include "../ScriptCryptoApiDll.h"
+#include "../ScriptPgpEngineDll.h"
+#include "../ScriptPgpEngineWrapperDll.h"
+
+// DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
+// registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
+// concrete implementation -- see ScriptCryptoApiDll.h's own header comment for why DllRunner must
+// never link that. Same technique CLuaScriptEngineSol.cpp's own guard already uses.
+#ifndef DLL_RUNNER
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
@@ -103,6 +112,7 @@ namespace py = pybind11;
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#endif
 
 #include <atomic>
 #include <string>
@@ -200,6 +210,7 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
             .value("OPERATION_CANCELLED", OPERATION_CANCELLED)
             .export_values();
 
+#ifndef DLL_RUNNER
         py::enum_<ProviderKind>(m, "ProviderKind")
             .value("PROVIDER_MICROSOFT", PROVIDER_MICROSOFT)
             .value("PROVIDER_CRYPTOPP", PROVIDER_CRYPTOPP)
@@ -468,6 +479,36 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
             .def("ListSigningKeyIds", &CScriptPgpEngineWrapper::ListSigningKeyIds)
             .def("ListSignatures", &CScriptPgpEngineWrapper::ListSignatures)
             ;
+#endif // !DLL_RUNNER
+
+    // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
+    // lightweight, no CCryptoApi/CPgpEngine/CPgpEngineWrapper dependency, so registered
+    // unconditionally (harmless for AppBuilder, required for DllRunner). No py::init<...>() is
+    // added -- pybind11 classes are simply not Python-constructible without one, so these are
+    // only ever pushed as an already-constructed instance via SetDllCryptoApi/SetDllPgpEngine/
+    // SetDllPgpEngineWrapper below, never a script's own constructor call.
+    py::class_<CScriptCryptoApiDll>(m, "CryptoApiDll")
+        .def("GetVersion", &CScriptCryptoApiDll::GetVersion)
+        .def("GetHashSize", &CScriptCryptoApiDll::GetHashSize)
+        .def("ComputeHashString", &CScriptCryptoApiDll::ComputeHashString)
+        ;
+
+    py::class_<CScriptPgpEngineDll>(m, "PgpEngineDll")
+        .def("GenerateKeyPair", &CScriptPgpEngineDll::GenerateKeyPair)
+        .def("ExportPublicKeyArmored", &CScriptPgpEngineDll::ExportPublicKeyArmored)
+        .def("ImportPeerPublicKey", &CScriptPgpEngineDll::ImportPeerPublicKey)
+        .def("EncryptStringArmored", &CScriptPgpEngineDll::EncryptStringArmored)
+        .def("DecryptStringArmored", &CScriptPgpEngineDll::DecryptStringArmored)
+        ;
+
+    py::class_<CScriptPgpEngineWrapperDll>(m, "PgpEngineWrapperDll")
+        .def("IsGnuPgAvailable", &CScriptPgpEngineWrapperDll::IsGnuPgAvailable)
+        .def("GenerateKeyPair", &CScriptPgpEngineWrapperDll::GenerateKeyPair)
+        .def("ExportPublicKeyArmored", &CScriptPgpEngineWrapperDll::ExportPublicKeyArmored)
+        .def("ImportPeerPublicKey", &CScriptPgpEngineWrapperDll::ImportPeerPublicKey)
+        .def("EncryptStringArmored", &CScriptPgpEngineWrapperDll::EncryptStringArmored)
+        .def("DecryptStringArmored", &CScriptPgpEngineWrapperDll::DecryptStringArmored)
+        ;
 } // this closes the PYBIND11_EMBEDDED_MODULE function body opened at "PYBIND11_EMBEDDED_MODULE(
   // cryptoapi_native, m)\n{" above -- namespace CryptoApiNS itself, opened at the top of this
   // file, is still open here and remains open for everything below.
@@ -606,11 +647,53 @@ void CPythonScriptEngine::registerBindings(void)
 }
 // -----------------------------------------------------------------------------
 
+void CPythonScriptEngine::SetDllCryptoApi(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        py::globals()["cryptoApi"] = py::cast(api, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllPgpEngine(CScriptPgpEngineDll* engine)
+{
+    try
+    {
+        py::globals()["pgpEngine"] = py::cast(engine, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper)
+{
+    try
+    {
+        py::globals()["pgpEngineWrapper"] = py::cast(wrapper, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS
 
 #else // !CRYPTOAPI_PYTHON_AVAILABLE
 
 #include "../ScriptException.h"
+#include "../ScriptCryptoApiDll.h"
+#include "../ScriptPgpEngineDll.h"
+#include "../ScriptPgpEngineWrapperDll.h"
 
 namespace CryptoApiNS
 {
@@ -662,6 +745,24 @@ std::string CPythonScriptEngine::GetGlobalString(const std::string& name)
 
 void CPythonScriptEngine::registerBindings(void)
 {
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllCryptoApi(CScriptCryptoApiDll* api)
+{
+    (void)api;
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllPgpEngine(CScriptPgpEngineDll* engine)
+{
+    (void)engine;
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper)
+{
+    (void)wrapper;
 }
 // -----------------------------------------------------------------------------
 

@@ -11,6 +11,10 @@ extern "C"
 namespace CryptoApiNS
 {
 
+class CScriptCryptoApiDll;
+class CScriptPgpEngineDll;
+class CScriptPgpEngineWrapperDll;
+
 // LuaBridge3 counterpart to CLuaScriptEngine -- exposes the exact same script-facing surface
 // (CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper usertypes, the same 14 algorithm
 // enums, RunFile/RunString/GetGlobalBool/GetGlobalInt/GetGlobalString) through LuaBridge3 instead
@@ -35,6 +39,19 @@ public:
     bool GetGlobalBool(const std::string& name) const;
     int GetGlobalInt(const std::string& name) const;
     std::string GetGlobalString(const std::string& name) const;
+
+    // Exposes an already-constructed CScriptCryptoApiDll/CScriptPgpEngineDll/
+    // CScriptPgpEngineWrapperDll (each wrapping a DLL-hosted ICryptoApi*/IPgpEngine*/
+    // IPgpEngineWrapper*, see CCryptoApiDllLoader) to this Lua state as the global "cryptoApi"/
+    // "pgpEngine"/"pgpEngineWrapper", instead of a script constructing a CScriptCryptoApi/
+    // CScriptPgpEngine/CScriptPgpEngineWrapper of its own (those wrap a LOCAL, owned CCryptoApi/
+    // CPgpEngine/CPgpEngineWrapper -- a genuinely different type, see ScriptCryptoApiDll.h's own
+    // header comment for why). The pointed-to instance's lifetime remains the caller's
+    // responsibility; this engine never constructs or destroys it. Same reasoning as
+    // CLuaScriptEngineSol's own identically-named setters.
+    void SetDllCryptoApi(CScriptCryptoApiDll* api);
+    void SetDllPgpEngine(CScriptPgpEngineDll* engine);
+    void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
 
 protected:
 

@@ -1,13 +1,24 @@
 #include "LuaScriptEngineLuaBridge.h"
 #include "../ScriptException.h"
+#include "../ScriptCryptoApiDll.h"
+#include "../ScriptPgpEngineDll.h"
+#include "../ScriptPgpEngineWrapperDll.h"
+
+// DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
+// registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
+// concrete implementation -- see ScriptCryptoApiDll.h's own header comment for why DllRunner must
+// never link that. Same technique CLuaScriptEngineSol.cpp's own guard already uses.
+#ifndef DLL_RUNNER
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
 
-#include "Definitions/Definitions.h"
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#endif
+
+#include "Definitions/Definitions.h"
 
 extern "C"
 {
@@ -41,6 +52,8 @@ extern "C"
 // missing after assumed function template 'Enum'"), cascading spurious errors through the rest of
 // this translation unit -- reimplementing the same logic inline sidesteps it. One block per enum
 // (not templated/macroed) to match this repo's explicit, non-DRY style.
+#ifndef DLL_RUNNER
+
 namespace luabridge
 {
 
@@ -157,6 +170,8 @@ template <> struct Stack<CryptoApiNS::PgpInspectionRecordSize>
 };
 
 } // namespace luabridge
+
+#endif // !DLL_RUNNER
 
 namespace
 {
@@ -280,6 +295,7 @@ std::string CLuaScriptEngineLuaBridge::GetGlobalString(const std::string& name) 
 
 void CLuaScriptEngineLuaBridge::registerBindings(void)
 {
+#ifndef DLL_RUNNER
     pushEnumTable(luaState_, "ErrorCode", {
         {"NO_ERROR", NO_ERROR},
         {"NOT_IMPLEMENTED", NOT_IMPLEMENTED},
@@ -561,6 +577,78 @@ void CLuaScriptEngineLuaBridge::registerBindings(void)
             .addFunction("ListSigningKeyIds", &CScriptPgpEngineWrapper::ListSigningKeyIds)
             .addFunction("ListSignatures", &CScriptPgpEngineWrapper::ListSignatures)
         .endClass();
+#endif // !DLL_RUNNER
+
+    // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
+    // lightweight, no CCryptoApi/CPgpEngine/CPgpEngineWrapper dependency, so registered
+    // unconditionally (harmless for AppBuilder, required for DllRunner). No constructor is
+    // registered -- these are only ever pushed as an already-constructed instance via
+    // SetDllCryptoApi/SetDllPgpEngine/SetDllPgpEngineWrapper below, never a script's own
+    // constructor call.
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptCryptoApiDll>("CryptoApiDll")
+            .addFunction("GetVersion", &CScriptCryptoApiDll::GetVersion)
+            .addFunction("GetHashSize", &CScriptCryptoApiDll::GetHashSize)
+            .addFunction("ComputeHashString", &CScriptCryptoApiDll::ComputeHashString)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptPgpEngineDll>("PgpEngineDll")
+            .addFunction("GenerateKeyPair", &CScriptPgpEngineDll::GenerateKeyPair)
+            .addFunction("ExportPublicKeyArmored", &CScriptPgpEngineDll::ExportPublicKeyArmored)
+            .addFunction("ImportPeerPublicKey", &CScriptPgpEngineDll::ImportPeerPublicKey)
+            .addFunction("EncryptStringArmored", &CScriptPgpEngineDll::EncryptStringArmored)
+            .addFunction("DecryptStringArmored", &CScriptPgpEngineDll::DecryptStringArmored)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptPgpEngineWrapperDll>("PgpEngineWrapperDll")
+            .addFunction("IsGnuPgAvailable", &CScriptPgpEngineWrapperDll::IsGnuPgAvailable)
+            .addFunction("GenerateKeyPair", &CScriptPgpEngineWrapperDll::GenerateKeyPair)
+            .addFunction("ExportPublicKeyArmored", &CScriptPgpEngineWrapperDll::ExportPublicKeyArmored)
+            .addFunction("ImportPeerPublicKey", &CScriptPgpEngineWrapperDll::ImportPeerPublicKey)
+            .addFunction("EncryptStringArmored", &CScriptPgpEngineWrapperDll::EncryptStringArmored)
+            .addFunction("DecryptStringArmored", &CScriptPgpEngineWrapperDll::DecryptStringArmored)
+        .endClass();
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineLuaBridge::SetDllCryptoApi(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        luabridge::setGlobal(luaState_, api, "cryptoApi");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineLuaBridge::SetDllPgpEngine(CScriptPgpEngineDll* engine)
+{
+    try
+    {
+        luabridge::setGlobal(luaState_, engine, "pgpEngine");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineLuaBridge::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper)
+{
+    try
+    {
+        luabridge::setGlobal(luaState_, wrapper, "pgpEngineWrapper");
+    }
+    catch (...)
+    {
+
+    }
 }
 // -----------------------------------------------------------------------------
 

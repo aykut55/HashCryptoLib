@@ -1,13 +1,26 @@
 #include "LuaScriptEngineSol.h"
 #include "../ScriptException.h"
+#include "../ScriptCryptoApiDll.h"
+#include "../ScriptPgpEngineDll.h"
+#include "../ScriptPgpEngineWrapperDll.h"
+
+// DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
+// registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
+// concrete implementation (and, transitively, the whole provider/Botan/CryptoPP/OpenSSL/Libgcrypt
+// stack) -- see ScriptCryptoApiDll.h's own header comment for why DllRunner must never link that.
+// Same technique PythonScriptEngine.cpp's own ARCH_X64/ARCH_WIN64 guard already uses for its own
+// x64-only CPython dependency.
+#ifndef DLL_RUNNER
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
 
-#include "Definitions/Definitions.h"
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#endif
+
+#include "Definitions/Definitions.h"
 
 namespace CryptoApiNS
 {
@@ -91,6 +104,7 @@ std::string CLuaScriptEngineSol::GetGlobalString(const std::string& name) const
 
 void CLuaScriptEngineSol::registerBindings(void)
 {
+#ifndef DLL_RUNNER
     // ErrorCode / CScriptException -- scripts see a raised Lua error whose message is
     // CScriptException::what(); the numeric ErrorCode table below lets a script compare a caught
     // error's own reported code (via pcall) against these named constants if it parses the message,
@@ -390,6 +404,77 @@ void CLuaScriptEngineSol::registerBindings(void)
         "ListSigningKeyIds", &CScriptPgpEngineWrapper::ListSigningKeyIds,
         "ListSignatures", &CScriptPgpEngineWrapper::ListSignatures
     );
+#endif // !DLL_RUNNER
+
+    // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
+    // lightweight, no CCryptoApi/CPgpEngine/CPgpEngineWrapper dependency, so registered
+    // unconditionally (harmless for AppBuilder, required for DllRunner). No constructor is
+    // registered -- these are only ever pushed as an already-constructed instance via
+    // SetDllCryptoApi/SetDllPgpEngine/SetDllPgpEngineWrapper below, never a script's own .new().
+    luaState_.new_usertype<CScriptCryptoApiDll>("CryptoApiDll",
+        sol::no_constructor,
+        "GetVersion", &CScriptCryptoApiDll::GetVersion,
+        "GetHashSize", &CScriptCryptoApiDll::GetHashSize,
+        "ComputeHashString", &CScriptCryptoApiDll::ComputeHashString
+    );
+
+    luaState_.new_usertype<CScriptPgpEngineDll>("PgpEngineDll",
+        sol::no_constructor,
+        "GenerateKeyPair", &CScriptPgpEngineDll::GenerateKeyPair,
+        "ExportPublicKeyArmored", &CScriptPgpEngineDll::ExportPublicKeyArmored,
+        "ImportPeerPublicKey", &CScriptPgpEngineDll::ImportPeerPublicKey,
+        "EncryptStringArmored", &CScriptPgpEngineDll::EncryptStringArmored,
+        "DecryptStringArmored", &CScriptPgpEngineDll::DecryptStringArmored
+    );
+
+    luaState_.new_usertype<CScriptPgpEngineWrapperDll>("PgpEngineWrapperDll",
+        sol::no_constructor,
+        "IsGnuPgAvailable", &CScriptPgpEngineWrapperDll::IsGnuPgAvailable,
+        "GenerateKeyPair", &CScriptPgpEngineWrapperDll::GenerateKeyPair,
+        "ExportPublicKeyArmored", &CScriptPgpEngineWrapperDll::ExportPublicKeyArmored,
+        "ImportPeerPublicKey", &CScriptPgpEngineWrapperDll::ImportPeerPublicKey,
+        "EncryptStringArmored", &CScriptPgpEngineWrapperDll::EncryptStringArmored,
+        "DecryptStringArmored", &CScriptPgpEngineWrapperDll::DecryptStringArmored
+    );
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllCryptoApi(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        luaState_["cryptoApi"] = api;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllPgpEngine(CScriptPgpEngineDll* engine)
+{
+    try
+    {
+        luaState_["pgpEngine"] = engine;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper)
+{
+    try
+    {
+        luaState_["pgpEngineWrapper"] = wrapper;
+    }
+    catch (...)
+    {
+
+    }
 }
 // -----------------------------------------------------------------------------
 

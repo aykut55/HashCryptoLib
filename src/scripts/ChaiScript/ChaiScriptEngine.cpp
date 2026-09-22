@@ -36,6 +36,15 @@
 #endif
 
 #include "../ScriptException.h"
+#include "../ScriptCryptoApiDll.h"
+#include "../ScriptPgpEngineDll.h"
+#include "../ScriptPgpEngineWrapperDll.h"
+
+// DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
+// registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
+// concrete implementation -- see ScriptCryptoApiDll.h's own header comment for why DllRunner must
+// never link that. Same technique CLuaScriptEngineSol.cpp's own guard already uses.
+#ifndef DLL_RUNNER
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
@@ -43,6 +52,7 @@
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#endif
 
 #include <chaiscript/dispatchkit/bootstrap_stl.hpp>
 
@@ -161,6 +171,7 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add_global_const(chaiscript::const_var(INVALID_DATA), "INVALID_DATA");
     chai_.add_global_const(chaiscript::const_var(OPERATION_CANCELLED), "OPERATION_CANCELLED");
 
+#ifndef DLL_RUNNER
     chai_.add_global_const(chaiscript::const_var(PROVIDER_MICROSOFT), "PROVIDER_MICROSOFT");
     chai_.add_global_const(chaiscript::const_var(PROVIDER_CRYPTOPP), "PROVIDER_CRYPTOPP");
     chai_.add_global_const(chaiscript::const_var(PROVIDER_BOTAN), "PROVIDER_BOTAN");
@@ -400,6 +411,71 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapper::ListEncryptionKeyIds), "ListEncryptionKeyIds");
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapper::ListSigningKeyIds), "ListSigningKeyIds");
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapper::ListSignatures), "ListSignatures");
+#endif // !DLL_RUNNER
+
+    // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
+    // lightweight, no CCryptoApi/CPgpEngine/CPgpEngineWrapper dependency, so registered
+    // unconditionally (harmless for AppBuilder, required for DllRunner). No constructor is added
+    // -- these are only ever pushed as an already-constructed instance via SetDllCryptoApi/
+    // SetDllPgpEngine/SetDllPgpEngineWrapper below, never a script's own constructor call.
+    chai_.add(chaiscript::user_type<CScriptCryptoApiDll>(), "CryptoApiDll");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GetVersion), "GetVersion");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GetHashSize), "GetHashSize");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::ComputeHashString), "ComputeHashString");
+
+    chai_.add(chaiscript::user_type<CScriptPgpEngineDll>(), "PgpEngineDll");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineDll::GenerateKeyPair), "GenerateKeyPair");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineDll::ExportPublicKeyArmored), "ExportPublicKeyArmored");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineDll::ImportPeerPublicKey), "ImportPeerPublicKey");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineDll::EncryptStringArmored), "EncryptStringArmored");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineDll::DecryptStringArmored), "DecryptStringArmored");
+
+    chai_.add(chaiscript::user_type<CScriptPgpEngineWrapperDll>(), "PgpEngineWrapperDll");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::IsGnuPgAvailable), "IsGnuPgAvailable");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::GenerateKeyPair), "GenerateKeyPair");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::ExportPublicKeyArmored), "ExportPublicKeyArmored");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::ImportPeerPublicKey), "ImportPeerPublicKey");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::EncryptStringArmored), "EncryptStringArmored");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::DecryptStringArmored), "DecryptStringArmored");
+}
+// -----------------------------------------------------------------------------
+
+void CChaiScriptEngine::SetDllCryptoApi(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(api), "cryptoApi");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CChaiScriptEngine::SetDllPgpEngine(CScriptPgpEngineDll* engine)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(engine), "pgpEngine");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CChaiScriptEngine::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(wrapper), "pgpEngineWrapper");
+    }
+    catch (...)
+    {
+
+    }
 }
 // -----------------------------------------------------------------------------
 

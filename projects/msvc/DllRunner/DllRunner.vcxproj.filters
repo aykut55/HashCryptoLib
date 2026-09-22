@@ -16,6 +16,18 @@
     <Filter Include="src\DllLoader">
       <UniqueIdentifier>{8b2c5b6a-9d3e-4a2f-9b7e-5c1a2d3e4f60}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Scripts">
+      <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e71}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Scripts\LuaScript">
+      <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e72}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Scripts\ChaiScript">
+      <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e73}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Scripts\PythonScript">
+      <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e74}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Main.cpp">
@@ -24,10 +36,64 @@
     <ClCompile Include="..\..\..\src\DllLoader\CryptoApiDllLoader.cpp">
       <Filter>src\DllLoader</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">
+      <Filter>src\Scripts\LuaScript</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.cpp">
+      <Filter>src\Scripts\LuaScript</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.cpp">
+      <Filter>src\Scripts\LuaScript</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.cpp">
+      <Filter>src\Scripts\ChaiScript</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.cpp">
+      <Filter>src\Scripts\PythonScript</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\src\DllLoader\CryptoApiDllLoader.h">
       <Filter>src\DllLoader</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptException.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h">
+      <Filter>src\Scripts\LuaScript</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h">
+      <Filter>src\Scripts\LuaScript</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h">
+      <Filter>src\Scripts\LuaScript</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.h">
+      <Filter>src\Scripts\ChaiScript</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.h">
+      <Filter>src\Scripts\PythonScript</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

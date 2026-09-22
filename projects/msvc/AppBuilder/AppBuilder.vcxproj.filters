@@ -171,6 +171,15 @@
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ScriptEngineTester.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
@@ -306,6 +315,15 @@
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h">
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptEngineTester.h">

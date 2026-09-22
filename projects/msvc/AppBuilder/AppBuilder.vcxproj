@@ -279,6 +279,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApi.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngine.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptEngineTester.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
@@ -322,6 +325,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApi.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptEngineTester.cpp" />
     <!-- sol2's usertype/overload registration for CryptoApi/PgpEngine/PgpEngineWrapper's many
          methods generates a large number of sections; /bigobj avoids hitting the COFF section-count

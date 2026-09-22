@@ -8,6 +8,10 @@
 namespace CryptoApiNS
 {
 
+class CScriptCryptoApiDll;
+class CScriptPgpEngineDll;
+class CScriptPgpEngineWrapperDll;
+
 // Third scripting binding library over the same CScriptCryptoApi/CScriptPgpEngine/
 // CScriptPgpEngineWrapper facade layer the Lua engines use -- see registerBindings() in the .cpp
 // for the exact binding list. Unlike sol2/LuaBridge3/LuaBridge 2.10, ChaiScript needs no per-enum
@@ -30,6 +34,19 @@ public:
     bool GetGlobalBool(const std::string& name);
     int GetGlobalInt(const std::string& name);
     std::string GetGlobalString(const std::string& name);
+
+    // Exposes an already-constructed CScriptCryptoApiDll/CScriptPgpEngineDll/
+    // CScriptPgpEngineWrapperDll (each wrapping a DLL-hosted ICryptoApi*/IPgpEngine*/
+    // IPgpEngineWrapper*, see CCryptoApiDllLoader) to this ChaiScript state as the global
+    // "cryptoApi"/"pgpEngine"/"pgpEngineWrapper", instead of a script constructing a
+    // CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper of its own (those wrap a LOCAL,
+    // owned CCryptoApi/CPgpEngine/CPgpEngineWrapper -- a genuinely different type, see
+    // ScriptCryptoApiDll.h's own header comment for why). The pointed-to instance's lifetime
+    // remains the caller's responsibility; this engine never constructs or destroys it. Same
+    // reasoning as CLuaScriptEngineSol's own identically-named setters.
+    void SetDllCryptoApi(CScriptCryptoApiDll* api);
+    void SetDllPgpEngine(CScriptPgpEngineDll* engine);
+    void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
 
 protected:
 

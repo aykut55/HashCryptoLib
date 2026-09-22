@@ -3,7 +3,42 @@
 #include <vector>
 #include <cstring>
 
+// ChaiScriptEngine.h pulls in <chaiscript/chaiscript.hpp>, which transitively includes
+// <Windows.h> (for ChaiScript's own threading support) -- chaiscript_windows.hpp calls the real
+// Win32 LoadLibrary function internally, relying on the UNICODE-charset macro that redirects the
+// bare token "LoadLibrary" to LoadLibraryA/LoadLibraryW. DllLoader/CryptoApiDllLoader.h's own
+// "#undef LoadLibrary" (below) exists so CCryptoApiDllLoader's own method of that same name keeps
+// its exact compiled name instead of silently becoming LoadLibraryA/W -- but applied in this
+// translation unit BEFORE ChaiScriptEngine.h, it would just as silently break ChaiScript's own,
+// unrelated use of the real Win32 function (observed directly: C3861 "'LoadLibrary': identifier
+// not found" from chaiscript_windows.hpp). Including ChaiScriptEngine.h first, so its own
+// Windows.h pull and every LoadLibrary token inside it are fully parsed before that undef runs,
+// avoids the collision; the defensive NO_ERROR/EncryptFile/DecryptFile undefs right after it are
+// the same precedent every other file in this SDK uses around a Windows.h-pulling scripting
+// library's own include (see ChaiScriptEngine.cpp's own top-of-file comment for the full
+// reasoning), applied here too since chaiscript.hpp's own Windows.h pull happens before
+// CryptoApiDllLoader.h's (narrower, LEAN_AND_MEAN) one below.
+#include "Scripts/ChaiScript/ChaiScriptEngine.h"
+
+#ifdef NO_ERROR
+#undef NO_ERROR
+#endif
+#ifdef EncryptFile
+#undef EncryptFile
+#endif
+#ifdef DecryptFile
+#undef DecryptFile
+#endif
+
 #include "DllLoader/CryptoApiDllLoader.h"
+
+#include "Scripts/ScriptCryptoApiDll.h"
+#include "Scripts/ScriptPgpEngineDll.h"
+#include "Scripts/ScriptPgpEngineWrapperDll.h"
+#include "Scripts/LuaScript/LuaScriptEngineSol.h"
+#include "Scripts/LuaScript/LuaScriptEngineLuaBridge.h"
+#include "Scripts/LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
+#include "Scripts/PythonScript/PythonScriptEngine.h"
 
 int main()
 {
@@ -212,6 +247,178 @@ int main()
                 {
                     pCryptoApiDllLoader->DestroyPgpEngineWrapperObject(pBob);
                 }
+            }
+
+            // Scripting via the DLL: fresh ICryptoApi*/IPgpEngine*/IPgpEngineWrapper* obtained
+            // from the SAME loaded CryptoAPI.dll, wrapped in the lightweight CScriptCryptoApiDll/
+            // CScriptPgpEngineDll/CScriptPgpEngineWrapperDll facades (see ScriptCryptoApiDll.h's
+            // own header comment for why these are separate from CScriptCryptoApi/CScriptPgpEngine/
+            // CScriptPgpEngineWrapper), then injected into each of the 5 script engines as the
+            // globals "cryptoApi"/"pgpEngine"/"pgpEngineWrapper" via SetDllCryptoApi/SetDllPgpEngine/
+            // SetDllPgpEngineWrapper. Every engine runs the SAME embedded script logic (only the
+            // syntax differs per language): a hash length check, a PGP self-import encrypt/decrypt
+            // round trip (see IPgpEngine's own DLL round trip above for why self-import is valid for
+            // CPgpEngine but NOT for CPgpEngineWrapper's real-gpg backend -- so the wrapper portion
+            // only exercises GenerateKeyPair/ExportPublicKeyArmored, not a full encrypt/decrypt,
+            // matching that same constraint), each check length-only (no cross-language byte-vector
+            // equality helper is registered for the *Dll facades, unlike the local ones' ToBytes/
+            // ToStringFromBytes) rather than exact-string comparison.
+            CryptoApiNS::ICryptoApi* pScriptCryptoApi = pCryptoApiDllLoader->GetCryptoApiObject();
+            CryptoApiNS::IPgpEngine* pScriptPgpEngine = pCryptoApiDllLoader->GetPgpEngineObject();
+            CryptoApiNS::IPgpEngineWrapper* pScriptPgpEngineWrapper = pCryptoApiDllLoader->GetPgpEngineWrapperObject();
+
+            if (pScriptCryptoApi && pScriptPgpEngine && pScriptPgpEngineWrapper)
+            {
+                std::cout << std::endl;
+
+                CryptoApiNS::CScriptCryptoApiDll scriptCryptoApi(pScriptCryptoApi);
+                CryptoApiNS::CScriptPgpEngineDll scriptPgpEngine(pScriptPgpEngine);
+                CryptoApiNS::CScriptPgpEngineWrapperDll scriptPgpEngineWrapper(pScriptPgpEngineWrapper);
+
+                const char* luaScript =
+                    "local hashResult = cryptoApi:ComputeHashString(\"hello\")\n"
+                    "local hashOk = (#hashResult == cryptoApi:GetHashSize())\n"
+                    "\n"
+                    "pgpEngine:GenerateKeyPair(\"DLL Script Test <script@example.com>\", \"ScriptTestPassword123\")\n"
+                    "local pub = pgpEngine:ExportPublicKeyArmored()\n"
+                    "pgpEngine:ImportPeerPublicKey(pub)\n"
+                    "local plaintext = \"Hello via script and DLL!\"\n"
+                    "local cipher = pgpEngine:EncryptStringArmored(plaintext)\n"
+                    "local plainBytes = pgpEngine:DecryptStringArmored(\"ScriptTestPassword123\", cipher)\n"
+                    "local pgpOk = (#plainBytes == #plaintext)\n"
+                    "\n"
+                    "local wrapperOk = true\n"
+                    "if pgpEngineWrapper:IsGnuPgAvailable() then\n"
+                    "    pgpEngineWrapper:GenerateKeyPair(\"DLL Wrapper Test <wrapper@example.com>\", \"WrapperTestPassword123\")\n"
+                    "    local wpub = pgpEngineWrapper:ExportPublicKeyArmored()\n"
+                    "    wrapperOk = (#wpub > 0)\n"
+                    "end\n"
+                    "\n"
+                    "ok = hashOk and pgpOk and wrapperOk\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    luaEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    luaEngine.RunString(luaScript);
+                    std::cout << "DLL-hosted scripting (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    luaBridgeEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    luaBridgeEngine.RunString(luaScript);
+                    std::cout << "DLL-hosted scripting (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeLegacyEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    luaBridgeLegacyEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    luaBridgeLegacyEngine.RunString(luaScript);
+                    std::cout << "DLL-hosted scripting (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* chaiScript =
+                    "var hashResult = cryptoApi.ComputeHashString(\"hello\");\n"
+                    "var hashOk = (hashResult.size() == cryptoApi.GetHashSize());\n"
+                    "\n"
+                    "pgpEngine.GenerateKeyPair(\"DLL Script Test <script@example.com>\", \"ScriptTestPassword123\");\n"
+                    "var pub = pgpEngine.ExportPublicKeyArmored();\n"
+                    "pgpEngine.ImportPeerPublicKey(pub);\n"
+                    "var plaintext = \"Hello via script and DLL!\";\n"
+                    "var cipher = pgpEngine.EncryptStringArmored(plaintext);\n"
+                    "var plainBytes = pgpEngine.DecryptStringArmored(\"ScriptTestPassword123\", cipher);\n"
+                    "var pgpOk = (plainBytes.size() == plaintext.size());\n"
+                    "\n"
+                    "var wrapperOk = true;\n"
+                    "if (pgpEngineWrapper.IsGnuPgAvailable()) {\n"
+                    "    pgpEngineWrapper.GenerateKeyPair(\"DLL Wrapper Test <wrapper@example.com>\", \"WrapperTestPassword123\");\n"
+                    "    var wpub = pgpEngineWrapper.ExportPublicKeyArmored();\n"
+                    "    wrapperOk = (wpub.size() > 0);\n"
+                    "}\n"
+                    "\n"
+                    "global ok = (hashOk && pgpOk && wrapperOk);\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    chaiEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    chaiEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    chaiEngine.RunString(chaiScript);
+                    std::cout << "DLL-hosted scripting (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pythonScript =
+                    "hashResult = cryptoApi.ComputeHashString(\"hello\")\n"
+                    "hashOk = (len(hashResult) == cryptoApi.GetHashSize())\n"
+                    "\n"
+                    "pgpEngine.GenerateKeyPair(\"DLL Script Test <script@example.com>\", \"ScriptTestPassword123\")\n"
+                    "pub = pgpEngine.ExportPublicKeyArmored()\n"
+                    "pgpEngine.ImportPeerPublicKey(pub)\n"
+                    "plaintext = \"Hello via script and DLL!\"\n"
+                    "cipher = pgpEngine.EncryptStringArmored(plaintext)\n"
+                    "plainBytes = pgpEngine.DecryptStringArmored(\"ScriptTestPassword123\", cipher)\n"
+                    "pgpOk = (len(plainBytes) == len(plaintext))\n"
+                    "\n"
+                    "wrapperOk = True\n"
+                    "if pgpEngineWrapper.IsGnuPgAvailable():\n"
+                    "    pgpEngineWrapper.GenerateKeyPair(\"DLL Wrapper Test <wrapper@example.com>\", \"WrapperTestPassword123\")\n"
+                    "    wpub = pgpEngineWrapper.ExportPublicKeyArmored()\n"
+                    "    wrapperOk = (len(wpub) > 0)\n"
+                    "\n"
+                    "ok = hashOk and pgpOk and wrapperOk\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    pythonEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    pythonEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    pythonEngine.RunString(pythonScript);
+                    std::cout << "DLL-hosted scripting (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting (Python): FAILED exception " << ex.what() << std::endl;
+                }
+            }
+
+            if (pScriptCryptoApi)
+            {
+                pCryptoApiDllLoader->DestroyCryptoApiObject(pScriptCryptoApi);
+            }
+            if (pScriptPgpEngine)
+            {
+                pCryptoApiDllLoader->DestroyPgpEngineObject(pScriptPgpEngine);
+            }
+            if (pScriptPgpEngineWrapper)
+            {
+                pCryptoApiDllLoader->DestroyPgpEngineWrapperObject(pScriptPgpEngineWrapper);
             }
         }
 
