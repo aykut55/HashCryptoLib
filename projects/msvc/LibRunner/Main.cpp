@@ -2,11 +2,44 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <cstdio>
+#include <fstream>
+
+// ChaiScriptEngine.h pulls in <chaiscript/chaiscript.hpp>, which transitively includes
+// <Windows.h> -- WinBase.h defines EncryptFile/DecryptFile as UNICODE-dependent macros for the
+// real Win32 EFS functions (EncryptFileW/DecryptFileW under this project's CharacterSet=Unicode
+// setting) and NO_ERROR as a WinError.h macro (0L). CryptoApi.h/CryptoApiTester.h/Pgp/Scripts
+// below declare members and CryptoApiNS enumerators of those exact names (CCryptoApi::EncryptFile/
+// DecryptFile, CryptoApiNS::NO_ERROR); parsed after an unguarded Windows.h expansion, those
+// declarations would get silently macro-substituted, mismatching the real symbol names already
+// compiled into CryptoAPI_static.lib (LNK2019) -- same collision and same fix DllRunner/Main.cpp's
+// own top-of-file comment documents in full. Including ChaiScriptEngine.h FIRST lets Windows.h's
+// own include guard absorb every later transitive pull (PythonScriptEngine.h's Python.h among
+// them) as a no-op, so the explicit undefs below stay in effect for the rest of this file.
+#include "Scripts/ChaiScript/ChaiScriptEngine.h"
+
+#ifdef NO_ERROR
+#undef NO_ERROR
+#endif
+#ifdef EncryptFile
+#undef EncryptFile
+#endif
+#ifdef DecryptFile
+#undef DecryptFile
+#endif
 
 #include "CryptoApi.h"
 #include "CryptoApiTester.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+
+#include "Scripts/ScriptCryptoApi.h"
+#include "Scripts/ScriptPgpEngine.h"
+#include "Scripts/ScriptPgpEngineWrapper.h"
+#include "Scripts/LuaScript/LuaScriptEngineSol.h"
+#include "Scripts/LuaScript/LuaScriptEngineLuaBridge.h"
+#include "Scripts/LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
+#include "Scripts/PythonScript/PythonScriptEngine.h"
 
 // Linked here instead of via the project's Linker > Input > Additional Dependencies setting;
 // the search path (LibBuilder's per-platform output directory) still comes from the project's
@@ -151,6 +184,286 @@ int main()
 
             delete pAlice;
             delete pBob;
+        }
+
+        // Scripting via the statically-linked facade: fresh CScriptCryptoApi/CScriptPgpEngine
+        // instances (each owning its own concrete CCryptoApi/CPgpEngine BY VALUE, no DLL boundary
+        // and no loader involved -- see ScriptCryptoApiDll.h's own header comment for why that
+        // class family exists only for the DLL-hosted case), run through all 5 script engines. Same
+        // hash + Alice/Bob PGP round trip pattern DllRunner/Main.cpp's own DLL-hosted scripting
+        // section uses, adapted to the local facade's own constructor syntax (CryptoApi.new()/
+        // PgpEngine.new() for sol2, CryptoApi()/PgpEngine() for the rest -- see
+        // ScriptEngineTester.cpp's own per-engine test scripts for this same syntax difference).
+        {
+            std::cout << std::endl;
+
+            const char* luaScript =
+                "local api = CryptoApi.new()\n"
+                "local hashResult = api:ComputeHashString(\"hello\")\n"
+                "local hashOk = (#hashResult == api:GetHashSize())\n"
+                "\n"
+                "local alice = PgpEngine.new()\n"
+                "local bob = PgpEngine.new()\n"
+                "alice:GenerateKeyPair(\"LibRunner Alice <librunner-alice@example.com>\", \"LibRunnerAlicePw123\")\n"
+                "bob:GenerateKeyPair(\"LibRunner Bob <librunner-bob@example.com>\", \"LibRunnerBobPw123\")\n"
+                "alice:ImportPeerPublicKey(bob:ExportPublicKeyArmored())\n"
+                "bob:ImportPeerPublicKey(alice:ExportPublicKeyArmored())\n"
+                "local plaintext = \"Hello Bob, this message was encrypted entirely from LibRunner Lua!\"\n"
+                "local ciphertext = alice:EncryptStringArmored(plaintext)\n"
+                "local decryptedBytes = bob:DecryptStringArmored(\"LibRunnerBobPw123\", ciphertext)\n"
+                "local chars = {}\n"
+                "for i = 1, #decryptedBytes do chars[i] = string.char(decryptedBytes[i]) end\n"
+                "local pgpOk = (table.concat(chars) == plaintext)\n"
+                "\n"
+                "ok = hashOk and pgpOk\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(luaScript);
+                std::cout << "Static-link scripting (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* luaBridgeScript =
+                "local api = CryptoApi()\n"
+                "local hashResult = api:ComputeHashString(\"hello\")\n"
+                "local hashOk = (#hashResult == api:GetHashSize())\n"
+                "\n"
+                "local alice = PgpEngine()\n"
+                "local bob = PgpEngine()\n"
+                "alice:GenerateKeyPair(\"LibRunner Alice <librunner-alice@example.com>\", \"LibRunnerAlicePw123\")\n"
+                "bob:GenerateKeyPair(\"LibRunner Bob <librunner-bob@example.com>\", \"LibRunnerBobPw123\")\n"
+                "alice:ImportPeerPublicKey(bob:ExportPublicKeyArmored())\n"
+                "bob:ImportPeerPublicKey(alice:ExportPublicKeyArmored())\n"
+                "local plaintext = \"Hello Bob, this message was encrypted entirely from LibRunner LuaBridge!\"\n"
+                "local ciphertext = alice:EncryptStringArmored(plaintext)\n"
+                "local decryptedBytes = bob:DecryptStringArmored(\"LibRunnerBobPw123\", ciphertext)\n"
+                "local chars = {}\n"
+                "for i = 1, #decryptedBytes do chars[i] = string.char(decryptedBytes[i]) end\n"
+                "local pgpOk = (table.concat(chars) == plaintext)\n"
+                "\n"
+                "ok = hashOk and pgpOk\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(luaBridgeScript);
+                std::cout << "Static-link scripting (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(luaBridgeScript);
+                std::cout << "Static-link scripting (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* chaiScript =
+                "var api = CryptoApi();\n"
+                "var hashResult = api.ComputeHashString(\"hello\");\n"
+                "var hashOk = (hashResult.size() == api.GetHashSize());\n"
+                "\n"
+                "var alice = PgpEngine();\n"
+                "var bob = PgpEngine();\n"
+                "alice.GenerateKeyPair(\"LibRunner Alice <librunner-alice@example.com>\", \"LibRunnerAlicePw123\");\n"
+                "bob.GenerateKeyPair(\"LibRunner Bob <librunner-bob@example.com>\", \"LibRunnerBobPw123\");\n"
+                "alice.ImportPeerPublicKey(bob.ExportPublicKeyArmored());\n"
+                "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored());\n"
+                "var plaintext = \"Hello Bob, this message was encrypted entirely from LibRunner ChaiScript!\";\n"
+                "var ciphertext = alice.EncryptStringArmored(plaintext);\n"
+                "var decryptedBytes = bob.DecryptStringArmored(\"LibRunnerBobPw123\", ciphertext);\n"
+                "var decryptedText = ToStringFromBytes(decryptedBytes);\n"
+                "var pgpOk = (decryptedText == plaintext);\n"
+                "\n"
+                "global ok = (hashOk && pgpOk);\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(chaiScript);
+                std::cout << "Static-link scripting (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pythonScript =
+                "api = CryptoApi()\n"
+                "hashResult = api.ComputeHashString(\"hello\")\n"
+                "hashOk = (len(hashResult) == api.GetHashSize())\n"
+                "\n"
+                "alice = PgpEngine()\n"
+                "bob = PgpEngine()\n"
+                "alice.GenerateKeyPair(\"LibRunner Alice <librunner-alice@example.com>\", \"LibRunnerAlicePw123\")\n"
+                "bob.GenerateKeyPair(\"LibRunner Bob <librunner-bob@example.com>\", \"LibRunnerBobPw123\")\n"
+                "alice.ImportPeerPublicKey(bob.ExportPublicKeyArmored())\n"
+                "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored())\n"
+                "plaintext = \"Hello Bob, this message was encrypted entirely from LibRunner Python!\"\n"
+                "ciphertext = alice.EncryptStringArmored(plaintext)\n"
+                "decryptedBytes = bob.DecryptStringArmored(\"LibRunnerBobPw123\", ciphertext)\n"
+                "decryptedText = ToStringFromBytes(decryptedBytes)\n"
+                "pgpOk = (decryptedText == plaintext)\n"
+                "\n"
+                "ok = hashOk and pgpOk\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(pythonScript);
+                std::cout << "Static-link scripting (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            // Progress-callback round trip (C++-calls-INTO-script direction, see
+            // ScriptProgressCallback.h's own comment): a script-supplied onProgress function gets
+            // called once per chunk during EncryptFileWithProgress, proving the same interop
+            // AppBuilder's own RunXxxScriptProgressCallbackTest already verifies works identically
+            // against the statically-linked local facade here. File size (5120 bytes = 5 chunks of
+            // FILE_CHUNK_SIZE=1024) matches ScriptEngineTester.cpp's own convention.
+            const char* progressInputPath = "librunner_progress_test_in.bin";
+            const char* progressEncPath = "librunner_progress_test_enc.bin";
+
+            {
+                std::vector<unsigned char> progressTestData(5120, 'A');
+                std::ofstream progressInputFile(progressInputPath, std::ios::binary);
+                progressInputFile.write(reinterpret_cast<const char*>(progressTestData.data()), static_cast<std::streamsize>(progressTestData.size()));
+            }
+
+            // sol2/Lua only: a second level of C++-calls-INTO-script nesting on top of the
+            // per-chunk onProgress callback -- inside onProgress itself, the script calls the bound
+            // C++ function OnProgress (LuaScriptEngineSol.cpp's own registerBindings), which
+            // immediately calls back into a SECOND script-defined function (innerCallback), then
+            // unwinds all the way back to the C++ file loop. Only registered for sol2 (see that
+            // binding's own comment); proves the round trip is not limited to one fixed callback
+            // slot. Same demonstration AppBuilder's RunLuaScriptProgressCallbackTest already proves,
+            // now shown working against a statically-linked LibRunner build too.
+            const char* progressLuaScript =
+                "local api = CryptoApi.new()\n"
+                "callCount = 0\n"
+                "lastCurrentByte = 0\n"
+                "innerCallCount = 0\n"
+                "local function innerCallback()\n"
+                "    innerCallCount = innerCallCount + 1\n"
+                "end\n"
+                "local function onProgress(currentByte, totalByte, percentage)\n"
+                "    callCount = callCount + 1\n"
+                "    lastCurrentByte = currentByte\n"
+                "    OnProgress(innerCallback)\n"
+                "    return true\n"
+                "end\n"
+                "api:EncryptFileWithProgress(\"librunnerprogresstest\", \"librunner_progress_test_in.bin\", \"librunner_progress_test_enc.bin\", onProgress)\n"
+                "ok = (callCount >= 3) and (lastCurrentByte == 5120) and (innerCallCount == callCount)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(progressLuaScript);
+                std::cout << "Static-link progress callback (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED")
+                          << " callCount=" << luaEngine.GetGlobalInt("callCount") << " innerCallCount=" << luaEngine.GetGlobalInt("innerCallCount") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link progress callback (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* progressLuaBridgeScript =
+                "local api = CryptoApi()\n"
+                "callCount = 0\n"
+                "lastCurrentByte = 0\n"
+                "local function onProgress(currentByte, totalByte, percentage)\n"
+                "    callCount = callCount + 1\n"
+                "    lastCurrentByte = currentByte\n"
+                "    return true\n"
+                "end\n"
+                "api:EncryptFileWithProgress(\"librunnerprogresstest\", \"librunner_progress_test_in.bin\", \"librunner_progress_test_enc.bin\", onProgress)\n"
+                "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(progressLuaBridgeScript);
+                std::cout << "Static-link progress callback (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << luaBridgeEngine.GetGlobalInt("callCount") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link progress callback (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(progressLuaBridgeScript);
+                std::cout << "Static-link progress callback (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << luaBridgeLegacyEngine.GetGlobalInt("callCount") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link progress callback (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* progressChaiScript =
+                "var api = CryptoApi();\n"
+                "global callCount = 0;\n"
+                "global lastCurrentByte = 0;\n"
+                "def onProgress(currentByte, totalByte, percentage) {\n"
+                "    callCount = callCount + 1;\n"
+                "    lastCurrentByte = currentByte;\n"
+                "    return true;\n"
+                "}\n"
+                "api.EncryptFileWithProgress(\"librunnerprogresstest\", \"librunner_progress_test_in.bin\", \"librunner_progress_test_enc.bin\", onProgress);\n"
+                "global ok = (callCount >= 3) && (lastCurrentByte == 5120);\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(progressChaiScript);
+                std::cout << "Static-link progress callback (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << chaiEngine.GetGlobalInt("callCount") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link progress callback (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* progressPythonScript =
+                "api = CryptoApi()\n"
+                "callCount = 0\n"
+                "lastCurrentByte = 0\n"
+                "def onProgress(currentByte, totalByte, percentage):\n"
+                "    global callCount, lastCurrentByte\n"
+                "    callCount = callCount + 1\n"
+                "    lastCurrentByte = currentByte\n"
+                "    return True\n"
+                "api.EncryptFileWithProgress(\"librunnerprogresstest\", \"librunner_progress_test_in.bin\", \"librunner_progress_test_enc.bin\", onProgress)\n"
+                "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(progressPythonScript);
+                std::cout << "Static-link progress callback (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << pythonEngine.GetGlobalInt("callCount") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link progress callback (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            std::remove(progressInputPath);
+            std::remove(progressEncPath);
         }
 
         std::cout << std::endl;

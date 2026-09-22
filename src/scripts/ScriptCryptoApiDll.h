@@ -2,6 +2,7 @@
 #define CRYPTOAPI_SCRIPTS_SCRIPT_CRYPTO_API_DLL_H
 
 #include "Interfaces/ICryptoApi.h"
+#include "ScriptProgressCallback.h"
 
 #include <functional>
 #include <string>
@@ -35,12 +36,24 @@ public:
     int GetHashSize(void) const;
     std::vector<unsigned char> ComputeHashString(const std::string& input);
 
+    // C++-calls-INTO-script direction, over a DLL-hosted ICryptoApi* -- same mechanism
+    // CScriptCryptoApi's own identically-named overloads use (see ScriptProgressCallback.h's own
+    // comment), just bridged to ICryptoApi's virtual EncryptFile/DecryptFile instead of a
+    // statically-linked CCryptoApi's. Proves a script-supplied callback gets called once per
+    // chunk even when the underlying engine instance was obtained purely from CryptoAPI.dll at
+    // runtime (CCryptoApiDllLoader::GetCryptoApiObject()), not linked against at compile time.
+    void EncryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath, const ScriptProgressCallback& onProgress);
+    void DecryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath, const ScriptProgressCallback& onProgress);
+
 protected:
 
 private:
 
     // Same two-call capacity-query dance as CScriptCryptoApi's own private helpers.
     std::vector<unsigned char> callBinaryOutput(const char* methodName, const std::function<int(int, unsigned char*, int*)>& fn) const;
+
+    // For methods with no output buffer at all (just an ErrorCode return).
+    void callVoid(const char* methodName, const std::function<int(void)>& fn) const;
 
     ICryptoApi* api_;
 

@@ -390,6 +390,8 @@ int runTestsViaLuaScriptEngineSol()
 
     scriptEngineTester.RunLuaScriptPgpWrapperAvailabilityTest();
 
+    scriptEngineTester.RunLuaScriptProgressCallbackTest();
+
     return 0;
 }
 
@@ -416,6 +418,8 @@ int runTestsViaLuaScriptEngineLuaBridge()
     scriptEngineTester.RunLuaBridgeScriptPgpSignVerifyTest();
 
     scriptEngineTester.RunLuaBridgeScriptPgpWrapperAvailabilityTest();
+
+    scriptEngineTester.RunLuaBridgeScriptProgressCallbackTest();
 
     return 0;
 }
@@ -444,6 +448,8 @@ int runTestsViaLuaScriptEngineLuaBridgeLegacy()
 
     scriptEngineTester.RunLuaBridgeLegacyScriptPgpWrapperAvailabilityTest();
 
+    scriptEngineTester.RunLuaBridgeLegacyScriptProgressCallbackTest();
+
     return 0;
 }
 
@@ -471,6 +477,8 @@ int runTestsViaChaiScriptEngine()
 
     scriptEngineTester.RunChaiScriptPgpWrapperAvailabilityTest();
 
+    scriptEngineTester.RunChaiScriptProgressCallbackTest();
+
     return 0;
 }
 
@@ -497,6 +505,8 @@ int runTestsViaPythonScriptEngine()
     scriptEngineTester.RunPythonScriptPgpSignVerifyTest();
 
     scriptEngineTester.RunPythonScriptPgpWrapperAvailabilityTest();
+
+    scriptEngineTester.RunPythonScriptProgressCallbackTest();
 
     return 0;
 }

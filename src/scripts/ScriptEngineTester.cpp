@@ -6,11 +6,40 @@
 #include "ChaiScript/ChaiScriptEngine.h"
 #include "PythonScript/PythonScriptEngine.h"
 
+#include <cstdio>
 #include <exception>
+#include <fstream>
 #include <iostream>
+#include <vector>
 
 namespace CryptoApiNS
 {
+
+namespace
+{
+
+// Shared by every RunXxxScriptProgressCallbackTest below: a fixed-size, fixed-content input file
+// (kProgressCallbackTestFileSize bytes -- FILE_CHUNK_SIZE, CryptoApi.cpp, is currently 1024 bytes,
+// so this guarantees several chunks/progress calls, not just one) that CScriptCryptoApi's
+// EncryptFileWithProgress then encrypts, letting each engine's own script-defined onProgress
+// function observe every chunk boundary.
+const int kProgressCallbackTestFileSize = 5120;
+
+bool WriteProgressCallbackTestFile(const char* path)
+{
+    std::ofstream fileStream(path, std::ios::binary);
+    if (!fileStream)
+    {
+        return false;
+    }
+
+    const std::vector<unsigned char> data(static_cast<std::size_t>(kProgressCallbackTestFileSize), static_cast<unsigned char>('A'));
+    fileStream.write(reinterpret_cast<const char*>(&data[0]), static_cast<std::streamsize>(data.size()));
+    return static_cast<bool>(fileStream);
+}
+// -----------------------------------------------------------------------------
+
+} // namespace
 
 CScriptEngineTester::~CScriptEngineTester()
 {
@@ -392,6 +421,71 @@ int CScriptEngineTester::RunLuaScriptPgpWrapperAvailabilityTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CScriptEngineTester::RunLuaScriptProgressCallbackTest(void)
+{
+    const char* inputFilePath = "scriptengine_progress_test_sol_in.bin";
+    const char* outputFilePath = "scriptengine_progress_test_sol_enc.bin";
+
+    try
+    {
+        if (!WriteProgressCallbackTestFile(inputFilePath))
+        {
+            std::cout << "RunLuaScriptProgressCallbackTest: FAILED could not write test file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CLuaScriptEngineSol luaEngine;
+        const char* script =
+            "local api = CryptoApi.new()\n"
+            "callCount = 0\n"
+            "lastCurrentByte = 0\n"
+            "innerCallCount = 0\n"
+            "local function innerCallback()\n"
+            "    innerCallCount = innerCallCount + 1\n"
+            "end\n"
+            "local function onProgress(currentByte, totalByte, percentage)\n"
+            "    callCount = callCount + 1\n"
+            "    lastCurrentByte = currentByte\n"
+            "    OnProgress(innerCallback)\n"
+            "    return true\n"
+            "end\n"
+            "api:EncryptFileWithProgress(\"progresstest\", \"scriptengine_progress_test_sol_in.bin\", \"scriptengine_progress_test_sol_enc.bin\", onProgress)\n"
+            "ok = (callCount >= 3) and (lastCurrentByte == 5120) and (innerCallCount == callCount)\n";
+
+        luaEngine.RunString(script);
+        const bool ok = luaEngine.GetGlobalBool("ok");
+        const int callCount = luaEngine.GetGlobalInt("callCount");
+        const int innerCallCount = luaEngine.GetGlobalInt("innerCallCount");
+
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+
+        if (!ok)
+        {
+            std::cout << "RunLuaScriptProgressCallbackTest: FAILED callCount=" << callCount << " innerCallCount=" << innerCallCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaScriptProgressCallbackTest: PASSED C++ -> script onProgress (" << callCount << "x) -> C++ OnProgress -> script innerCallback (" << innerCallCount << "x) full round trip during EncryptFile" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunLuaScriptProgressCallbackTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunLuaScriptProgressCallbackTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CScriptEngineTester::RunLuaBridgeScriptHashTest(void)
 {
     try
@@ -759,6 +853,65 @@ int CScriptEngineTester::RunLuaBridgeScriptPgpWrapperAvailabilityTest(void)
     catch (...)
     {
         std::cout << "RunLuaBridgeScriptPgpWrapperAvailabilityTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunLuaBridgeScriptProgressCallbackTest(void)
+{
+    const char* inputFilePath = "scriptengine_progress_test_lb3_in.bin";
+    const char* outputFilePath = "scriptengine_progress_test_lb3_enc.bin";
+
+    try
+    {
+        if (!WriteProgressCallbackTestFile(inputFilePath))
+        {
+            std::cout << "RunLuaBridgeScriptProgressCallbackTest: FAILED could not write test file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CLuaScriptEngineLuaBridge luaEngine;
+        const char* script =
+            "local api = CryptoApi()\n"
+            "callCount = 0\n"
+            "lastCurrentByte = 0\n"
+            "local function onProgress(currentByte, totalByte, percentage)\n"
+            "    callCount = callCount + 1\n"
+            "    lastCurrentByte = currentByte\n"
+            "    return true\n"
+            "end\n"
+            "api:EncryptFileWithProgress(\"progresstest\", \"scriptengine_progress_test_lb3_in.bin\", \"scriptengine_progress_test_lb3_enc.bin\", onProgress)\n"
+            "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
+
+        luaEngine.RunString(script);
+        const bool ok = luaEngine.GetGlobalBool("ok");
+        const int callCount = luaEngine.GetGlobalInt("callCount");
+
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+
+        if (!ok)
+        {
+            std::cout << "RunLuaBridgeScriptProgressCallbackTest: FAILED callCount=" << callCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaBridgeScriptProgressCallbackTest: PASSED C++ called into the script's own onProgress function " << callCount << " times during EncryptFile" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunLuaBridgeScriptProgressCallbackTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunLuaBridgeScriptProgressCallbackTest: FAILED unknown exception" << std::endl;
         return UNEXPECTED_ERROR;
     }
 }
@@ -1136,6 +1289,65 @@ int CScriptEngineTester::RunLuaBridgeLegacyScriptPgpWrapperAvailabilityTest(void
 }
 // -----------------------------------------------------------------------------
 
+int CScriptEngineTester::RunLuaBridgeLegacyScriptProgressCallbackTest(void)
+{
+    const char* inputFilePath = "scriptengine_progress_test_lb210_in.bin";
+    const char* outputFilePath = "scriptengine_progress_test_lb210_enc.bin";
+
+    try
+    {
+        if (!WriteProgressCallbackTestFile(inputFilePath))
+        {
+            std::cout << "RunLuaBridgeLegacyScriptProgressCallbackTest: FAILED could not write test file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CLuaScriptEngineLuaBridgeLegacy luaEngine;
+        const char* script =
+            "local api = CryptoApi()\n"
+            "callCount = 0\n"
+            "lastCurrentByte = 0\n"
+            "local function onProgress(currentByte, totalByte, percentage)\n"
+            "    callCount = callCount + 1\n"
+            "    lastCurrentByte = currentByte\n"
+            "    return true\n"
+            "end\n"
+            "api:EncryptFileWithProgress(\"progresstest\", \"scriptengine_progress_test_lb210_in.bin\", \"scriptengine_progress_test_lb210_enc.bin\", onProgress)\n"
+            "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
+
+        luaEngine.RunString(script);
+        const bool ok = luaEngine.GetGlobalBool("ok");
+        const int callCount = luaEngine.GetGlobalInt("callCount");
+
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+
+        if (!ok)
+        {
+            std::cout << "RunLuaBridgeLegacyScriptProgressCallbackTest: FAILED callCount=" << callCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaBridgeLegacyScriptProgressCallbackTest: PASSED C++ called into the script's own onProgress function " << callCount << " times during EncryptFile" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunLuaBridgeLegacyScriptProgressCallbackTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunLuaBridgeLegacyScriptProgressCallbackTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CScriptEngineTester::RunChaiScriptHashTest(void)
 {
     try
@@ -1504,6 +1716,65 @@ int CScriptEngineTester::RunChaiScriptPgpWrapperAvailabilityTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CScriptEngineTester::RunChaiScriptProgressCallbackTest(void)
+{
+    const char* inputFilePath = "scriptengine_progress_test_chai_in.bin";
+    const char* outputFilePath = "scriptengine_progress_test_chai_enc.bin";
+
+    try
+    {
+        if (!WriteProgressCallbackTestFile(inputFilePath))
+        {
+            std::cout << "RunChaiScriptProgressCallbackTest: FAILED could not write test file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var api = CryptoApi();\n"
+            "global callCount = 0;\n"
+            "global lastCurrentByte = 0;\n"
+            "def onProgress(currentByte, totalByte, percentage) {\n"
+            "    callCount = callCount + 1;\n"
+            "    lastCurrentByte = currentByte;\n"
+            "    return true;\n"
+            "}\n"
+            "api.EncryptFileWithProgress(\"progresstest\", \"scriptengine_progress_test_chai_in.bin\", \"scriptengine_progress_test_chai_enc.bin\", onProgress);\n"
+            "global ok = (callCount >= 3) && (lastCurrentByte == 5120);\n";
+
+        chaiEngine.RunString(script);
+        const bool ok = chaiEngine.GetGlobalBool("ok");
+        const int callCount = chaiEngine.GetGlobalInt("callCount");
+
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+
+        if (!ok)
+        {
+            std::cout << "RunChaiScriptProgressCallbackTest: FAILED callCount=" << callCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptProgressCallbackTest: PASSED C++ called into the script's own onProgress function " << callCount << " times during EncryptFile" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunChaiScriptProgressCallbackTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunChaiScriptProgressCallbackTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CScriptEngineTester::RunPythonScriptHashTest(void)
 {
     try
@@ -1867,6 +2138,65 @@ int CScriptEngineTester::RunPythonScriptPgpWrapperAvailabilityTest(void)
     catch (...)
     {
         std::cout << "RunPythonScriptPgpWrapperAvailabilityTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptProgressCallbackTest(void)
+{
+    const char* inputFilePath = "scriptengine_progress_test_py_in.bin";
+    const char* outputFilePath = "scriptengine_progress_test_py_enc.bin";
+
+    try
+    {
+        if (!WriteProgressCallbackTestFile(inputFilePath))
+        {
+            std::cout << "RunPythonScriptProgressCallbackTest: FAILED could not write test file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "api = CryptoApi()\n"
+            "callCount = 0\n"
+            "lastCurrentByte = 0\n"
+            "def onProgress(currentByte, totalByte, percentage):\n"
+            "    global callCount, lastCurrentByte\n"
+            "    callCount = callCount + 1\n"
+            "    lastCurrentByte = currentByte\n"
+            "    return True\n"
+            "api.EncryptFileWithProgress(\"progresstest\", \"scriptengine_progress_test_py_in.bin\", \"scriptengine_progress_test_py_enc.bin\", onProgress)\n"
+            "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
+
+        pythonEngine.RunString(script);
+        const bool ok = pythonEngine.GetGlobalBool("ok");
+        const int callCount = pythonEngine.GetGlobalInt("callCount");
+
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+
+        if (!ok)
+        {
+            std::cout << "RunPythonScriptProgressCallbackTest: FAILED callCount=" << callCount << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptProgressCallbackTest: PASSED C++ called into the script's own onProgress function " << callCount << " times during EncryptFile" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunPythonScriptProgressCallbackTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::remove(inputFilePath);
+        std::remove(outputFilePath);
+        std::cout << "RunPythonScriptProgressCallbackTest: FAILED unknown exception" << std::endl;
         return UNEXPECTED_ERROR;
     }
 }

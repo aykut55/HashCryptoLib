@@ -3,6 +3,7 @@
 #include "../ScriptCryptoApiDll.h"
 #include "../ScriptPgpEngineDll.h"
 #include "../ScriptPgpEngineWrapperDll.h"
+#include "../ScriptProgressCallback.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -43,6 +44,56 @@ extern "C"
 #define luabridge luabridge_legacy
 #include <LuaBridge/LuaBridge.h>
 #include <LuaBridge/Vector.h>
+
+// C++-calls-INTO-script direction: LuaBridge 2.10 has no built-in Stack<std::function<Sig>>
+// conversion either (same gap LuaScriptEngineLuaBridge.cpp's own identical specialization
+// documents for LuaBridge3), so this converts a Lua function value into a
+// CryptoApiNS::ScriptProgressCallback by hand. This version's own LuaRef::operator() (unlike
+// LuaBridge3's TypeResult-returning one) throws a luabridge::LuaException on a Lua-side runtime
+// error instead of returning an error code -- caught here and treated as "continue" (true), same
+// reasoning as LuaScriptEngineLuaBridge.cpp's own specialization for why a script-side failure to
+// produce a clean bool defaults to continuing rather than aborting.
+//
+// Deliberately NOT guarded by #ifndef DLL_RUNNER (unlike the block that used to wrap this):
+// ScriptProgressCallback lives in the lightweight ScriptProgressCallback.h (no CCryptoApi/
+// provider-stack dependency), so this specialization is needed -- and safe to compile -- under
+// DLL_RUNNER too, for CScriptCryptoApiDll's own EncryptFileWithProgress/DecryptFileWithProgress
+// registration further below.
+namespace luabridge
+{
+
+template <> struct Stack<CryptoApiNS::ScriptProgressCallback>
+{
+    static void push(lua_State* L, const CryptoApiNS::ScriptProgressCallback&)
+    {
+        lua_pushnil(L);
+    }
+
+    static CryptoApiNS::ScriptProgressCallback get(lua_State* L, int index)
+    {
+        LuaRef ref(LuaRef::fromStack(L, index));
+        return CryptoApiNS::ScriptProgressCallback(
+            [ref](unsigned long long currentByte, unsigned long long totalByte, double percentage) -> bool
+            {
+                try
+                {
+                    LuaRef result = ref(currentByte, totalByte, percentage);
+                    return result.cast<bool>();
+                }
+                catch (...)
+                {
+                    return true;
+                }
+            });
+    }
+
+    static bool isInstance(lua_State* L, int index)
+    {
+        return lua_isfunction(L, index) != 0;
+    }
+};
+
+} // namespace luabridge
 
 namespace CryptoApiNS
 {
@@ -158,6 +209,17 @@ void CLuaScriptEngineLuaBridgeLegacy::registerBindings(void)
             .addFunction("DecryptWithPrivateKey", &CScriptCryptoApi::DecryptWithPrivateKey)
             .addFunction("GetHashSize", &CScriptCryptoApi::GetHashSize)
             .addFunction("ComputeHashString", &CScriptCryptoApi::ComputeHashString)
+            .addFunction("EncryptFile",
+                static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::EncryptFile))
+            .addFunction("DecryptFile",
+                static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::DecryptFile))
+            // C++-calls-INTO-script direction: see the Stack<CryptoApiNS::ScriptProgressCallback>
+            // specialization above this class's registerBindings() for the hand-written Lua
+            // function -> std::function conversion this relies on.
+            .addFunction("EncryptFileWithProgress",
+                static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::EncryptFile))
+            .addFunction("DecryptFileWithProgress",
+                static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::DecryptFile))
             .addFunction("GenerateSignatureKeyPair", &CScriptCryptoApi::GenerateSignatureKeyPair)
             .addFunction("GetSignatureSize", &CScriptCryptoApi::GetSignatureSize)
             .addFunction("SignBuffer", &CScriptCryptoApi::SignBuffer)
@@ -203,6 +265,8 @@ void CLuaScriptEngineLuaBridgeLegacy::registerBindings(void)
             .addFunction("GetVersion", &CScriptCryptoApiDll::GetVersion)
             .addFunction("GetHashSize", &CScriptCryptoApiDll::GetHashSize)
             .addFunction("ComputeHashString", &CScriptCryptoApiDll::ComputeHashString)
+            .addFunction("EncryptFileWithProgress", &CScriptCryptoApiDll::EncryptFile)
+            .addFunction("DecryptFileWithProgress", &CScriptCryptoApiDll::DecryptFile)
         .endClass();
 
     luabridge::getGlobalNamespace(luaState_)

@@ -4,6 +4,7 @@
 #include "CryptoApi.h"
 #include "Definitions/Definitions.h"
 #include "Providers/ProviderTypes.h"
+#include "ScriptProgressCallback.h"
 
 #include <functional>
 #include <string>
@@ -19,9 +20,11 @@ namespace CryptoApiNS
 // Rules.md's usual "exception never crosses a boundary" rule. GetShared()/ResetShared()/Instance()
 // are deliberately NOT mirrored here: every script-created engine owns its own CScriptCryptoApi
 // wrapping a plain (uncached, unshared) CCryptoApi instance, matching this class's constructor set
-// (which mirrors CCryptoApi's plain constructors only). ProgressCallback is not exposed to scripts
-// yet (v1) -- every wrapped call below passes nullptr/nullptr for it; script-visible progress
-// reporting is a documented future addition, not implemented here.
+// (which mirrors CCryptoApi's plain constructors only). Every method below still passes
+// nullptr/nullptr for ProgressCallback EXCEPT the EncryptFile/DecryptFile overloads that take a
+// ScriptProgressCallback (see that type's own comment above) -- those are the only script-visible
+// progress-reporting entry points so far; the rest (EncryptBuffer/ComputeHashFile/etc.) remain a
+// possible future addition, not implemented here.
 class CScriptCryptoApi
 {
 public:
@@ -49,6 +52,11 @@ public:
     std::string DecryptString(const std::string& password, const std::vector<unsigned char>& input);
     void EncryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath);
     void DecryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath);
+
+    // Same as the two overloads above, plus a script-supplied progress callback -- see
+    // ScriptProgressCallback's own comment for the C++-calls-INTO-script mechanism.
+    void EncryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath, const ScriptProgressCallback& onProgress);
+    void DecryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath, const ScriptProgressCallback& onProgress);
 
     void GenerateAsymmetricKeyPair(void);
     int GetMaxAsymmetricPlaintextSize(void) const;

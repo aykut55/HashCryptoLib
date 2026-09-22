@@ -121,6 +121,23 @@ void CLuaScriptEngineSol::registerBindings(void)
         return std::vector<unsigned char>(text.begin(), text.end());
     });
 
+    // Second round of C++-calls-INTO-script nesting, one level deeper than
+    // EncryptFileWithProgress/DecryptFileWithProgress's own onProgress: a script's onProgress
+    // function (itself already invoked BY C++, from inside CCryptoApi's chunked file loop) can call
+    // this bound function, handing it a further Lua function of its own; C++ invokes that inner
+    // function immediately, synchronously, before returning control back to onProgress, which in
+    // turn returns control back to the C++ file loop. Proves the round trip is not limited to a
+    // single fixed callback slot -- a script-supplied function can itself trigger fresh calls back
+    // into arbitrary script code from C++, to any nesting depth sol2's std::function conversion
+    // supports.
+    luaState_.set_function("OnProgress", [](const std::function<void()>& innerCallback)
+    {
+        if (innerCallback)
+        {
+            innerCallback();
+        }
+    });
+
     luaState_.new_enum("ErrorCode",
         "NO_ERROR", NO_ERROR,
         "NOT_IMPLEMENTED", NOT_IMPLEMENTED,
@@ -272,8 +289,16 @@ void CLuaScriptEngineSol::registerBindings(void)
         "DecryptBytes", &CScriptCryptoApi::DecryptBytes,
         "EncryptString", &CScriptCryptoApi::EncryptString,
         "DecryptString", &CScriptCryptoApi::DecryptString,
-        "EncryptFile", &CScriptCryptoApi::EncryptFile,
-        "DecryptFile", &CScriptCryptoApi::DecryptFile,
+        "EncryptFile", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::EncryptFile),
+        "DecryptFile", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::DecryptFile),
+        // C++-calls-INTO-script direction: onProgress is a Lua function value, converted to
+        // ScriptProgressCallback (std::function<bool(unsigned long long, unsigned long long,
+        // double)>) automatically by sol2 since the bound overload's parameter has that exact
+        // type -- called once per chunk from inside EncryptFile/DecryptFile's own C++ loop. A
+        // separate script-visible name (rather than a true overload of "EncryptFile") since not
+        // every binding library below combines overloads as easily as sol2 does.
+        "EncryptFileWithProgress", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const ScriptProgressCallback&)>(&CScriptCryptoApi::EncryptFile),
+        "DecryptFileWithProgress", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const ScriptProgressCallback&)>(&CScriptCryptoApi::DecryptFile),
         "GenerateAsymmetricKeyPair", &CScriptCryptoApi::GenerateAsymmetricKeyPair,
         "GetMaxAsymmetricPlaintextSize", &CScriptCryptoApi::GetMaxAsymmetricPlaintextSize,
         "GetAsymmetricCiphertextSize", &CScriptCryptoApi::GetAsymmetricCiphertextSize,
@@ -415,7 +440,9 @@ void CLuaScriptEngineSol::registerBindings(void)
         sol::no_constructor,
         "GetVersion", &CScriptCryptoApiDll::GetVersion,
         "GetHashSize", &CScriptCryptoApiDll::GetHashSize,
-        "ComputeHashString", &CScriptCryptoApiDll::ComputeHashString
+        "ComputeHashString", &CScriptCryptoApiDll::ComputeHashString,
+        "EncryptFileWithProgress", &CScriptCryptoApiDll::EncryptFile,
+        "DecryptFileWithProgress", &CScriptCryptoApiDll::DecryptFile
     );
 
     luaState_.new_usertype<CScriptPgpEngineDll>("PgpEngineDll",

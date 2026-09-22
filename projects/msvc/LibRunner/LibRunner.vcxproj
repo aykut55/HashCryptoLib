@@ -75,9 +75,34 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <!-- LibRunner only needs src for CryptoApi.h/CryptoApiTester.h's declarations; the actual
-           implementation comes from linking CryptoAPI_static.lib below, not from compiling any
-           SDK source directly. -->
+           CCryptoApi/CPgpEngine/CPgpEngineWrapper implementation comes from linking
+           CryptoAPI_static.lib below, not from compiling any provider SDK source directly.
+           LibRunner DOES compile the 5 scripting engines (CLuaScriptEngineSol/LuaBridge/
+           LuaBridgeLegacy/CChaiScriptEngine/CPythonScriptEngine) plus BOTH script facade families:
+           CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper (the LOCAL, CCryptoApi-owning
+           ones, since LibRunner has no DLL boundary and no DLL_RUNNER macro, same as AppBuilder)
+           AND CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll (needed only
+           because each engine's own registerBindings() references those types unconditionally,
+           not gated by #ifndef DLL_RUNNER; same reason AppBuilder.vcxproj compiles both families
+           too, even though AppBuilder never constructs a *Dll instance either). See DllRunner.vcxproj's
+           own near-identical comment for the DLL-hosted counterpart of this same scripting wiring. -->
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- Lua (3rdParty\scripts\lua547, built by Lua547.vcxproj) and sol2 (3rdParty\scripts\sol330,
+       header-only): the Lua scripting engine's binding library. Same dedicated-block precedent
+       AppBuilder.vcxproj/DllRunner.vcxproj's own identical comment documents. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\lua547\src;$(ProjectDir)..\..\..\3rdParty\scripts\sol330;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- ChaiScript (3rdParty\scripts\chaiscript610\include, header-only). LuaBridge3/LuaBridge 2.10's
+       own include paths are NOT added here (both publish "LuaBridge/LuaBridge.h" at the same
+       relative path); each gets its override on its own ClCompile item below instead. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\chaiscript610\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <!-- CryptoAPI_static.lib is built with the static CRT (MultiThreadedDebug/MultiThreaded), same
@@ -101,7 +126,7 @@
   <ItemDefinitionGroup>
     <Link>
       <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\cryptopp890\$(Platform)\Output\$(Configuration);$(ProjectDir)..\..\..\3rdParty\openssl402\_libs\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>cryptlib.lib;libcrypto.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>cryptlib.lib;libcrypto.lib;Lua547.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <!-- Same LNK4099 (missing OpenSSL PDB) silencing as AppBuilder/DllBuilder. -->
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
@@ -127,16 +152,33 @@
       <Project>{49eaea3c-a090-407b-83a9-b1f41b18d709}</Project>
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
+    <!-- Build-ordering + explicit AdditionalDependencies entry (Lua547.lib above), same
+         LinkLibraryDependencies=false style as this project's other references (LibRunner never
+         relies on ProjectReference auto-linking, unlike AppBuilder/DllRunner's own reference to
+         this same project). -->
+    <ProjectReference Include="..\..\..\3rdParty\scripts\lua547\Lua547.vcxproj">
+      <Project>{7f3e9a2c-4b1d-4e6a-9c8f-2d5b6a7e1f30}</Project>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
   </ItemGroup>
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <Link>
-      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>libgcrypt-20-msvc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\lib;$(ProjectDir)..\..\..\3rdParty\scripts\python312\libs;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- CPythonScriptEngine (see PythonScriptEngine.h/.cpp) embeds CPython via pybind11; x64
+           ONLY, same precedent as AppBuilder.vcxproj/DllRunner.vcxproj's own identical block. -->
+      <AdditionalDependencies>libgcrypt-20-msvc.lib;python312.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <!-- PostBuildEvent's <Command> is a single project property, not batched %()-style item
+         metadata (same gotcha AppBuilder.vcxproj's own identical comment documents): the Python
+         runtime copy is appended into this SAME Command rather than a second PostBuildEvent, which
+         would silently overwrite this one instead of appending. -->
     <PostBuildEvent>
-      <Message>Copying the libgcrypt runtime DLLs next to the output executable</Message>
+      <Message>Copying the libgcrypt and Python runtime DLLs/stdlib next to the output executable</Message>
       <Command>xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgcrypt-20.dll" "$(OutDir)"
-xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-error-0.dll" "$(OutDir)"</Command>
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-error-0.dll" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\*.dll" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\*.pyd" "$(OutDir)"
+xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.zip" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <!-- CryptoAPI_static.lib itself is linked via #pragma comment(lib, "CryptoAPI_static.lib") in
@@ -219,6 +261,66 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-e
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptException.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngine.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
+    <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.h" />
+    <ClInclude Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- CCryptoApi/CPgpEngine/CPgpEngineWrapper themselves (used by CScriptCryptoApi/CScriptPgpEngine/
+         CScriptPgpEngineWrapper below) are NOT compiled here; they come from linking
+         CryptoAPI_static.lib. ICryptoApi.cpp/IPgpEngine.cpp/IPgpEngineWrapper.cpp (used by the *Dll
+         facades) are likewise already in that same static lib (see LibBuilder.vcxproj's own source
+         list); only the script facade/engine layer itself is compiled directly into LibRunner, same
+         as AppBuilder.vcxproj's own approach. -->
+    <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApi.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngine.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp" />
+    <!-- sol2's usertype/overload registration is template-heavy; /bigobj avoids hitting the COFF
+         section-count limit, same precedent as AppBuilder.vcxproj/DllRunner.vcxproj's own entry. -->
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <!-- LuaBridge3's addConstructor/addFunction overload registration is template-heavy the same
+         way sol2's is; /bigobj for the same reason. -->
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.cpp">
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\luaBridge30\Distribution;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.cpp">
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\luaBridge210\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <!-- ChaiScript's add()/fun()/constructor<>() registration is template-heavy the same way
+         sol2's/LuaBridge's is; /bigobj for the same reason. -->
+    <ClCompile Include="..\..\..\src\Scripts\ChaiScript\ChaiScriptEngine.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <!-- pybind11's py::class_/py::init<>()/py::enum_ registration is template-heavy the same way
+         sol2's/LuaBridge's/ChaiScript's is; /bigobj for the same reason. Compiled on ALL 4
+         configurations (Rules.md requires every configuration to build) but only does real work on
+         x64 (see the ARCH_X64/ARCH_WIN64 guard at the top of PythonScriptEngine.cpp). Python/
+         pybind11 include paths are added here rather than project-wide for the same reason
+         AppBuilder.vcxproj/DllRunner.vcxproj's own identical entry documents (pybind11/Python.h
+         must never be visible to any other translation unit). -->
+    <ClCompile Include="..\..\..\src\Scripts\PythonScript\PythonScriptEngine.cpp">
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\pybind11310\include;$(ProjectDir)..\..\..\3rdParty\scripts\python312\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="Main.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

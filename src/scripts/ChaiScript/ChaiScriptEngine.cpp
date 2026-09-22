@@ -297,8 +297,14 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptCryptoApi::DecryptBytes), "DecryptBytes");
     chai_.add(chaiscript::fun(&CScriptCryptoApi::EncryptString), "EncryptString");
     chai_.add(chaiscript::fun(&CScriptCryptoApi::DecryptString), "DecryptString");
-    chai_.add(chaiscript::fun(&CScriptCryptoApi::EncryptFile), "EncryptFile");
-    chai_.add(chaiscript::fun(&CScriptCryptoApi::DecryptFile), "DecryptFile");
+    chai_.add(chaiscript::fun(static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::EncryptFile)), "EncryptFile");
+    chai_.add(chaiscript::fun(static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::DecryptFile)), "DecryptFile");
+    // C++-calls-INTO-script direction: ChaiScript converts a boxed script function into a
+    // std::function<Sig> automatically when the bound overload's parameter has that exact type
+    // (no custom Stack<T>-style specialization needed, unlike LuaBridge3) -- called once per
+    // chunk from inside EncryptFile/DecryptFile's own C++ loop.
+    chai_.add(chaiscript::fun(static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::EncryptFile)), "EncryptFileWithProgress");
+    chai_.add(chaiscript::fun(static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::DecryptFile)), "DecryptFileWithProgress");
     chai_.add(chaiscript::fun(&CScriptCryptoApi::GenerateAsymmetricKeyPair), "GenerateAsymmetricKeyPair");
     chai_.add(chaiscript::fun(&CScriptCryptoApi::GetMaxAsymmetricPlaintextSize), "GetMaxAsymmetricPlaintextSize");
     chai_.add(chaiscript::fun(&CScriptCryptoApi::GetAsymmetricCiphertextSize), "GetAsymmetricCiphertextSize");
@@ -422,6 +428,8 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GetVersion), "GetVersion");
     chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GetHashSize), "GetHashSize");
     chai_.add(chaiscript::fun(&CScriptCryptoApiDll::ComputeHashString), "ComputeHashString");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::EncryptFile), "EncryptFileWithProgress");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::DecryptFile), "DecryptFileWithProgress");
 
     chai_.add(chaiscript::user_type<CScriptPgpEngineDll>(), "PgpEngineDll");
     chai_.add(chaiscript::fun(&CScriptPgpEngineDll::GenerateKeyPair), "GenerateKeyPair");

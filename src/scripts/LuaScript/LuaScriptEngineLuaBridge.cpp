@@ -3,6 +3,7 @@
 #include "../ScriptCryptoApiDll.h"
 #include "../ScriptPgpEngineDll.h"
 #include "../ScriptPgpEngineWrapperDll.h"
+#include "../ScriptProgressCallback.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -172,6 +173,59 @@ template <> struct Stack<CryptoApiNS::PgpInspectionRecordSize>
 } // namespace luabridge
 
 #endif // !DLL_RUNNER
+
+// C++-calls-INTO-script direction: LuaBridge3 has no built-in Stack<std::function<Sig>>
+// conversion (unlike sol2/ChaiScript/pybind11, which all accept a script function for a bound
+// C++ parameter of that exact type automatically), so this converts a Lua function value into a
+// CryptoApiNS::ScriptProgressCallback by hand -- LuaRef::fromStack captures the function, wrapped
+// in a LuaFunction<Sig> for a typed call/return, and the returned std::function lambda captures
+// that LuaFunction by value (LuaRef/LuaFunction are cheap, ref-counted-registry handles). A
+// script-side error/exception during the call (TypeResult<bool> holding an error instead of a
+// value) is treated as "continue" (true) rather than "stop" -- unlike ScriptCryptoApi.cpp's own
+// scriptProgressTrampoline, which treats a C++-thrown exception as "stop"; the two are different
+// failure modes (a genuine C++ exception vs. a Lua-side runtime error LuaBridge already reports
+// through its own error-code channel) and this call site cannot easily tell "no value" apart from
+// "the script deliberately didn't return anything", so it defaults to continuing rather than
+// silently aborting on a merely omitted return value.
+//
+// Deliberately OUTSIDE the #ifndef DLL_RUNNER guard above (unlike the enum Stack<T>
+// specializations it sits next to): ScriptProgressCallback lives in the lightweight
+// ScriptProgressCallback.h (no CCryptoApi/provider-stack dependency, see that header's own
+// comment), so this specialization is needed -- and safe to compile -- under DLL_RUNNER too, for
+// CScriptCryptoApiDll's own EncryptFileWithProgress/DecryptFileWithProgress registration below.
+namespace luabridge
+{
+
+template <> struct Stack<CryptoApiNS::ScriptProgressCallback>
+{
+    static Result push(lua_State* L, const CryptoApiNS::ScriptProgressCallback&)
+    {
+        lua_pushnil(L);
+        return {};
+    }
+
+    static TypeResult<CryptoApiNS::ScriptProgressCallback> get(lua_State* L, int index)
+    {
+        if (!lua_isfunction(L, index))
+        {
+            return makeErrorCode(ErrorCode::InvalidTypeCast);
+        }
+
+        LuaFunction<bool(unsigned long long, unsigned long long, double)> fn(LuaRef::fromStack(L, index));
+        return CryptoApiNS::ScriptProgressCallback(
+            [fn](unsigned long long currentByte, unsigned long long totalByte, double percentage) -> bool
+            {
+                return fn(currentByte, totalByte, percentage).valueOr(true);
+            });
+    }
+
+    static bool isInstance(lua_State* L, int index)
+    {
+        return lua_isfunction(L, index) != 0;
+    }
+};
+
+} // namespace luabridge
 
 namespace
 {
@@ -445,8 +499,10 @@ void CLuaScriptEngineLuaBridge::registerBindings(void)
             .addFunction("DecryptBytes", &CScriptCryptoApi::DecryptBytes)
             .addFunction("EncryptString", &CScriptCryptoApi::EncryptString)
             .addFunction("DecryptString", &CScriptCryptoApi::DecryptString)
-            .addFunction("EncryptFile", &CScriptCryptoApi::EncryptFile)
-            .addFunction("DecryptFile", &CScriptCryptoApi::DecryptFile)
+            .addFunction("EncryptFile", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::EncryptFile))
+            .addFunction("DecryptFile", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::DecryptFile))
+            .addFunction("EncryptFileWithProgress", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::EncryptFile))
+            .addFunction("DecryptFileWithProgress", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::DecryptFile))
             .addFunction("GenerateAsymmetricKeyPair", &CScriptCryptoApi::GenerateAsymmetricKeyPair)
             .addFunction("GetMaxAsymmetricPlaintextSize", &CScriptCryptoApi::GetMaxAsymmetricPlaintextSize)
             .addFunction("GetAsymmetricCiphertextSize", &CScriptCryptoApi::GetAsymmetricCiphertextSize)
@@ -590,6 +646,8 @@ void CLuaScriptEngineLuaBridge::registerBindings(void)
             .addFunction("GetVersion", &CScriptCryptoApiDll::GetVersion)
             .addFunction("GetHashSize", &CScriptCryptoApiDll::GetHashSize)
             .addFunction("ComputeHashString", &CScriptCryptoApiDll::ComputeHashString)
+            .addFunction("EncryptFileWithProgress", &CScriptCryptoApiDll::EncryptFile)
+            .addFunction("DecryptFileWithProgress", &CScriptCryptoApiDll::DecryptFile)
         .endClass();
 
     luabridge::getGlobalNamespace(luaState_)

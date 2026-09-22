@@ -4,6 +4,40 @@
 namespace CryptoApiNS
 {
 
+namespace
+{
+
+// Bridges CCryptoApi's raw C-ABI ProgressCallback (a plain __cdecl function pointer -- it cannot
+// capture state itself) to a script-supplied ScriptProgressCallback: userData points at the actual
+// std::function for the duration of the EncryptFile/DecryptFile call (see those two overloads
+// below, where a local copy of the caller's ScriptProgressCallback is kept alive on the stack for
+// exactly that duration), and this trampoline just dereferences it and calls through. A thrown
+// script-side exception must never cross back into CCryptoApi's own C-ABI boundary (Rules.md), so
+// it is caught here; treated as "stop" (false) rather than silently swallowed and continued, since
+// a script callback that just threw is presumably no longer in a state fit to keep reporting
+// progress -- the operation then returns OPERATION_CANCELLED, which callVoid below turns into a
+// CScriptException the caller actually sees (not a silently-completed operation the script thinks
+// failed).
+bool __cdecl scriptProgressTrampoline(const unsigned long long currentByte, const unsigned long long totalByte, const double percentage, void* userData)
+{
+    try
+    {
+        const ScriptProgressCallback* callback = static_cast<const ScriptProgressCallback*>(userData);
+        if (callback && *callback)
+        {
+            return (*callback)(currentByte, totalByte, percentage);
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+} // namespace
+
 std::vector<unsigned char> CScriptCryptoApi::callBinaryOutput(const char* methodName, const std::function<int(int, unsigned char*, int*)>& fn) const
 {
     try
@@ -234,6 +268,26 @@ void CScriptCryptoApi::DecryptFile(const std::string& password, const std::strin
     callVoid("DecryptFile", [this, &password, &inputFilePath, &outputFilePath]()
     {
         return api_.DecryptFile(password.c_str(), inputFilePath.c_str(), outputFilePath.c_str(), nullptr, nullptr);
+    });
+}
+// -----------------------------------------------------------------------------
+
+void CScriptCryptoApi::EncryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath, const ScriptProgressCallback& onProgress)
+{
+    callVoid("EncryptFile", [this, &password, &inputFilePath, &outputFilePath, &onProgress]()
+    {
+        ScriptProgressCallback callback = onProgress;
+        return api_.EncryptFile(password.c_str(), inputFilePath.c_str(), outputFilePath.c_str(), scriptProgressTrampoline, &callback);
+    });
+}
+// -----------------------------------------------------------------------------
+
+void CScriptCryptoApi::DecryptFile(const std::string& password, const std::string& inputFilePath, const std::string& outputFilePath, const ScriptProgressCallback& onProgress)
+{
+    callVoid("DecryptFile", [this, &password, &inputFilePath, &outputFilePath, &onProgress]()
+    {
+        ScriptProgressCallback callback = onProgress;
+        return api_.DecryptFile(password.c_str(), inputFilePath.c_str(), outputFilePath.c_str(), scriptProgressTrampoline, &callback);
     });
 }
 // -----------------------------------------------------------------------------

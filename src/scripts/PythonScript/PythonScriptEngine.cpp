@@ -49,6 +49,11 @@
 #include <pybind11/embed.h>
 #include <pybind11/eval.h>
 #include <pybind11/stl.h>
+// C++-calls-INTO-script direction: pybind11/functional.h's generic function_caster converts a
+// Python callable into a std::function<Sig> automatically whenever a bound C++ parameter has that
+// exact type (no custom conversion needed, same as ChaiScript's own automatic behavior) --
+// EncryptFileWithProgress/DecryptFileWithProgress below rely on it.
+#include <pybind11/functional.h>
 
 #if CRYPTOAPI_PYTHON_RESTORE_DEBUG
 #define _DEBUG 1
@@ -362,8 +367,14 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
             .def("DecryptBytes", &CScriptCryptoApi::DecryptBytes)
             .def("EncryptString", &CScriptCryptoApi::EncryptString)
             .def("DecryptString", &CScriptCryptoApi::DecryptString)
-            .def("EncryptFile", &CScriptCryptoApi::EncryptFile)
-            .def("DecryptFile", &CScriptCryptoApi::DecryptFile)
+            .def("EncryptFile", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::EncryptFile))
+            .def("DecryptFile", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&)>(&CScriptCryptoApi::DecryptFile))
+            // C++-calls-INTO-script direction: pybind11/functional.h (included above) converts a
+            // Python callable into a std::function<Sig> automatically whenever a bound overload's
+            // parameter has that exact type -- called once per chunk from inside EncryptFile/
+            // DecryptFile's own C++ loop.
+            .def("EncryptFileWithProgress", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::EncryptFile))
+            .def("DecryptFileWithProgress", static_cast<void(CScriptCryptoApi::*)(const std::string&, const std::string&, const std::string&, const CryptoApiNS::ScriptProgressCallback&)>(&CScriptCryptoApi::DecryptFile))
             .def("GenerateAsymmetricKeyPair", &CScriptCryptoApi::GenerateAsymmetricKeyPair)
             .def("GetMaxAsymmetricPlaintextSize", &CScriptCryptoApi::GetMaxAsymmetricPlaintextSize)
             .def("GetAsymmetricCiphertextSize", &CScriptCryptoApi::GetAsymmetricCiphertextSize)
@@ -491,6 +502,8 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
         .def("GetVersion", &CScriptCryptoApiDll::GetVersion)
         .def("GetHashSize", &CScriptCryptoApiDll::GetHashSize)
         .def("ComputeHashString", &CScriptCryptoApiDll::ComputeHashString)
+        .def("EncryptFileWithProgress", &CScriptCryptoApiDll::EncryptFile)
+        .def("DecryptFileWithProgress", &CScriptCryptoApiDll::DecryptFile)
         ;
 
     py::class_<CScriptPgpEngineDll>(m, "PgpEngineDll")

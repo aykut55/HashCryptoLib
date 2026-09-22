@@ -33,6 +33,12 @@ public:
     int RunLuaScriptPgpSignVerifyTest(void);
     int RunLuaScriptPgpWrapperAvailabilityTest(void);
 
+    // C++-calls-INTO-script direction: EncryptFileWithProgress's onProgress parameter is a script
+    // function, called once per chunk from inside CCryptoApi's own C++ file loop -- the reverse of
+    // every other test in this file (which are all script-calls-C++). See ScriptProgressCallback's
+    // own comment (ScriptCryptoApi.h) for the underlying mechanism.
+    int RunLuaScriptProgressCallbackTest(void);
+
     int RunLuaBridgeScriptHashTest(void);
     int RunLuaBridgeScriptEncryptDecryptTest(void);
     int RunLuaBridgeScriptAsymmetricTest(void);
@@ -43,6 +49,8 @@ public:
     int RunLuaBridgeScriptPgpEncryptDecryptTest(void);
     int RunLuaBridgeScriptPgpSignVerifyTest(void);
     int RunLuaBridgeScriptPgpWrapperAvailabilityTest(void);
+
+    int RunLuaBridgeScriptProgressCallbackTest(void);
 
     int RunLuaBridgeLegacyScriptHashTest(void);
     int RunLuaBridgeLegacyScriptEncryptDecryptTest(void);
@@ -55,6 +63,8 @@ public:
     int RunLuaBridgeLegacyScriptPgpSignVerifyTest(void);
     int RunLuaBridgeLegacyScriptPgpWrapperAvailabilityTest(void);
 
+    int RunLuaBridgeLegacyScriptProgressCallbackTest(void);
+
     int RunChaiScriptHashTest(void);
     int RunChaiScriptEncryptDecryptTest(void);
     int RunChaiScriptAsymmetricTest(void);
@@ -66,6 +76,8 @@ public:
     int RunChaiScriptPgpSignVerifyTest(void);
     int RunChaiScriptPgpWrapperAvailabilityTest(void);
 
+    int RunChaiScriptProgressCallbackTest(void);
+
     int RunPythonScriptHashTest(void);
     int RunPythonScriptEncryptDecryptTest(void);
     int RunPythonScriptAsymmetricTest(void);
@@ -76,6 +88,8 @@ public:
     int RunPythonScriptPgpEncryptDecryptTest(void);
     int RunPythonScriptPgpSignVerifyTest(void);
     int RunPythonScriptPgpWrapperAvailabilityTest(void);
+
+    int RunPythonScriptProgressCallbackTest(void);
 
 protected:
 

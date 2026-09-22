@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <cstdio>
+#include <fstream>
 
 // ChaiScriptEngine.h pulls in <chaiscript/chaiscript.hpp>, which transitively includes
 // <Windows.h> (for ChaiScript's own threading support) -- chaiscript_windows.hpp calls the real
@@ -406,6 +408,121 @@ int main()
                 {
                     std::cout << "DLL-hosted scripting (Python): FAILED exception " << ex.what() << std::endl;
                 }
+
+                // DLL-hosted progress-callback round trip: proves a script-supplied callback still
+                // gets called once per chunk (C++-calls-INTO-script direction, see
+                // ScriptProgressCallback.h's own comment) when EncryptFileWithProgress runs against
+                // an ICryptoApi* obtained purely from CryptoAPI.dll at runtime
+                // (CCryptoApiDllLoader::GetCryptoApiObject()), not linked against at compile time --
+                // same mechanism AppBuilder's own RunXxxScriptProgressCallbackTest already proves for
+                // the statically-linked CScriptCryptoApi. Reuses the same scriptCryptoApi/cryptoApi
+                // global the hash/PGP demo above just exercised. File size (5120 bytes) and chunk
+                // count assertion (>= 3 calls) match ScriptEngineTester.cpp's own
+                // WriteProgressCallbackTestFile/kProgressCallbackTestFileSize convention.
+                const char* progressInputPath = "dllrunner_progress_test_in.bin";
+                const char* progressEncPath = "dllrunner_progress_test_enc.bin";
+
+                {
+                    std::vector<unsigned char> progressTestData(5120, 'A');
+                    std::ofstream progressInputFile(progressInputPath, std::ios::binary);
+                    progressInputFile.write(reinterpret_cast<const char*>(progressTestData.data()), static_cast<std::streamsize>(progressTestData.size()));
+                }
+
+                const char* progressLuaScript =
+                    "callCount = 0\n"
+                    "lastCurrentByte = 0\n"
+                    "local function onProgress(currentByte, totalByte, percentage)\n"
+                    "    callCount = callCount + 1\n"
+                    "    lastCurrentByte = currentByte\n"
+                    "    return true\n"
+                    "end\n"
+                    "cryptoApi:EncryptFileWithProgress(\"dllprogresstest\", \"dllrunner_progress_test_in.bin\", \"dllrunner_progress_test_enc.bin\", onProgress)\n"
+                    "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaEngine.RunString(progressLuaScript);
+                    std::cout << "DLL-hosted progress callback (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << luaEngine.GetGlobalInt("callCount") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted progress callback (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeEngine.RunString(progressLuaScript);
+                    std::cout << "DLL-hosted progress callback (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << luaBridgeEngine.GetGlobalInt("callCount") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted progress callback (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeLegacyEngine.RunString(progressLuaScript);
+                    std::cout << "DLL-hosted progress callback (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << luaBridgeLegacyEngine.GetGlobalInt("callCount") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted progress callback (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* progressChaiScript =
+                    "global callCount = 0;\n"
+                    "global lastCurrentByte = 0;\n"
+                    "def onProgress(currentByte, totalByte, percentage) {\n"
+                    "    callCount = callCount + 1;\n"
+                    "    lastCurrentByte = currentByte;\n"
+                    "    return true;\n"
+                    "}\n"
+                    "cryptoApi.EncryptFileWithProgress(\"dllprogresstest\", \"dllrunner_progress_test_in.bin\", \"dllrunner_progress_test_enc.bin\", onProgress);\n"
+                    "global ok = (callCount >= 3) && (lastCurrentByte == 5120);\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    chaiEngine.RunString(progressChaiScript);
+                    std::cout << "DLL-hosted progress callback (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << chaiEngine.GetGlobalInt("callCount") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted progress callback (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* progressPythonScript =
+                    "callCount = 0\n"
+                    "lastCurrentByte = 0\n"
+                    "def onProgress(currentByte, totalByte, percentage):\n"
+                    "    global callCount, lastCurrentByte\n"
+                    "    callCount = callCount + 1\n"
+                    "    lastCurrentByte = currentByte\n"
+                    "    return True\n"
+                    "cryptoApi.EncryptFileWithProgress(\"dllprogresstest\", \"dllrunner_progress_test_in.bin\", \"dllrunner_progress_test_enc.bin\", onProgress)\n"
+                    "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    pythonEngine.RunString(progressPythonScript);
+                    std::cout << "DLL-hosted progress callback (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << pythonEngine.GetGlobalInt("callCount") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted progress callback (Python): FAILED exception " << ex.what() << std::endl;
+                }
+
+                std::remove(progressInputPath);
+                std::remove(progressEncPath);
             }
 
             if (pScriptCryptoApi)
