@@ -1103,6 +1103,69 @@ IDisposable) — dil özelliği, yetenek farkı değil.
   SM3/Whirlpool/Tiger/Streebog, CMAC/GMAC/Poly1305, scrypt/Argon2/HKDF, ElGamal, ML-KEM/ML-DSA/
   SNTRUP761/McEliece) — eklemek önce paylaşılan enum'ları genişletmeyi gerektirir, ayrı bir iş.
 
+### 29.4 SecurePDF Demo karşılaştırması — PKI/X.509/CMS eksik yetenekler
+
+Tarih: 2026-09-25. `D:\Aykut\Secure PDF Project\demo` (ticari `nsoftware.SecurePDF` API yüzeyini
+taklit eden, kendi yazılmış C#/.NET 9 implementasyonu; kripto için BCL
+`System.Security.Cryptography`+`.Pkcs` kullanıyor) hash/crypto/sign açısından incelendi — PDF'e
+özgü kısımlar (layout, xref, form field) hariç tutuldu. §25 (Certificates) zaten X.509/CSR/zincir/
+revocation'ı **planlamış** durumda ama henüz implement edilmedi; aşağıdakiler o plana ek olarak
+veya onun genişlemesi olarak **CMS/RFC3161/PAdES katmanının** hiç düşünülmediği noktalar:
+
+**Yüksek öncelik — §25'in kapsamadığı, gerçek dünyada X.509 ile birlikte gelen ihtiyaçlar:**
+- PKCS#7/CMS detached imza (CAdES-BES) — `SignedCms`/`CmsSigner` benzeri, RFC 5035
+  signing-certificate-v2 imzalı özniteliği dahil. §25 sadece sertifika/zincir/CSR'yi kapsıyor,
+  CMS mesaj imzası formatını değil.
+- RFC 3161 zaman damgası (TSA) — hem signature-time-stamp hem bağımsız doküman zaman damgası;
+  gerçek bir TSA sunucusuna `application/timestamp-query` HTTP isteği. Hiç yok.
+- CRL elle ASN.1 parse (CertificateList/TBSCertList/revokedCertificates) + OCSP — §25.6 revocation'ı
+  politika seviyesinde planlıyor (`Required`/`BestEffort`/`Disabled`, Windows `CertGetCertificateChain`
+  üzerinden) ama OpenSSL/Botan tarafında elle CRL parse etme ihtiyacı doğabilir; demo projede bu
+  organik bir ihtiyaçtan (.NET'te hazır CRL parser olmaması) doğmuş, referans alınabilir.
+
+**Orta öncelik — sertifika/anahtar format çeşitliliği (§25.3'ün DER/PEM/PFX/CSR'sinin ötesinde):**
+- XML (RSAKeyValue), JWK (RFC 7517), SSH public key (RFC 4253), JKS (Java KeyStore, reverse-
+  engineered format), PPK (PuTTY private key v2/v3) okuma desteği.
+- X.509 CA işlevleri: self-signed + CSR imzalayıp alt-sertifika verme (`IssueCertificate`) — §25.4/
+  25.5 CSR *oluşturmayı* planlıyor ama CA rolünü (başkasının CSR'ini imzalamayı) kapsamıyor.
+
+**Düşük öncelik / bilinçli kapsam dışı — HashCryptoLib için de muhtemelen aynı karar:**
+- PKCS#11/HSM/akıllı kart — demo projede de araştırılmış ama donanım/simülatör yokluğundan
+  bilinçli olarak yazılmamış (`NotImplementedException`). Bir gap ama düşük öncelikli.
+- PDF'e özgü olan şeyler HashCryptoLib'in kapsamı dışı, listeye alınmadı: ByteRange/incremental-
+  update imza protokolü, PAdES B-B/B-T/B-LT/B-LTA DSS/VRI genişletmesi, PDF Standard Security
+  Handler (parola tabanlı PDF şifreleme, RC4-128/AES128/AES256), PubSec (CMS EnvelopedData ile PDF
+  dosya anahtarı sarmalama) — bunlar PKI primitiflerini *kullanıyor* ama kendileri PDF-format
+  mühendisliği, genel amaçlı bir kripto SDK'nın hedefi değil.
+
+Genel değerlendirme: iki proje neredeyse hiç örtüşmüyor — demo proje PDF-format + PKI ekosistemi
+üzerine, HashCryptoLib düşük seviye primitifler + OpenPGP'de çok daha derin. §25 zaten X.509 temel
+planını içeriyor; buraya eklenmesi gereken asıl boşluk **CMS/PKCS#7 mesaj imzası ve RFC 3161
+zaman damgası** — bunlar §25'te hiç yok ve muhtemelen ayrı bir "§25.9 CMS ve zaman damgası" veya
+yeni bir bölüm olarak ele alınmalı. İş, kullanıcı açıkça istemedikçe başlatılmayacak (bkz. memory
+`feedback_sdk_frozen_2026_09_20.md`).
+
+**§25 olduğu gibi implement edilirse yukarıdaki 11 maddelik listenin durumu:**
+
+| # | Yetenek | Kapsam | §25 implement edilince durum |
+| --- | --- | --- | --- |
+| 1 | X.509 üretimi/CA | Genel (belge-bağımsız) | KISMEN — self-signed+CSR §25.5'te var; CA olarak başkasının CSR'ini imzalama (`IssueCertificate`) yok |
+| 2 | Sertifika/anahtar format dönüşümleri | Genel (belge-bağımsız) | KISMEN — DER/PEM/PFX §25.3'te var; P7B/XML/JWK/SSH/JKS/PPK yok |
+| 3 | Zincir kurma/doğrulama | Genel (belge-bağımsız) | DONE olur — §25.6 tam kapsıyor (`CertGetCertificateChain`+policy) |
+| 4 | Revocation (CRL/OCSP) | Genel (belge-bağımsız) | KISMEN — §25.6 Windows/`CertGetCertificateChain` üzerinden kapsıyor; OpenSSL/Botan için elle CRL parse planlanmadı |
+| 5 | PKCS#7/CMS detached imza | Genel (belge-bağımsız) — CMS/SignedData formatı S/MIME, kod imzalama, herhangi bir dosya için de geçerli; PDF sadece `SubFilter: /ETSI.CAdES.detached` ile onu kendi konteynerine gömüyor | HAYIR — §25'te yok, asıl boşluk |
+| 6 | RFC 3161 zaman damgası | Genel (belge-bağımsız) — protokol seviyesinde, PDF'le ilgisi yok | HAYIR — §25'te yok |
+| 7 | PAdES seviyeleri | **PDF'e özgü** | HAYIR / kapsam dışı |
+| 8 | PDF ByteRange/imza protokolü | **PDF'e özgü** | HAYIR / kapsam dışı |
+| 9 | PDF parola tabanlı şifreleme | **PDF'e özgü** | HAYIR / kapsam dışı |
+| 10 | PubSec (CMS EnvelopedData) | **PDF'e özgü** — CMS EnvelopedData'yı kullanıyor ama PDF dosya anahtarını sarmalama "handler"ı olarak, PDF dışında anlamı yok | HAYIR / kapsam dışı |
+| 11 | PKCS#11/HSM | Genel (belge-bağımsız) | HAYIR — §25'te hiç planlanmadı |
+
+**Sonuç:** HashCryptoLib için gerçek gap, PDF-spesifik olmayan **1-2-3-4-5-6-11** — yani genel amaçlı
+doküman/dosya imzalama-şifreleme için gereken PKI (X.509/CA/format/zincir/revocation) + CMS mesaj
+imzası + RFC 3161 zaman damgası + HSM katmanı. 7-8-9-10 PDF konteynerine özgü olduğu için
+HashCryptoLib'in hedefi değil, kapsam dışı kalmaya devam ediyor.
+
 ## 30. AES Online Tool Araştırması — Kullanıcı Tarafından Girilebilen Opsiyonlar
 
 Tarih: 14 Eylül 2026. Amaç: `CryptoApiTester::RunAESTests()` tasarımına (TAMAMLANDI, 2026-09-16 —
