@@ -67,6 +67,10 @@ public:
     // Win32 build (no CPython vendored) these are silent no-ops, matching every other method's
     // own x64-only degradation convention above.
     void SetDllCryptoApi(CScriptCryptoApiDll* api);
+
+    // Second, independently-named DLL-hosted ICryptoApi global ("cryptoApiBob") -- see
+    // LuaScriptEngineSol.h's own identically-named method for why this exists.
+    void SetDllCryptoApiBob(CScriptCryptoApiDll* api);
     void SetDllPgpEngine(CScriptPgpEngineDll* engine);
     void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
     void SetDllCertificateManager(CScriptCertificateManagerDll* manager);

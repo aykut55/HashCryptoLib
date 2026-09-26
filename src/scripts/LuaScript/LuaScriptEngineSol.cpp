@@ -131,11 +131,6 @@ void CLuaScriptEngineSol::registerBindings(void)
         return std::vector<unsigned char>(text.begin(), text.end());
     });
 
-#ifndef DLL_RUNNER
-    // ErrorCode / CScriptException -- scripts see a raised Lua error whose message is
-    // CScriptException::what(); the numeric ErrorCode table below lets a script compare a caught
-    // error's own reported code (via pcall) against these named constants if it parses the message,
-    // or simply recognize the family of errors this SDK can raise.
     // Second round of C++-calls-INTO-script nesting, one level deeper than
     // EncryptFileWithProgress/DecryptFileWithProgress's own onProgress: a script's onProgress
     // function (itself already invoked BY C++, from inside CCryptoApi's chunked file loop) can call
@@ -144,7 +139,11 @@ void CLuaScriptEngineSol::registerBindings(void)
     // turn returns control back to the C++ file loop. Proves the round trip is not limited to a
     // single fixed callback slot -- a script-supplied function can itself trigger fresh calls back
     // into arbitrary script code from C++, to any nesting depth sol2's std::function conversion
-    // supports.
+    // supports. Kept OUTSIDE the #ifndef DLL_RUNNER block below (unlike ErrorCode/the local
+    // usertypes) for the same reason ToBytes above is -- it is a generic, facade-independent helper;
+    // DllRunner's own DLL-hosted progress-callback demo (EncryptFileWithProgress via
+    // CScriptCryptoApiDll) can nest a second script->C++->script round trip through it exactly like
+    // AppBuilder/LibRunner's local-facade demos already do.
     luaState_.set_function("OnProgress", [](const std::function<void()>& innerCallback)
     {
         if (innerCallback)
@@ -153,6 +152,11 @@ void CLuaScriptEngineSol::registerBindings(void)
         }
     });
 
+#ifndef DLL_RUNNER
+    // ErrorCode / CScriptException -- scripts see a raised Lua error whose message is
+    // CScriptException::what(); the numeric ErrorCode table below lets a script compare a caught
+    // error's own reported code (via pcall) against these named constants if it parses the message,
+    // or simply recognize the family of errors this SDK can raise.
     luaState_.new_enum("ErrorCode",
         "NO_ERROR", NO_ERROR,
         "NOT_IMPLEMENTED", NOT_IMPLEMENTED,
@@ -558,6 +562,19 @@ void CLuaScriptEngineSol::SetDllCryptoApi(CScriptCryptoApiDll* api)
     try
     {
         luaState_["cryptoApi"] = api;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllCryptoApiBob(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        luaState_["cryptoApiBob"] = api;
     }
     catch (...)
     {

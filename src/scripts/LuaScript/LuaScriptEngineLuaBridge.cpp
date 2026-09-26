@@ -768,6 +768,19 @@ void CLuaScriptEngineLuaBridge::SetDllCryptoApi(CScriptCryptoApiDll* api)
 }
 // -----------------------------------------------------------------------------
 
+void CLuaScriptEngineLuaBridge::SetDllCryptoApiBob(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        luabridge::setGlobal(luaState_, api, "cryptoApiBob");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
 void CLuaScriptEngineLuaBridge::SetDllPgpEngine(CScriptPgpEngineDll* engine)
 {
     try

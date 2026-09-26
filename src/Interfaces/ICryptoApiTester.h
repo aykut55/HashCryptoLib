@@ -342,6 +342,8 @@ public:
 
     virtual int RunCertificateCsrGenerationTest(void) = 0;
 
+    virtual int RunCertificateCsrDerPemRoundtripTest(void) = 0;
+
     virtual int RunCertificateIssueFromRequestTest(void) = 0;
 
     virtual int RunCertificateChainValidTest(void) = 0;
@@ -361,6 +363,8 @@ public:
     virtual int RunCertificateCrlCheckWrongIssuerRejectionTest(void) = 0;
 
     virtual int RunCertificateStoreMemoryFindTest(void) = 0;
+
+    virtual int RunCertificateStoreFindByFilterTest(void) = 0;
 
     virtual int RunCmsSignVerifyDetachedTest(void) = 0;
 

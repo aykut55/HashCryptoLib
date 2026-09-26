@@ -127,6 +127,16 @@ public:
     virtual int ConvertCertificatePemToDer( const char* pemString, const int pemStringSize,
                                             const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) const = 0;
 
+    // Same DER<->PEM conversion pair as the two above, but for a PKCS#10 CSR (X509_REQ) instead of
+    // an issued certificate (X509) -- CreateCertificateRequest below only ever returns DER, closing
+    // Plan.md 25.3's "PKCS#10 CSR: DER/PEM çıktı" gap by letting a caller convert either direction
+    // afterward, same as it already can for certificates.
+    virtual int ConvertCertificateRequestDerToPem( const unsigned char* derBuffer, const int derBufferSize,
+                                                   const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const = 0;
+
+    virtual int ConvertCertificateRequestPemToDer( const char* pemString, const int pemStringSize,
+                                                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) const = 0;
+
     // ============================================================================================
     // PKCS#12 -- ImportPfx extracts the leaf certificate and its private key (v1 scope: single
     // identity, no additional chain certificates inside the PFX are extracted); ExportPfx builds a
@@ -217,6 +227,38 @@ public:
 
     virtual int FindCertificateInStoreBySubject( const char* subjectSubstring, const int subjectSubstringSize,
                                                  const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
+
+    // Three more search filters Plan.md 25.7 names alongside subject ("Arama filtreleri fingerprint,
+    // issuer+serial, subject, EKU ve private key varlığını içerebilir") -- all first-match, all
+    // scoped to whichever store OpenStore currently has open, same as FindCertificateInStoreBySubject
+    // above.
+
+    // fingerprintBuffer is a raw digest (NOT hex text) computed with digestAlgorithm -- the same
+    // convention GetCertificateInfoText's own FingerprintSha256Hex field uses, just made explicit
+    // and parameterizable per Plan.md's "algoritması belirtilmiş DER digest'idir" wording, rather
+    // than hardcoded to Windows' own SHA-1 store-thumbprint convention.
+    virtual int FindCertificateInStoreByFingerprint( const unsigned char* fingerprintBuffer, const int fingerprintBufferSize,
+                                                     const CertificateDigestAlgorithm digestAlgorithm,
+                                                     const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
+
+    // issuerNameDerBuffer is a DER-encoded X.509 Name (e.g. from another certificate's own issuer
+    // or subject field); serialNumberBuffer is the serial's raw big-endian bytes (same
+    // representation BN_bin2bn/BN_bn2bin use, not a DER-encoded ASN1_INTEGER). An exact match on
+    // both is required, mirroring RFC 5280's own "issuer + serial number" certificate identifier.
+    virtual int FindCertificateInStoreByIssuerAndSerial( const unsigned char* issuerNameDerBuffer, const int issuerNameDerBufferSize,
+                                                         const unsigned char* serialNumberBuffer, const int serialNumberBufferSize,
+                                                         const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
+
+    // Matches a certificate whose Extended Key Usage extension contains AT LEAST ONE of the OIDs
+    // named by extendedKeyUsageFlags (same bitmask as CreateSelfSignedCertificate's own parameter
+    // of the same name) -- a certificate with no EKU extension at all never matches.
+    virtual int FindCertificateInStoreByExtendedKeyUsage( const unsigned int extendedKeyUsageFlags,
+                                                          const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
+
+    // requirePrivateKey true matches the first certificate that HAS an associated private key in
+    // the store (CERT_KEY_PROV_INFO_PROP_ID present); false matches the first one that does NOT.
+    virtual int FindCertificateInStoreByPrivateKeyPresence( const bool requirePrivateKey,
+                                                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
 
     virtual int ImportPfxToStore( const unsigned char* pfxBuffer, const int pfxBufferSize,
                                   const char* password, const int passwordSize) = 0;

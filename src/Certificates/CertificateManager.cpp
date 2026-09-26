@@ -25,6 +25,7 @@
 
 #include <cstring>
 #include <ctime>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -54,8 +55,10 @@ struct GeneralNamesDeleter { void operator()(GENERAL_NAMES* p)     const { if (p
 struct ExtKeyUsageDeleter  { void operator()(EXTENDED_KEY_USAGE* p) const { if (p) EXTENDED_KEY_USAGE_free(p); } };
 struct BitStringDeleter    { void operator()(ASN1_BIT_STRING* p)  const { if (p) ASN1_BIT_STRING_free(p); } };
 struct ExtensionDeleter    { void operator()(X509_EXTENSION* p)   const { if (p) X509_EXTENSION_free(p); } };
+struct X509NameDeleter     { void operator()(X509_NAME* p)        const { if (p) X509_NAME_free(p); } };
 
 typedef std::unique_ptr<X509, X509Deleter> X509Ptr;
+typedef std::unique_ptr<X509_NAME, X509NameDeleter> X509NamePtr;
 typedef std::unique_ptr<X509_CRL, X509CrlDeleter> X509CrlPtr;
 typedef std::unique_ptr<X509_REQ, X509ReqDeleter> X509ReqPtr;
 typedef std::unique_ptr<EVP_PKEY, EvpPkeyDeleter> EvpPkeyPtr;
@@ -113,6 +116,31 @@ X509* DerBufferToX509(const unsigned char* buffer, const int bufferSize)
 {
     const unsigned char* p = buffer;
     return d2i_X509(nullptr, &p, bufferSize);
+}
+// -----------------------------------------------------------------------------
+
+// Shared store-enumeration helper for FindCertificateInStoreBy*: walks every certificate in the
+// open store, handing each one's native PCCERT_CONTEXT to the predicate (not just a parsed X509*)
+// so predicates that need Crypt32-specific per-context properties (private-key presence, via
+// CERT_KEY_PROV_INFO_PROP_ID) can inspect those too, alongside ones that parse an X509* from
+// ctx->pbCertEncoded/cbCertEncoded for OpenSSL-level inspection (fingerprint/issuer+serial/EKU).
+// CertEnumCertificatesInStore's own contract: passing back the previous non-null context frees it
+// and advances; returning NULL means enumeration is over and nothing more needs freeing -- so on a
+// match we must free the current context ourselves before returning, since we are not handing it
+// back to CertEnumCertificatesInStore for that.
+std::vector<unsigned char> FindInStoreByPredicate(HCERTSTORE store, const std::function<bool(PCCERT_CONTEXT)>& predicate)
+{
+    PCCERT_CONTEXT enumCtx = nullptr;
+    while ((enumCtx = CertEnumCertificatesInStore(store, enumCtx)) != nullptr)
+    {
+        if (predicate(enumCtx))
+        {
+            std::vector<unsigned char> result(enumCtx->pbCertEncoded, enumCtx->pbCertEncoded + enumCtx->cbCertEncoded);
+            CertFreeCertificateContext(enumCtx);
+            return result;
+        }
+    }
+    return std::vector<unsigned char>();
 }
 // -----------------------------------------------------------------------------
 
@@ -238,6 +266,21 @@ const EVP_MD* CertificateDigestToEvpMd(const CertificateDigestAlgorithm digestAl
     case CERTIFICATE_DIGEST_SHA512: return EVP_sha512();
     default:                        return EVP_sha256();
     }
+}
+// -----------------------------------------------------------------------------
+
+// Same flag set CreateSelfSignedCertificate/CreateCertificateRequest/IssueCertificateFromRequest's
+// extendedKeyUsageFlags builds an extension FROM; FindCertificateInStoreByExtendedKeyUsage below
+// checks a candidate certificate's EKU extension AGAINST these same NIDs.
+std::vector<int> ExtendedKeyUsageFlagsToNids(const unsigned int extendedKeyUsageFlags)
+{
+    std::vector<int> nids;
+    if (extendedKeyUsageFlags & CERTIFICATE_EKU_SERVER_AUTH)      nids.push_back(NID_server_auth);
+    if (extendedKeyUsageFlags & CERTIFICATE_EKU_CLIENT_AUTH)      nids.push_back(NID_client_auth);
+    if (extendedKeyUsageFlags & CERTIFICATE_EKU_CODE_SIGNING)     nids.push_back(NID_code_sign);
+    if (extendedKeyUsageFlags & CERTIFICATE_EKU_EMAIL_PROTECTION) nids.push_back(NID_email_protect);
+    if (extendedKeyUsageFlags & CERTIFICATE_EKU_TIME_STAMPING)    nids.push_back(NID_time_stamp);
+    return nids;
 }
 // -----------------------------------------------------------------------------
 
@@ -716,6 +759,79 @@ int CCertificateManager::ConvertCertificatePemToDer( const char* pemString, cons
 
         std::vector<unsigned char> der;
         if (!X509ToDerBuffer(cert.get(), der))
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        return WriteDerOut(der, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCertificateManager::ConvertCertificateRequestDerToPem( const unsigned char* derBuffer, const int derBufferSize,
+                                                            const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const
+{
+    try
+    {
+        if (derBuffer == nullptr || derBufferSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        X509ReqPtr req(DerBufferToX509Req(derBuffer, derBufferSize));
+        if (!req)
+        {
+            return INVALID_DATA;
+        }
+
+        BioPtr bio(BIO_new(BIO_s_mem()));
+        if (!bio || PEM_write_bio_X509_REQ(bio.get(), req.get()) != 1)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        char* data = nullptr;
+        const long len = BIO_get_mem_data(bio.get(), &data);
+        if (len < 0 || data == nullptr)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        return WriteTextOut(std::string(data, static_cast<std::size_t>(len)), outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCertificateManager::ConvertCertificateRequestPemToDer( const char* pemString, const int pemStringSize,
+                                                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) const
+{
+    try
+    {
+        if (pemString == nullptr || pemStringSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        BioPtr bio(BIO_new_mem_buf(pemString, pemStringSize));
+        if (!bio)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        X509ReqPtr req(PEM_read_bio_X509_REQ(bio.get(), nullptr, nullptr, nullptr));
+        if (!req)
+        {
+            return INVALID_DATA;
+        }
+
+        std::vector<unsigned char> der;
+        if (!X509ReqToDerBuffer(req.get(), der))
         {
             return UNEXPECTED_ERROR;
         }
@@ -1514,6 +1630,183 @@ int CCertificateManager::FindCertificateInStoreBySubject( const char* subjectSub
         const int result = WriteBytesOut(foundCtx->pbCertEncoded, foundCtx->cbCertEncoded, outputBufferCapacity, outputBuffer, outputBufferSize);
         CertFreeCertificateContext(foundCtx);
         return result;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCertificateManager::FindCertificateInStoreByFingerprint( const unsigned char* fingerprintBuffer, const int fingerprintBufferSize,
+                                                               const CertificateDigestAlgorithm digestAlgorithm,
+                                                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->storeOpen || fingerprintBuffer == nullptr || fingerprintBufferSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const EVP_MD* md = CertificateDigestToEvpMd(digestAlgorithm);
+        const std::vector<unsigned char> targetFingerprint(fingerprintBuffer, fingerprintBuffer + fingerprintBufferSize);
+
+        const std::vector<unsigned char> found = FindInStoreByPredicate(impl_->openStore, [&](PCCERT_CONTEXT ctx) -> bool
+        {
+            X509Ptr cert(DerBufferToX509(ctx->pbCertEncoded, static_cast<int>(ctx->cbCertEncoded)));
+            if (!cert)
+            {
+                return false;
+            }
+            unsigned char digest[EVP_MAX_MD_SIZE];
+            unsigned int digestLen = 0;
+            if (X509_digest(cert.get(), md, digest, &digestLen) != 1)
+            {
+                return false;
+            }
+            return digestLen == targetFingerprint.size() && std::memcmp(digest, targetFingerprint.data(), digestLen) == 0;
+        });
+
+        if (found.empty())
+        {
+            *outputBufferSize = 0;
+            return INVALID_ARGUMENT;
+        }
+        return WriteDerOut(found, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCertificateManager::FindCertificateInStoreByIssuerAndSerial( const unsigned char* issuerNameDerBuffer, const int issuerNameDerBufferSize,
+                                                                   const unsigned char* serialNumberBuffer, const int serialNumberBufferSize,
+                                                                   const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->storeOpen || issuerNameDerBuffer == nullptr || issuerNameDerBufferSize <= 0 ||
+            serialNumberBuffer == nullptr || serialNumberBufferSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const unsigned char* namePtr = issuerNameDerBuffer;
+        X509NamePtr targetIssuer(d2i_X509_NAME(nullptr, &namePtr, issuerNameDerBufferSize));
+        if (!targetIssuer)
+        {
+            return INVALID_DATA;
+        }
+        BnPtr targetSerialBn(BN_bin2bn(serialNumberBuffer, serialNumberBufferSize, nullptr));
+        if (!targetSerialBn)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::vector<unsigned char> found = FindInStoreByPredicate(impl_->openStore, [&](PCCERT_CONTEXT ctx) -> bool
+        {
+            X509Ptr cert(DerBufferToX509(ctx->pbCertEncoded, static_cast<int>(ctx->cbCertEncoded)));
+            if (!cert || X509_NAME_cmp(X509_get_issuer_name(cert.get()), targetIssuer.get()) != 0)
+            {
+                return false;
+            }
+            BnPtr certSerialBn(ASN1_INTEGER_to_BN(X509_get_serialNumber(cert.get()), nullptr));
+            return certSerialBn && BN_cmp(certSerialBn.get(), targetSerialBn.get()) == 0;
+        });
+
+        if (found.empty())
+        {
+            *outputBufferSize = 0;
+            return INVALID_ARGUMENT;
+        }
+        return WriteDerOut(found, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCertificateManager::FindCertificateInStoreByExtendedKeyUsage( const unsigned int extendedKeyUsageFlags,
+                                                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->storeOpen || extendedKeyUsageFlags == 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::vector<int> targetNids = ExtendedKeyUsageFlagsToNids(extendedKeyUsageFlags);
+
+        const std::vector<unsigned char> found = FindInStoreByPredicate(impl_->openStore, [&](PCCERT_CONTEXT ctx) -> bool
+        {
+            X509Ptr cert(DerBufferToX509(ctx->pbCertEncoded, static_cast<int>(ctx->cbCertEncoded)));
+            if (!cert)
+            {
+                return false;
+            }
+            ExtKeyUsagePtr extKeyUsage(static_cast<EXTENDED_KEY_USAGE*>(X509_get_ext_d2i(cert.get(), NID_ext_key_usage, nullptr, nullptr)));
+            if (!extKeyUsage)
+            {
+                return false;
+            }
+            const int count = sk_ASN1_OBJECT_num(extKeyUsage.get());
+            for (int i = 0; i < count; ++i)
+            {
+                const int certNid = OBJ_obj2nid(sk_ASN1_OBJECT_value(extKeyUsage.get(), i));
+                for (std::size_t j = 0; j < targetNids.size(); ++j)
+                {
+                    if (certNid == targetNids[j])
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        });
+
+        if (found.empty())
+        {
+            *outputBufferSize = 0;
+            return INVALID_ARGUMENT;
+        }
+        return WriteDerOut(found, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCertificateManager::FindCertificateInStoreByPrivateKeyPresence( const bool requirePrivateKey,
+                                                                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_->storeOpen || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::vector<unsigned char> found = FindInStoreByPredicate(impl_->openStore, [&](PCCERT_CONTEXT ctx) -> bool
+        {
+            DWORD cbData = 0;
+            const bool hasPrivateKey = CertGetCertificateContextProperty(ctx, CERT_KEY_PROV_INFO_PROP_ID, nullptr, &cbData) != FALSE;
+            return requirePrivateKey ? hasPrivateKey : !hasPrivateKey;
+        });
+
+        if (found.empty())
+        {
+            *outputBufferSize = 0;
+            return INVALID_ARGUMENT;
+        }
+        return WriteDerOut(found, outputBufferCapacity, outputBuffer, outputBufferSize);
     }
     catch (...)
     {

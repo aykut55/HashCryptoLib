@@ -62,6 +62,13 @@ public:
     int ConvertCertificatePemToDer( const char* pemString, const int pemStringSize,
                                     const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) const override;
 
+    // Same DER<->PEM conversion pair as the two above, but for a PKCS#10 CSR (X509_REQ).
+    int ConvertCertificateRequestDerToPem( const unsigned char* derBuffer, const int derBufferSize,
+                                           const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const override;
+
+    int ConvertCertificateRequestPemToDer( const char* pemString, const int pemStringSize,
+                                           const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) const override;
+
     // ============================================================================================
     // PKCS#12 -- v1 scope: single identity (leaf certificate + its private key), no additional
     // chain certificates inside the PFX are extracted/embedded.
@@ -155,6 +162,20 @@ public:
 
     int FindCertificateInStoreBySubject( const char* subjectSubstring, const int subjectSubstringSize,
                                          const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
+
+    int FindCertificateInStoreByFingerprint( const unsigned char* fingerprintBuffer, const int fingerprintBufferSize,
+                                             const CertificateDigestAlgorithm digestAlgorithm,
+                                             const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
+
+    int FindCertificateInStoreByIssuerAndSerial( const unsigned char* issuerNameDerBuffer, const int issuerNameDerBufferSize,
+                                                 const unsigned char* serialNumberBuffer, const int serialNumberBufferSize,
+                                                 const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
+
+    int FindCertificateInStoreByExtendedKeyUsage( const unsigned int extendedKeyUsageFlags,
+                                                  const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
+
+    int FindCertificateInStoreByPrivateKeyPresence( const bool requirePrivateKey,
+                                                    const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     int ImportPfxToStore( const unsigned char* pfxBuffer, const int pfxBufferSize,
                           const char* password, const int passwordSize) override;

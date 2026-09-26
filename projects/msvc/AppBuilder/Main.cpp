@@ -385,6 +385,8 @@ int runTestsViaCryptoApiTester()
 
     cryptoApiTester.RunCertificateCsrGenerationTest();
 
+    cryptoApiTester.RunCertificateCsrDerPemRoundtripTest();
+
     cryptoApiTester.RunCertificateIssueFromRequestTest();
 
     cryptoApiTester.RunCertificateChainValidTest();
@@ -404,6 +406,8 @@ int runTestsViaCryptoApiTester()
     cryptoApiTester.RunCertificateCrlCheckWrongIssuerRejectionTest();
 
     cryptoApiTester.RunCertificateStoreMemoryFindTest();
+
+    cryptoApiTester.RunCertificateStoreFindByFilterTest();
 
     cryptoApiTester.RunCmsSignVerifyDetachedTest();
 

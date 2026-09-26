@@ -753,6 +753,19 @@ void CPythonScriptEngine::SetDllCryptoApi(CScriptCryptoApiDll* api)
 }
 // -----------------------------------------------------------------------------
 
+void CPythonScriptEngine::SetDllCryptoApiBob(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        py::globals()["cryptoApiBob"] = py::cast(api, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
 void CPythonScriptEngine::SetDllPgpEngine(CScriptPgpEngineDll* engine)
 {
     try
@@ -884,6 +897,12 @@ void CPythonScriptEngine::registerBindings(void)
 // -----------------------------------------------------------------------------
 
 void CPythonScriptEngine::SetDllCryptoApi(CScriptCryptoApiDll* api)
+{
+    (void)api;
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllCryptoApiBob(CScriptCryptoApiDll* api)
 {
     (void)api;
 }

@@ -61,6 +61,13 @@ public:
     void SetDllCmsService(CScriptCmsServiceDll* service);
     void SetDllTimestampService(CScriptTimestampServiceDll* service);
 
+    // Second, independently-named DLL-hosted ICryptoApi global ("cryptoApiBob") -- grown on demand
+    // (2026-09-26) so a script can exercise a real two-party key-agreement exchange against two
+    // genuinely separate ICryptoApi instances obtained from the same loaded CryptoAPI.dll, the way
+    // DllRunner/Main.cpp's own KeyAgreement demo needs (SetDllCryptoApi alone only ever injects one
+    // fixed global named "cryptoApi").
+    void SetDllCryptoApiBob(CScriptCryptoApiDll* api);
+
 protected:
 
 private:

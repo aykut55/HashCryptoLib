@@ -375,6 +375,20 @@ void CLuaScriptEngineLuaBridgeLegacy::registerBindings(void)
 }
 // -----------------------------------------------------------------------------
 
+void CLuaScriptEngineLuaBridgeLegacy::SetDllCryptoApiBob(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        luabridge::push(luaState_, api);
+        lua_setglobal(luaState_, "cryptoApiBob");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
 void CLuaScriptEngineLuaBridgeLegacy::SetDllCryptoApi(CScriptCryptoApiDll* api)
 {
     try

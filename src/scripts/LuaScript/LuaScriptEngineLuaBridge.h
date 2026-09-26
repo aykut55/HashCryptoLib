@@ -53,6 +53,10 @@ public:
     // responsibility; this engine never constructs or destroys it. Same reasoning as
     // CLuaScriptEngineSol's own identically-named setters.
     void SetDllCryptoApi(CScriptCryptoApiDll* api);
+
+    // Second, independently-named DLL-hosted ICryptoApi global ("cryptoApiBob") -- see
+    // LuaScriptEngineSol.h's own identically-named method for why this exists.
+    void SetDllCryptoApiBob(CScriptCryptoApiDll* api);
     void SetDllPgpEngine(CScriptPgpEngineDll* engine);
     void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
     void SetDllCertificateManager(CScriptCertificateManagerDll* manager);

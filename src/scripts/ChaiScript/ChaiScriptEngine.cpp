@@ -534,6 +534,19 @@ void CChaiScriptEngine::SetDllCryptoApi(CScriptCryptoApiDll* api)
 }
 // -----------------------------------------------------------------------------
 
+void CChaiScriptEngine::SetDllCryptoApiBob(CScriptCryptoApiDll* api)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(api), "cryptoApiBob");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
 void CChaiScriptEngine::SetDllPgpEngine(CScriptPgpEngineDll* engine)
 {
     try

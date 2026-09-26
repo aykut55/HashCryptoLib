@@ -884,6 +884,11 @@ public:
     // self-signature does not verify is rejected there with INVALID_DATA).
     int RunCertificateCsrGenerationTest(void) override;
 
+    // Same DER<->PEM round-trip shape as RunCertificateDerPemRoundtripTest, but for a CSR
+    // (ConvertCertificateRequestDerToPem/ConvertCertificateRequestPemToDer) -- closes Plan.md
+    // §25.3's "PKCS#10 CSR: DER/PEM çıktı" gap.
+    int RunCertificateCsrDerPemRoundtripTest(void) override;
+
     // A self-signed CA certificate issues a leaf certificate from a separately generated CSR via
     // IssueCertificateFromRequest; the issued leaf's GetCertificateInfoText issuer field matches
     // the CA's subject, and ValidateChain (with the CA added as the sole intermediate, which is
@@ -945,6 +950,16 @@ public:
     // FindCertificateInStoreBySubject by its CN substring, confirm the returned DER matches;
     // CloseStore. Never touches the real machine's CurrentUser/LocalMachine stores.
     int RunCertificateStoreMemoryFindTest(void) override;
+
+    // Same CERTIFICATE_STORE_MEMORY setup as RunCertificateStoreMemoryFindTest, but exercises the
+    // three additional Plan.md §25.7 search filters: FindCertificateInStoreByFingerprint (real
+    // SHA-256 digest of the added certificate, computed independently via raw OpenSSL in this test
+    // file), FindCertificateInStoreByIssuerAndSerial (the self-signed cert's own issuer name DER +
+    // serial bytes), FindCertificateInStoreByExtendedKeyUsage (CERTIFICATE_EKU_SERVER_AUTH), and
+    // FindCertificateInStoreByPrivateKeyPresence (imports a second identity via ImportPfxToStore,
+    // which DOES attach a private key, confirming it is found with requirePrivateKey=true and the
+    // first, key-less certificate is found with requirePrivateKey=false).
+    int RunCertificateStoreFindByFilterTest(void) override;
 
     // CCmsService::SignDetached over a buffer, then VerifyDetached against the original buffer
     // with no trusted root (crypto-only check) reports CMS_VERIFICATION_VALID; VerifyDetached

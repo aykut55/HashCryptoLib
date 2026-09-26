@@ -272,6 +272,13 @@ int main()
             CryptoApiNS::IPgpEngine* pScriptPgpEngine = pCryptoApiDllLoader->GetPgpEngineObject();
             CryptoApiNS::IPgpEngineWrapper* pScriptPgpEngineWrapper = pCryptoApiDllLoader->GetPgpEngineWrapperObject();
 
+            // Second, genuinely independent ICryptoApi instance ("bob") -- GetCryptoApiObject calls
+            // CreateCryptoApi() inside the loaded DLL again, which allocates a fresh CCryptoApi, not
+            // a second handle to the same one. Exists solely for the KeyAgreement demo below, which
+            // needs two separate key pairs to do a real two-party exchange (unlike every other demo
+            // in this block, which only ever needs the one shared pScriptCryptoApi/scriptCryptoApi).
+            CryptoApiNS::ICryptoApi* pScriptCryptoApiBob = pCryptoApiDllLoader->GetCryptoApiObject();
+
             if (pScriptCryptoApi && pScriptPgpEngine && pScriptPgpEngineWrapper)
             {
                 std::cout << std::endl;
@@ -442,12 +449,37 @@ int main()
                     "cryptoApi:EncryptFileWithProgress(\"dllprogresstest\", \"dllrunner_progress_test_in.bin\", \"dllrunner_progress_test_enc.bin\", onProgress)\n"
                     "ok = (callCount >= 3) and (lastCurrentByte == 5120)\n";
 
+                // sol2 only: a second level of C++-calls-INTO-script nesting on top of the per-chunk
+                // onProgress callback -- inside onProgress itself, the script calls the bound C++
+                // function OnProgress (now registered unconditionally in LuaScriptEngineSol.cpp's
+                // registerBindings, see that binding's own comment), which immediately calls back
+                // into a SECOND script-defined function (innerCallback), then unwinds all the way
+                // back to the C++ file loop. Same demonstration LibRunner's own static-link progress
+                // callback block already proves, now shown working against a DLL-hosted
+                // CScriptCryptoApiDll too -- closes the parity gap this block used to have.
+                const char* progressLuaScriptWithInnerCallback =
+                    "callCount = 0\n"
+                    "lastCurrentByte = 0\n"
+                    "innerCallCount = 0\n"
+                    "local function innerCallback()\n"
+                    "    innerCallCount = innerCallCount + 1\n"
+                    "end\n"
+                    "local function onProgress(currentByte, totalByte, percentage)\n"
+                    "    callCount = callCount + 1\n"
+                    "    lastCurrentByte = currentByte\n"
+                    "    OnProgress(innerCallback)\n"
+                    "    return true\n"
+                    "end\n"
+                    "cryptoApi:EncryptFileWithProgress(\"dllprogresstest\", \"dllrunner_progress_test_in.bin\", \"dllrunner_progress_test_enc.bin\", onProgress)\n"
+                    "ok = (callCount >= 3) and (lastCurrentByte == 5120) and (innerCallCount == callCount)\n";
+
                 try
                 {
                     CryptoApiNS::CLuaScriptEngineSol luaEngine;
                     luaEngine.SetDllCryptoApi(&scriptCryptoApi);
-                    luaEngine.RunString(progressLuaScript);
-                    std::cout << "DLL-hosted progress callback (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << " callCount=" << luaEngine.GetGlobalInt("callCount") << std::endl;
+                    luaEngine.RunString(progressLuaScriptWithInnerCallback);
+                    std::cout << "DLL-hosted progress callback (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED")
+                              << " callCount=" << luaEngine.GetGlobalInt("callCount") << " innerCallCount=" << luaEngine.GetGlobalInt("innerCallCount") << std::endl;
                 }
                 catch (const std::exception& ex)
                 {
@@ -813,15 +845,124 @@ int main()
                     std::cout << "DLL-hosted scripting Signature (Python): FAILED exception " << ex.what() << std::endl;
                 }
 
-                // KeyAgreement deliberately SKIPPED here (unlike LibRunner's equivalent block,
-                // which has two independent statically-linked CryptoApi.new()/CryptoApi() instances
-                // to play alice/bob): a real two-party exchange needs two INDEPENDENT ICryptoApi
-                // instances, but SetDllCryptoApi always injects a single fixed global named
-                // "cryptoApi" per engine -- supporting a second, differently-named alias would mean
-                // growing every engine's binding surface again beyond what this round already did.
-                // Not a correctness gap in CScriptCryptoApiDll itself, just an unexercised DLL-demo
-                // wiring limitation.
-                std::cout << "DLL-hosted scripting KeyAgreement: SKIPPED for all 5 engines (needs a second independently-named DLL-hosted CryptoApi global, not currently wired -- see this block's own comment)" << std::endl;
+                // KeyAgreement: now a real two-party exchange (previously SKIPPED here, unlike
+                // LibRunner's equivalent block, for exactly the reason this comment used to give --
+                // SetDllCryptoApi alone only ever injects one fixed global named "cryptoApi" per
+                // engine). scriptCryptoApiBob wraps the SEPARATE pScriptCryptoApiBob instance
+                // obtained above (a second, genuinely independent CreateCryptoApi() call inside the
+                // DLL, not a second handle to the same object) and is injected via the new
+                // SetDllCryptoApiBob setter as a second global, "cryptoApiBob" -- so "cryptoApi" and
+                // "cryptoApiBob" play alice/bob exactly like LibRunner's two CryptoApi.new()/
+                // CryptoApi() instances do.
+                if (pScriptCryptoApiBob != nullptr)
+                {
+                    CryptoApiNS::CScriptCryptoApiDll scriptCryptoApiBob(pScriptCryptoApiBob);
+
+                    const char* keyAgreementLuaScript =
+                        "cryptoApi:GenerateKeyAgreementKeyPair()\n"
+                        "cryptoApiBob:GenerateKeyAgreementKeyPair()\n"
+                        "local alicePublic = cryptoApi:ExportKeyAgreementPublicKey()\n"
+                        "local bobPublic = cryptoApiBob:ExportKeyAgreementPublicKey()\n"
+                        "local aliceSecret = cryptoApi:DeriveSharedSecret(bobPublic)\n"
+                        "local bobSecret = cryptoApiBob:DeriveSharedSecret(alicePublic)\n"
+                        "ok = (#aliceSecret == #bobSecret) and (#aliceSecret == cryptoApi:GetSharedSecretSize())\n"
+                        "for i = 1, #aliceSecret do\n"
+                        "    if aliceSecret[i] ~= bobSecret[i] then ok = false end\n"
+                        "end\n";
+
+                    try
+                    {
+                        CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                        luaEngine.SetDllCryptoApi(&scriptCryptoApi);
+                        luaEngine.SetDllCryptoApiBob(&scriptCryptoApiBob);
+                        luaEngine.RunString(keyAgreementLuaScript);
+                        std::cout << "DLL-hosted scripting KeyAgreement (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting KeyAgreement (sol2): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    try
+                    {
+                        CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                        luaBridgeEngine.SetDllCryptoApi(&scriptCryptoApi);
+                        luaBridgeEngine.SetDllCryptoApiBob(&scriptCryptoApiBob);
+                        luaBridgeEngine.RunString(keyAgreementLuaScript);
+                        std::cout << "DLL-hosted scripting KeyAgreement (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting KeyAgreement (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    try
+                    {
+                        CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                        luaBridgeLegacyEngine.SetDllCryptoApi(&scriptCryptoApi);
+                        luaBridgeLegacyEngine.SetDllCryptoApiBob(&scriptCryptoApiBob);
+                        luaBridgeLegacyEngine.RunString(keyAgreementLuaScript);
+                        std::cout << "DLL-hosted scripting KeyAgreement (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting KeyAgreement (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    const char* keyAgreementChaiScript =
+                        "cryptoApi.GenerateKeyAgreementKeyPair();\n"
+                        "cryptoApiBob.GenerateKeyAgreementKeyPair();\n"
+                        "var alicePublic = cryptoApi.ExportKeyAgreementPublicKey();\n"
+                        "var bobPublic = cryptoApiBob.ExportKeyAgreementPublicKey();\n"
+                        "var aliceSecret = cryptoApi.DeriveSharedSecret(bobPublic);\n"
+                        "var bobSecret = cryptoApiBob.DeriveSharedSecret(alicePublic);\n"
+                        "global ok = (aliceSecret.size() == bobSecret.size()) && (aliceSecret.size() == cryptoApi.GetSharedSecretSize());\n"
+                        "for (auto i = 0; i < aliceSecret.size(); ++i) {\n"
+                        "    if (aliceSecret[i] != bobSecret[i]) { ok = false; }\n"
+                        "}\n";
+
+                    try
+                    {
+                        CryptoApiNS::CChaiScriptEngine chaiEngine;
+                        chaiEngine.SetDllCryptoApi(&scriptCryptoApi);
+                        chaiEngine.SetDllCryptoApiBob(&scriptCryptoApiBob);
+                        chaiEngine.RunString(keyAgreementChaiScript);
+                        std::cout << "DLL-hosted scripting KeyAgreement (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting KeyAgreement (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    const char* keyAgreementPythonScript =
+                        "cryptoApi.GenerateKeyAgreementKeyPair()\n"
+                        "cryptoApiBob.GenerateKeyAgreementKeyPair()\n"
+                        "alicePublic = cryptoApi.ExportKeyAgreementPublicKey()\n"
+                        "bobPublic = cryptoApiBob.ExportKeyAgreementPublicKey()\n"
+                        "aliceSecret = cryptoApi.DeriveSharedSecret(bobPublic)\n"
+                        "bobSecret = cryptoApiBob.DeriveSharedSecret(alicePublic)\n"
+                        "ok = (len(aliceSecret) == len(bobSecret)) and (len(aliceSecret) == cryptoApi.GetSharedSecretSize())\n"
+                        "for i in range(len(aliceSecret)):\n"
+                        "    if aliceSecret[i] != bobSecret[i]:\n"
+                        "        ok = False\n";
+
+                    try
+                    {
+                        CryptoApiNS::CPythonScriptEngine pythonEngine;
+                        pythonEngine.SetDllCryptoApi(&scriptCryptoApi);
+                        pythonEngine.SetDllCryptoApiBob(&scriptCryptoApiBob);
+                        pythonEngine.RunString(keyAgreementPythonScript);
+                        std::cout << "DLL-hosted scripting KeyAgreement (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting KeyAgreement (Python): FAILED exception " << ex.what() << std::endl;
+                    }
+                }
+                else
+                {
+                    std::cout << "DLL-hosted scripting KeyAgreement: SKIPPED for all 5 engines (could not obtain a second ICryptoApi instance from the DLL)" << std::endl;
+                }
 
                 const char* randomLuaScript =
                     "local randomBytes = cryptoApi:GenerateRandomBytes(32)\n"
@@ -1059,6 +1200,10 @@ int main()
             if (pScriptCryptoApi)
             {
                 pCryptoApiDllLoader->DestroyCryptoApiObject(pScriptCryptoApi);
+            }
+            if (pScriptCryptoApiBob)
+            {
+                pCryptoApiDllLoader->DestroyCryptoApiObject(pScriptCryptoApiBob);
             }
             if (pScriptPgpEngine)
             {

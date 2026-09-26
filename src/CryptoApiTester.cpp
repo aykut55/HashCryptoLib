@@ -22236,6 +22236,65 @@ int CCryptoApiTester::RunCertificateCsrGenerationTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunCertificateCsrDerPemRoundtripTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-csr-derpem.example.com";
+
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateCertificateRequest(cn, static_cast<int>(std::strlen(cn)), nullptr, 0, CERTIFICATE_KEY_ECDSA_P256,
+                                                           CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCsrDerPemRoundtripTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        char pemBuffer[8192];
+        int pemSize = 0;
+        status = certManager.ConvertCertificateRequestDerToPem(csrDer, csrSize, sizeof(pemBuffer), pemBuffer, &pemSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCsrDerPemRoundtripTest: FAILED ConvertCertificateRequestDerToPem status=" << status << std::endl;
+            return status;
+        }
+        const std::string pemText(pemBuffer, static_cast<std::size_t>(pemSize));
+        if (pemText.find("BEGIN CERTIFICATE REQUEST") == std::string::npos)
+        {
+            std::cout << "RunCertificateCsrDerPemRoundtripTest: FAILED PEM missing CSR header: " << pemText << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned char roundTripDer[8192];
+        int roundTripSize = 0;
+        status = certManager.ConvertCertificateRequestPemToDer(pemBuffer, pemSize, sizeof(roundTripDer), roundTripDer, &roundTripSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCsrDerPemRoundtripTest: FAILED ConvertCertificateRequestPemToDer status=" << status << std::endl;
+            return status;
+        }
+
+        if (roundTripSize != csrSize || std::memcmp(roundTripDer, csrDer, static_cast<std::size_t>(csrSize)) != 0)
+        {
+            std::cout << "RunCertificateCsrDerPemRoundtripTest: FAILED DER mismatch after round-trip" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateCsrDerPemRoundtripTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunCertificateIssueFromRequestTest(void)
 {
     try
@@ -22970,6 +23029,145 @@ int CCryptoApiTester::RunCertificateStoreMemoryFindTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunCertificateStoreFindByFilterTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+
+        // Cert A: added key-less (AddCertificateToStore never attaches a private key) -- used for
+        // the fingerprint/issuer+serial/EKU filters and the requirePrivateKey=false case.
+        const char* cnA = "cryptoapi-test-store-filter-a.example.com";
+        unsigned char certADer[8192];
+        int certASize = 0;
+        char keyAPem[8192];
+        int keyASize = 0;
+        int status = certManager.CreateSelfSignedCertificate( cnA, static_cast<int>(std::strlen(cnA)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30,
+                                                               0, CERTIFICATE_EKU_SERVER_AUTH, CERTIFICATE_DIGEST_SHA256,
+                                                               sizeof(certADer), certADer, &certASize, sizeof(keyAPem), keyAPem, &keyASize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED cert A CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        // Cert B: imported via ImportPfxToStore, which DOES attach a private key -- used for the
+        // requirePrivateKey=true case.
+        const char* cnB = "cryptoapi-test-store-filter-b.example.com";
+        unsigned char certBDer[8192];
+        int certBSize = 0;
+        char keyBPem[8192];
+        int keyBSize = 0;
+        status = certManager.CreateSelfSignedCertificate(cnB, static_cast<int>(std::strlen(cnB)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                          CERTIFICATE_DIGEST_SHA256, sizeof(certBDer), certBDer, &certBSize, sizeof(keyBPem), keyBPem, &keyBSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED cert B CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* pfxPassword = "StoreFilterTestPassword123";
+        unsigned char pfxDer[8192];
+        int pfxSize = 0;
+        status = certManager.ExportPfx( certBDer, certBSize, keyBPem, keyBSize, pfxPassword, static_cast<int>(std::strlen(pfxPassword)),
+                                        sizeof(pfxDer), pfxDer, &pfxSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED ExportPfx status=" << status << std::endl;
+            return status;
+        }
+
+        status = certManager.OpenStore(CERTIFICATE_STORE_MEMORY);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED OpenStore status=" << status << std::endl;
+            return status;
+        }
+
+        status = certManager.AddCertificateToStore(certADer, certASize);
+        if (status != NO_ERROR)
+        {
+            certManager.CloseStore();
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED AddCertificateToStore (A) status=" << status << std::endl;
+            return status;
+        }
+
+        status = certManager.ImportPfxToStore(pfxDer, pfxSize, pfxPassword, static_cast<int>(std::strlen(pfxPassword)));
+        if (status != NO_ERROR)
+        {
+            certManager.CloseStore();
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED ImportPfxToStore (B) status=" << status << std::endl;
+            return status;
+        }
+
+        // Test-fixture-only exception to this file's usual "public facade only" policy (same
+        // rationale as BuildTestCrlDer's own comment): computes cert A's real SHA-256 fingerprint
+        // and pulls its issuer name DER + serial bytes independently via raw OpenSSL, so the filter
+        // methods under test are never handed data derived from their own internals.
+        const unsigned char* certAP = certADer;
+        X509* certAX509 = d2i_X509(nullptr, &certAP, certASize);
+        if (certAX509 == nullptr)
+        {
+            certManager.CloseStore();
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED could not re-parse cert A" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned char fingerprint[EVP_MAX_MD_SIZE];
+        unsigned int fingerprintLen = 0;
+        X509_digest(certAX509, EVP_sha256(), fingerprint, &fingerprintLen);
+
+        unsigned char* issuerNameDerPtr = nullptr;
+        const int issuerNameDerLen = i2d_X509_NAME(X509_get_issuer_name(certAX509), &issuerNameDerPtr);
+
+        BIGNUM* serialBn = ASN1_INTEGER_to_BN(X509_get_serialNumber(certAX509), nullptr);
+        const int serialByteLen = BN_num_bytes(serialBn);
+        std::vector<unsigned char> serialBytes(static_cast<std::size_t>(serialByteLen));
+        BN_bn2bin(serialBn, serialBytes.empty() ? nullptr : &serialBytes[0]);
+        BN_free(serialBn);
+
+        X509_free(certAX509);
+
+        unsigned char foundDer[8192];
+        int foundSize = 0;
+
+        status = certManager.FindCertificateInStoreByFingerprint(fingerprint, static_cast<int>(fingerprintLen), CERTIFICATE_DIGEST_SHA256,
+                                                                  sizeof(foundDer), foundDer, &foundSize);
+        const bool fingerprintOk = (status == NO_ERROR && foundSize == certASize && std::memcmp(foundDer, certADer, static_cast<std::size_t>(certASize)) == 0);
+
+        status = certManager.FindCertificateInStoreByIssuerAndSerial( issuerNameDerPtr, issuerNameDerLen, serialBytes.empty() ? nullptr : &serialBytes[0],
+                                                                       static_cast<int>(serialBytes.size()), sizeof(foundDer), foundDer, &foundSize);
+        const bool issuerSerialOk = (status == NO_ERROR && foundSize == certASize && std::memcmp(foundDer, certADer, static_cast<std::size_t>(certASize)) == 0);
+        OPENSSL_free(issuerNameDerPtr);
+
+        status = certManager.FindCertificateInStoreByExtendedKeyUsage(CERTIFICATE_EKU_SERVER_AUTH, sizeof(foundDer), foundDer, &foundSize);
+        const bool ekuOk = (status == NO_ERROR && foundSize == certASize && std::memcmp(foundDer, certADer, static_cast<std::size_t>(certASize)) == 0);
+
+        status = certManager.FindCertificateInStoreByPrivateKeyPresence(true, sizeof(foundDer), foundDer, &foundSize);
+        const bool hasKeyOk = (status == NO_ERROR && foundSize == certBSize && std::memcmp(foundDer, certBDer, static_cast<std::size_t>(certBSize)) == 0);
+
+        status = certManager.FindCertificateInStoreByPrivateKeyPresence(false, sizeof(foundDer), foundDer, &foundSize);
+        const bool noKeyOk = (status == NO_ERROR && foundSize == certASize && std::memcmp(foundDer, certADer, static_cast<std::size_t>(certASize)) == 0);
+
+        certManager.CloseStore();
+
+        if (!fingerprintOk || !issuerSerialOk || !ekuOk || !hasKeyOk || !noKeyOk)
+        {
+            std::cout << "RunCertificateStoreFindByFilterTest: FAILED fingerprint=" << fingerprintOk << " issuerSerial=" << issuerSerialOk
+                      << " eku=" << ekuOk << " hasKey=" << hasKeyOk << " noKey=" << noKeyOk << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateStoreFindByFilterTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunCmsSignVerifyDetachedTest(void)
 {
     try
@@ -23302,7 +23500,11 @@ int CCryptoApiTester::RunTimestampRequestResponseRoundtripTest(void)
 
         // Real public TSA over the network -- same "hit the real external tool" philosophy as the
         // GnuPG interop tests; a network/TSA failure is an environment issue, not a code bug, so it
-        // is reported as SKIPPED rather than FAILED.
+        // is reported as SKIPPED rather than FAILED. Returns NO_ERROR (same convention as the
+        // GnuPG-unavailable interop tests) so this is never mistaken for a code defect -- but the
+        // printed line deliberately never contains the substring "PASSED" either, so a summary that
+        // greps/counts "PASSED" lines can never silently count a skip as a real TSA round trip; a
+        // reader scanning for test coverage should grep for "SKIPPED" too, not just "FAILED".
         const char* tsaUrl = "http://timestamp.digicert.com";
         unsigned char responseDer[8192];
         int responseSize = 0;
@@ -23310,7 +23512,7 @@ int CCryptoApiTester::RunTimestampRequestResponseRoundtripTest(void)
                                                            sizeof(responseDer), responseDer, &responseSize);
         if (status != NO_ERROR)
         {
-            std::cout << "RunTimestampRequestResponseRoundtripTest: SKIPPED network/TSA unavailable status=" << status << std::endl;
+            std::cout << "RunTimestampRequestResponseRoundtripTest: SKIPPED (NOT a pass -- real TSA round trip not exercised) network/TSA unavailable status=" << status << std::endl;
             return NO_ERROR;
         }
 
@@ -23365,7 +23567,7 @@ int CCryptoApiTester::RunTimestampVerifyTest(void)
                                                            sizeof(responseDer), responseDer, &responseSize);
         if (status != NO_ERROR)
         {
-            std::cout << "RunTimestampVerifyTest: SKIPPED network/TSA unavailable status=" << status << std::endl;
+            std::cout << "RunTimestampVerifyTest: SKIPPED (NOT a pass -- real TSA round trip not exercised) network/TSA unavailable status=" << status << std::endl;
             return NO_ERROR;
         }
 
@@ -23413,7 +23615,7 @@ int CCryptoApiTester::RunTimestampTamperedDigestRejectionTest(void)
                                                            sizeof(responseDer), responseDer, &responseSize);
         if (status != NO_ERROR)
         {
-            std::cout << "RunTimestampTamperedDigestRejectionTest: SKIPPED network/TSA unavailable status=" << status << std::endl;
+            std::cout << "RunTimestampTamperedDigestRejectionTest: SKIPPED (NOT a pass -- real TSA round trip not exercised) network/TSA unavailable status=" << status << std::endl;
             return NO_ERROR;
         }
 
