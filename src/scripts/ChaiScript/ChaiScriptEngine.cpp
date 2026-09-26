@@ -472,6 +472,21 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptCryptoApiDll::ComputeHashString), "ComputeHashString");
     chai_.add(chaiscript::fun(&CScriptCryptoApiDll::EncryptFile), "EncryptFileWithProgress");
     chai_.add(chaiscript::fun(&CScriptCryptoApiDll::DecryptFile), "DecryptFileWithProgress");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::EncryptString), "EncryptString");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::DecryptString), "DecryptString");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GenerateAsymmetricKeyPair), "GenerateAsymmetricKeyPair");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GetAsymmetricCiphertextSize), "GetAsymmetricCiphertextSize");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::EncryptWithPublicKey), "EncryptWithPublicKey");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::DecryptWithPrivateKey), "DecryptWithPrivateKey");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GenerateSignatureKeyPair), "GenerateSignatureKeyPair");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GetSignatureSize), "GetSignatureSize");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::SignBuffer), "SignBuffer");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::VerifyBuffer), "VerifyBuffer");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GenerateKeyAgreementKeyPair), "GenerateKeyAgreementKeyPair");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GetSharedSecretSize), "GetSharedSecretSize");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::ExportKeyAgreementPublicKey), "ExportKeyAgreementPublicKey");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::DeriveSharedSecret), "DeriveSharedSecret");
+    chai_.add(chaiscript::fun(&CScriptCryptoApiDll::GenerateRandomBytes), "GenerateRandomBytes");
 
     chai_.add(chaiscript::user_type<CScriptPgpEngineDll>(), "PgpEngineDll");
     chai_.add(chaiscript::fun(&CScriptPgpEngineDll::GenerateKeyPair), "GenerateKeyPair");
@@ -479,6 +494,8 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptPgpEngineDll::ImportPeerPublicKey), "ImportPeerPublicKey");
     chai_.add(chaiscript::fun(&CScriptPgpEngineDll::EncryptStringArmored), "EncryptStringArmored");
     chai_.add(chaiscript::fun(&CScriptPgpEngineDll::DecryptStringArmored), "DecryptStringArmored");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineDll::ClearSignString), "ClearSignString");
+    chai_.add(chaiscript::fun(&CScriptPgpEngineDll::VerifyClearSignedString), "VerifyClearSignedString");
 
     chai_.add(chaiscript::user_type<CScriptPgpEngineWrapperDll>(), "PgpEngineWrapperDll");
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::IsGnuPgAvailable), "IsGnuPgAvailable");

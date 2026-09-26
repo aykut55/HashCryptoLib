@@ -22,9 +22,12 @@ namespace CryptoApiNS
 // provider stack at all, so a host compiling ONLY this file (plus the ICryptoApi/IPgpEngine/
 // IPgpEngineWrapper interface headers and CryptoApiDllLoader) can drive scripting purely off the
 // loaded DLL. Method surface is intentionally reduced to what DllRunner's own DLL-hosted scripting
-// smoke tests exercise (Hash), not a full mirror of CScriptCryptoApi -- same "reduced surface,
-// grows on demand" precedent CLuaScriptEngineLuaBridgeLegacy's own header comment documents. The
-// wrapped ICryptoApi* is never owned/deleted here; the caller (via
+// smoke tests exercise (Hash + EncryptFile/DecryptFile progress callbacks +, as of 2026-09-26,
+// symmetric/asymmetric/signature/key-agreement/random -- see the 2026-09-22 parity audit's "7
+// missing script test families" finding), not a full mirror of CScriptCryptoApi (still missing
+// e.g. EncryptBuffer/EncryptBytes/EncryptLegacyBuffer/ComputeHashBuffer/File) -- same "reduced
+// surface, grows on demand" precedent CLuaScriptEngineLuaBridgeLegacy's own header comment
+// documents. The wrapped ICryptoApi* is never owned/deleted here; the caller (via
 // CCryptoApiDllLoader::DestroyCryptoApiObject()) remains responsible for it.
 class CScriptCryptoApiDll
 {
@@ -35,6 +38,30 @@ public:
     std::string GetVersion(void) const;
     int GetHashSize(void) const;
     std::vector<unsigned char> ComputeHashString(const std::string& input);
+
+    // Grown on demand (2026-09-26, see ScriptEngineTester.cpp's own RunXxxScriptYyyTest family for
+    // the native/local equivalent of each) to close the 2026-09-22 parity audit's "7 missing script
+    // test families" gap for DllRunner specifically -- same method shapes as CScriptCryptoApi's own
+    // identically-named overloads, just bridged through api_-> instead of api_. .
+    std::vector<unsigned char> EncryptString(const std::string& password, const std::string& input);
+    std::string DecryptString(const std::string& password, const std::vector<unsigned char>& input);
+
+    void GenerateAsymmetricKeyPair(void);
+    int GetAsymmetricCiphertextSize(void) const;
+    std::vector<unsigned char> EncryptWithPublicKey(const std::vector<unsigned char>& input);
+    std::vector<unsigned char> DecryptWithPrivateKey(const std::vector<unsigned char>& input);
+
+    void GenerateSignatureKeyPair(void);
+    int GetSignatureSize(void) const;
+    std::vector<unsigned char> SignBuffer(const std::vector<unsigned char>& input);
+    bool VerifyBuffer(const std::vector<unsigned char>& input, const std::vector<unsigned char>& signature);
+
+    void GenerateKeyAgreementKeyPair(void);
+    int GetSharedSecretSize(void) const;
+    std::vector<unsigned char> ExportKeyAgreementPublicKey(void);
+    std::vector<unsigned char> DeriveSharedSecret(const std::vector<unsigned char>& peerPublicKey);
+
+    std::vector<unsigned char> GenerateRandomBytes(const int outputSize);
 
     // C++-calls-INTO-script direction, over a DLL-hosted ICryptoApi* -- same mechanism
     // CScriptCryptoApi's own identically-named overloads use (see ScriptProgressCallback.h's own
@@ -51,6 +78,7 @@ private:
 
     // Same two-call capacity-query dance as CScriptCryptoApi's own private helpers.
     std::vector<unsigned char> callBinaryOutput(const char* methodName, const std::function<int(int, unsigned char*, int*)>& fn) const;
+    std::string callTextOutput(const char* methodName, const std::function<int(int, char*, int*)>& fn) const;
 
     // For methods with no output buffer at all (just an ErrorCode return).
     void callVoid(const char* methodName, const std::function<int(void)>& fn) const;

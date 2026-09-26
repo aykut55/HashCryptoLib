@@ -18,6 +18,8 @@
 // crypto engine" reasoning as everything else in Certificates/CertificateManager.cpp), kept
 // entirely inside this test file -- not exposed anywhere in src/.
 #include "openssl/bio.h"
+#include "openssl/cms.h"
+#include "openssl/ess.h"
 #include "openssl/evp.h"
 #include "openssl/pem.h"
 #include "openssl/x509.h"
@@ -23137,6 +23139,139 @@ int CCryptoApiTester::RunCmsUntrustedSignerRejectionTest(void)
         }
 
         std::cout << "RunCmsUntrustedSignerRejectionTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCmsSigningCertificateV2AttributeTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* signerCn = "cryptoapi-test-cms-signingcertv2-signer.example.com";
+        unsigned char signerCertDer[8192];
+        int signerCertSize = 0;
+        char signerKeyPem[8192];
+        int signerKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(signerCn, static_cast<int>(std::strlen(signerCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                              CERTIFICATE_DIGEST_SHA256, sizeof(signerCertDer), signerCertDer, &signerCertSize,
+                                                              sizeof(signerKeyPem), signerKeyPem, &signerKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED signer CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* otherCn = "cryptoapi-test-cms-signingcertv2-other.example.com";
+        unsigned char otherCertDer[8192];
+        int otherCertSize = 0;
+        char otherKeyPem[8192];
+        int otherKeySize = 0;
+        status = certManager.CreateSelfSignedCertificate(otherCn, static_cast<int>(std::strlen(otherCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                          CERTIFICATE_DIGEST_SHA256, sizeof(otherCertDer), otherCertDer, &otherCertSize,
+                                                          sizeof(otherKeyPem), otherKeyPem, &otherKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED other CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        CCmsService cmsService;
+        const unsigned char data[] = { 'S', 'i', 'g', 'n', 'i', 'n', 'g', 'C', 'e', 'r', 't', 'V', '2', ' ', 't', 'e', 's', 't' };
+        unsigned char cmsDer[8192];
+        int cmsSize = 0;
+        status = cmsService.SignDetached(data, sizeof(data), signerCertDer, signerCertSize, signerKeyPem, signerKeySize, CMS_DIGEST_SHA256,
+                                         sizeof(cmsDer), cmsDer, &cmsSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED SignDetached status=" << status << std::endl;
+            return status;
+        }
+
+        const unsigned char* cmsP = cmsDer;
+        CMS_ContentInfo* cms = d2i_CMS_ContentInfo(nullptr, &cmsP, cmsSize);
+        if (cms == nullptr)
+        {
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED could not re-parse SignDetached's own CMS output" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        STACK_OF(CMS_SignerInfo)* signerInfos = CMS_get0_SignerInfos(cms);
+        if (signerInfos == nullptr || sk_CMS_SignerInfo_num(signerInfos) != 1)
+        {
+            CMS_ContentInfo_free(cms);
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED expected exactly 1 SignerInfo" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        CMS_SignerInfo* signerInfo = sk_CMS_SignerInfo_value(signerInfos, 0);
+
+        const int attrLoc = CMS_signed_get_attr_by_NID(signerInfo, NID_id_smime_aa_signingCertificateV2, -1);
+        if (attrLoc < 0)
+        {
+            CMS_ContentInfo_free(cms);
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED signing-certificate-v2 attribute not present" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        X509_ATTRIBUTE* attr = CMS_signed_get_attr(signerInfo, attrLoc);
+        const ASN1_TYPE* attrValue = (attr != nullptr && X509_ATTRIBUTE_count(attr) >= 1) ? X509_ATTRIBUTE_get0_type(attr, 0) : nullptr;
+        if (attrValue == nullptr || attrValue->type != V_ASN1_SEQUENCE || attrValue->value.sequence == nullptr)
+        {
+            CMS_ContentInfo_free(cms);
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED attribute value missing or wrong ASN.1 type" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char* essP = ASN1_STRING_get0_data(attrValue->value.sequence);
+        const int essLen = ASN1_STRING_length(attrValue->value.sequence);
+        ESS_SIGNING_CERT_V2* signingCertV2 = d2i_ESS_SIGNING_CERT_V2(nullptr, &essP, essLen);
+        if (signingCertV2 == nullptr)
+        {
+            CMS_ContentInfo_free(cms);
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED attribute did not decode as ESS_SIGNING_CERT_V2" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char* signerP = signerCertDer;
+        X509* realSignerCert = d2i_X509(nullptr, &signerP, signerCertSize);
+        const unsigned char* otherP = otherCertDer;
+        X509* unrelatedCert = d2i_X509(nullptr, &otherP, otherCertSize);
+        if (realSignerCert == nullptr || unrelatedCert == nullptr)
+        {
+            if (realSignerCert) X509_free(realSignerCert);
+            if (unrelatedCert) X509_free(unrelatedCert);
+            ESS_SIGNING_CERT_V2_free(signingCertV2);
+            CMS_ContentInfo_free(cms);
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED could not re-parse fixture certificates" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        STACK_OF(X509)* realSignerStack = sk_X509_new_null();
+        sk_X509_push(realSignerStack, realSignerCert);
+        const int matchesRealSigner = OSSL_ESS_check_signing_certs(nullptr, signingCertV2, realSignerStack, 1);
+        sk_X509_free(realSignerStack);
+
+        STACK_OF(X509)* unrelatedStack = sk_X509_new_null();
+        sk_X509_push(unrelatedStack, unrelatedCert);
+        const int matchesUnrelated = OSSL_ESS_check_signing_certs(nullptr, signingCertV2, unrelatedStack, 1);
+        sk_X509_free(unrelatedStack);
+
+        X509_free(realSignerCert);
+        X509_free(unrelatedCert);
+        ESS_SIGNING_CERT_V2_free(signingCertV2);
+        CMS_ContentInfo_free(cms);
+
+        if (matchesRealSigner != 1 || matchesUnrelated == 1)
+        {
+            std::cout << "RunCmsSigningCertificateV2AttributeTest: FAILED matchesRealSigner=" << matchesRealSigner << " matchesUnrelated=" << matchesUnrelated << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCmsSigningCertificateV2AttributeTest: PASSED" << std::endl;
         return NO_ERROR;
     }
     catch (...)

@@ -961,6 +961,19 @@ public:
     // crypto-only pass still succeeds, only the trust pass fails).
     int RunCmsUntrustedSignerRejectionTest(void) override;
 
+    // Test-fixture exception to this file's usual "public facade only" policy (same rationale as
+    // BuildTestCrlDer's own comment) -- parses the CMS DER SignDetached above just produced with
+    // raw OpenSSL to confirm the RFC 5035 signing-certificate-v2 attribute is genuinely present and
+    // decodes, then uses the exact same OSSL_ESS_check_signing_certs primitive
+    // CCmsService::VerifyDetached's own new check relies on: confirms it reports a match against
+    // the real signer certificate, and confirms it correctly REJECTS an unrelated second
+    // certificate. Does not exercise CMS_VERIFICATION_SIGNING_CERT_MISMATCH end-to-end through
+    // VerifyDetached itself -- that would need tampering with the CMS structure's embedded
+    // certificate to swap in a different, same-key certificate after signing (a real-world
+    // substitution scenario, but not constructible through this SDK's own public API without
+    // reaching into CMS ASN.1 internals well beyond what OpenSSL exposes for that).
+    int RunCmsSigningCertificateV2AttributeTest(void) override;
+
     // CTimestampService::CreateTimestampRequest over a SHA-256 digest, RequestTimestampFromTsa
     // against a real public RFC 3161 TSA (network-dependent, same "hit the real external tool"
     // philosophy as the GnuPG interop tests -- see this test's own body comment for the TSA URL

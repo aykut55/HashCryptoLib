@@ -113,23 +113,29 @@ std::string CLuaScriptEngineSol::GetGlobalString(const std::string& name) const
 
 void CLuaScriptEngineSol::registerBindings(void)
 {
-#ifndef DLL_RUNNER
-    // ErrorCode / CScriptException -- scripts see a raised Lua error whose message is
-    // CScriptException::what(); the numeric ErrorCode table below lets a script compare a caught
-    // error's own reported code (via pcall) against these named constants if it parses the message,
-    // or simply recognize the family of errors this SDK can raise.
     // sol2 registers std::vector<unsigned char> as a userdata-backed container the first time it is
     // pushed as a return value (every ...Buffer()/...Bytes() method above does this) -- once
     // registered that way, sol2 no longer auto-converts a plain Lua table into that same type for a
     // function PARAMETER (only a real vector userdata is accepted; see std::vector's own stack::get
     // implementation). ToBytes gives scripts a supported way to build one from a Lua string (UTF-8
     // bytes) for the handful of methods that take raw binary input (EncryptWithPublicKey, SignBuffer,
-    // etc.) without needing a manual string.byte loop.
+    // etc.) without needing a manual string.byte loop. Kept OUTSIDE the #ifndef DLL_RUNNER block
+    // below (unlike OnProgress/ErrorCode/the local usertypes) because it is a generic, facade-
+    // independent helper the *Dll scripts need too -- ScriptCertificateManagerDll/ScriptCmsServiceDll/
+    // ScriptTimestampServiceDll's SignDetached/CreateTimestampRequest etc. take raw
+    // std::vector<unsigned char> the same way the local facades do, with no other way to build one
+    // in a DLL_RUNNER build (ChaiScript's and Python's own ToBytes registrations are already
+    // unconditional for the same reason -- this was a pre-existing inconsistency, not by design).
     luaState_.set_function("ToBytes", [](const std::string& text)
     {
         return std::vector<unsigned char>(text.begin(), text.end());
     });
 
+#ifndef DLL_RUNNER
+    // ErrorCode / CScriptException -- scripts see a raised Lua error whose message is
+    // CScriptException::what(); the numeric ErrorCode table below lets a script compare a caught
+    // error's own reported code (via pcall) against these named constants if it parses the message,
+    // or simply recognize the family of errors this SDK can raise.
     // Second round of C++-calls-INTO-script nesting, one level deeper than
     // EncryptFileWithProgress/DecryptFileWithProgress's own onProgress: a script's onProgress
     // function (itself already invoked BY C++, from inside CCryptoApi's chunked file loop) can call
@@ -486,7 +492,22 @@ void CLuaScriptEngineSol::registerBindings(void)
         "GetHashSize", &CScriptCryptoApiDll::GetHashSize,
         "ComputeHashString", &CScriptCryptoApiDll::ComputeHashString,
         "EncryptFileWithProgress", &CScriptCryptoApiDll::EncryptFile,
-        "DecryptFileWithProgress", &CScriptCryptoApiDll::DecryptFile
+        "DecryptFileWithProgress", &CScriptCryptoApiDll::DecryptFile,
+        "EncryptString", &CScriptCryptoApiDll::EncryptString,
+        "DecryptString", &CScriptCryptoApiDll::DecryptString,
+        "GenerateAsymmetricKeyPair", &CScriptCryptoApiDll::GenerateAsymmetricKeyPair,
+        "GetAsymmetricCiphertextSize", &CScriptCryptoApiDll::GetAsymmetricCiphertextSize,
+        "EncryptWithPublicKey", &CScriptCryptoApiDll::EncryptWithPublicKey,
+        "DecryptWithPrivateKey", &CScriptCryptoApiDll::DecryptWithPrivateKey,
+        "GenerateSignatureKeyPair", &CScriptCryptoApiDll::GenerateSignatureKeyPair,
+        "GetSignatureSize", &CScriptCryptoApiDll::GetSignatureSize,
+        "SignBuffer", &CScriptCryptoApiDll::SignBuffer,
+        "VerifyBuffer", &CScriptCryptoApiDll::VerifyBuffer,
+        "GenerateKeyAgreementKeyPair", &CScriptCryptoApiDll::GenerateKeyAgreementKeyPair,
+        "GetSharedSecretSize", &CScriptCryptoApiDll::GetSharedSecretSize,
+        "ExportKeyAgreementPublicKey", &CScriptCryptoApiDll::ExportKeyAgreementPublicKey,
+        "DeriveSharedSecret", &CScriptCryptoApiDll::DeriveSharedSecret,
+        "GenerateRandomBytes", &CScriptCryptoApiDll::GenerateRandomBytes
     );
 
     luaState_.new_usertype<CScriptPgpEngineDll>("PgpEngineDll",
@@ -495,7 +516,9 @@ void CLuaScriptEngineSol::registerBindings(void)
         "ExportPublicKeyArmored", &CScriptPgpEngineDll::ExportPublicKeyArmored,
         "ImportPeerPublicKey", &CScriptPgpEngineDll::ImportPeerPublicKey,
         "EncryptStringArmored", &CScriptPgpEngineDll::EncryptStringArmored,
-        "DecryptStringArmored", &CScriptPgpEngineDll::DecryptStringArmored
+        "DecryptStringArmored", &CScriptPgpEngineDll::DecryptStringArmored,
+        "ClearSignString", &CScriptPgpEngineDll::ClearSignString,
+        "VerifyClearSignedString", &CScriptPgpEngineDll::VerifyClearSignedString
     );
 
     luaState_.new_usertype<CScriptPgpEngineWrapperDll>("PgpEngineWrapperDll",

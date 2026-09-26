@@ -1154,7 +1154,7 @@ güncellendi — aşağıdaki §29.5'te anlatılan implementasyon sonrası):**
 | 2 | Sertifika/anahtar format dönüşümleri | Genel (belge-bağımsız) | KISMEN — DER/PEM/PFX var; P7B/XML/JWK/SSH/JKS/PPK hâlâ yok |
 | 3 | Zincir kurma/doğrulama | Genel (belge-bağımsız) | ✅ DONE (2026-09-26) — `ValidateChain`, Windows `CertGetCertificateChain`+policy üzerinden |
 | 4 | Revocation (CRL/OCSP) | Genel (belge-bağımsız) | ✅ DONE (2026-09-26) — Windows/`CertGetCertificateChain` üzerinden `RevocationMode`/`RevocationNetworkMode` (§25.6) + OpenSSL `X509_CRL` API'siyle doğrudan CRL kontrolü (`CheckCertificateAgainstCrl`, §29.6); OCSP hâlâ yok |
-| 5 | PKCS#7/CMS detached imza | Genel (belge-bağımsız) — CMS/SignedData formatı S/MIME, kod imzalama, herhangi bir dosya için de geçerli; PDF sadece `SubFilter: /ETSI.CAdES.detached` ile onu kendi konteynerine gömüyor | ✅ DONE (2026-09-26) — `CCmsService::SignDetached`/`VerifyDetached`; RFC 5035 signing-certificate-v2 özniteliği hâlâ eklenmedi (küçük, belgelenmiş bir eksik) |
+| 5 | PKCS#7/CMS detached imza | Genel (belge-bağımsız) — CMS/SignedData formatı S/MIME, kod imzalama, herhangi bir dosya için de geçerli; PDF sadece `SubFilter: /ETSI.CAdES.detached` ile onu kendi konteynerine gömüyor | ✅ DONE (2026-09-26) — `CCmsService::SignDetached`/`VerifyDetached`; RFC 5035 signing-certificate-v2 özniteliği de eklendi (bkz. §29.7) |
 | 6 | RFC 3161 zaman damgası | Genel (belge-bağımsız) — protokol seviyesinde, PDF'le ilgisi yok | ✅ DONE (2026-09-26) — `CTimestampService`, gerçek bir TSA'ya karşı test edildi |
 | 7 | PAdES seviyeleri | **PDF'e özgü** | HAYIR / kapsam dışı |
 | 8 | PDF ByteRange/imza protokolü | **PDF'e özgü** | HAYIR / kapsam dışı |
@@ -1193,10 +1193,10 @@ numaralı boşlukları implement edildi. Hibrit backend: X.509/CMS/TS mekaniği 
   `ScriptCmsService`/`ScriptTimestampService` (+ DLL-hosted azaltılmış-yüzey `*Dll` karşılıkları),
   5 script motorunun (sol2/LuaBridge3/LuaBridge2.10/ChaiScript/Python) hepsine bağlandı, 5 yeni
   `CScriptEngineTester` testi eklendi, hepsi PASSED.
-- **Bilinçli sınırlamalar** (kod içi yorumlarda belgelendi, sessizce atlanmadı): CMS'te RFC 5035
-  signing-certificate-v2 özniteliği yok; `ImportPfx`/`ExportPfx` tek-sertifika ile sınırlı;
-  `DllRunner`/`LibRunner`'ın kendi `Main.cpp`'sine yeni `*Dll` sınıflarını gösteren canlı bir demo
-  eklenmedi (bkz. §29.6'nın "Hâlâ açık" notu — gerçek CRL testi artık var, bu madde kapandı).
+- **Bilinçli sınırlamalar** (kod içi yorumlarda belgelendi, sessizce atlanmadı): `ImportPfx`/
+  `ExportPfx` tek-sertifika ile sınırlı; `DllRunner`/`LibRunner`'ın kendi `Main.cpp`'sine yeni `*Dll`
+  sınıflarını gösteren canlı bir demo eklenmedi (§29.8'de kapandı) ve CMS'te RFC 5035
+  signing-certificate-v2 özniteliği yoktu (§29.7'de kapandı) — ikisi de artık DONE.
 - **Yan bulgular**: bu iş sırasında `LibRunner.vcxproj`'da eksik `winhttp.lib` bağımlılığı ve
   `DllRunner.vcxproj.filters`/`LibRunner.vcxproj.filters`'ta eksik üst düzey `src` filtresi
   bulunup düzeltildi (ikisi de bu implementasyonla ilgisiz, ayrı gerçek hatalardı).
@@ -1230,9 +1230,73 @@ sınıyordu). Artık `CCertificateManager`'a `ValidateChain`'i (Crypt32-backed) 
   ayrıca `DllBuilder`/`LibBuilder` Debug|x64 üzerinde de doğrulandı (yeni dosya eklenmedi, sadece
   var olan `Certificates/CertificateManager.cpp` değişti, proje dosyalarında değişiklik gerekmedi).
   4 yeni test de dahil 24 Certificate/CMS/Timestamp testi PASSED, regresyon yok.
-- **Hâlâ açık**: OCSP; `LibRunner`'ın kendi `Main.cpp`'si hâlâ HİÇ Certificate/CMS/Timestamp testi
-  çalıştırmıyor (bu implementasyondan önce de öyleydi — parity denetimi bunu şimdi ayrıca not ediyor,
-  bkz. görev listesi).
+- **Hâlâ açık**: OCSP; `LibRunner`'ın kendi `Main.cpp`'si hâlâ HİÇ native `CCryptoApiTester`
+  Certificate/CMS/Timestamp testi çalıştırmıyor (script demoları §29.8'de eklendi, ama bu native
+  test parity boşluğu ayrı — bu implementasyondan önce de öyleydi, parity denetimi not ediyor).
+
+### 29.7 CMS'e RFC 5035 signing-certificate-v2 özniteliği — TAMAMLANDI (2026-09-26)
+
+§29.5'in kendi doc-comment'i baştan beri bu özniteliği "tasarım hedefi" olarak adlandırıyordu ama
+kod bunu hiç eklemiyordu (`.h` yorumu ile `.cpp` implementasyonu arasında bir tutarsızlıktı) —
+şimdi kapatıldı. `CCmsService::SignDetached`, imzalayanın sertifikasını (SHA-256 hash'i +
+issuer/serial) `CMS_SignerInfo`'ya `id-smime-aa-signingCertificateV2` (OpenSSL `OSSL_ESS_signing_
+cert_v2_new_init` + `CMS_signed_add1_attr_by_NID`, `CMS_final`'dan ÖNCE eklendi ki imzanın kendisi
+bu özniteliği de kapsasın) imzalı özniteliği olarak bağlıyor — bir sertifika ikame (substitution)
+saldırısına karşı savunma.
+
+- `ICmsService.h`'a yeni bir `CmsVerificationResult` değeri eklendi:
+  `CMS_VERIFICATION_SIGNING_CERT_MISMATCH` — imza kriptografik olarak geçerli ama gömülü öznitelik
+  CMS_verify'ın kullandığı gerçek imzalayan sertifikasını doğrulamıyorsa.
+  `CCmsService::VerifyDetached`, kriptografik geçiş başarılı olduktan sonra ama güven kontrolünden
+  ÖNCE bu kontrolü yapıyor (`OSSL_ESS_check_signing_certs`) — öznitelik yoksa (SignDetached
+  dışındaki bir kaynaktan gelen CMS) kontrol atlanıyor, VALID/UNTRUSTED davranışı değişmiyor.
+- Yeni test: `RunCmsSigningCertificateV2AttributeTest` — `SignDetached`'in ürettiği CMS'i ham
+  OpenSSL ile geri parse edip özniteliğin var olduğunu, doğru decode olduğunu, gerçek imzalayan
+  sertifikasıyla eşleştiğini VE ilgisiz bir sertifikayla eşleşmediğini doğruluyor (aynı
+  `OSSL_ESS_check_signing_certs` primitive'i, üretim kodunun kendisinin kullandığı). **Bilinçli
+  sınırlama**: `CMS_VERIFICATION_SIGNING_CERT_MISMATCH`'i `VerifyDetached` üzerinden uçtan uca tetiklemek
+  test edilmedi — bunun için CMS yapısının gömülü sertifika alanını imzalamadan SONRA elle
+  değiştirmek gerekirdi (gerçek bir ikame senaryosu, ama OpenSSL'in bu SDK'ya açtığı API'lerin
+  ötesinde CMS ASN.1 internal'larına inmeden bu SDK'nın kendi genel API'siyle kurulamıyor).
+- Tüm 4 derleme konfigürasyonunda `AppBuilder` sıfır hatayla derlendi (0 uyarı bile);
+  `DllBuilder`/`LibBuilder` Debug|x64'te de doğrulandı. Yeni test dahil AppBuilder'da 84/84 test
+  PASSED (2 ardışık çalıştırma), regresyon yok; `DllRunner`/`LibRunner`'ın kendi CMS script
+  demoları da (§29.8) yeni öznitelikle birlikte PASSED kalmaya devam etti.
+
+### 29.8 DllRunner/LibRunner script demoları + 7 eksik script test ailesinin taşınması — TAMAMLANDI (2026-09-26)
+
+İki ayrı, art arda yapılan iş: (1) §29.5/§29.6'nın yeni Certificate/CMS/Timestamp sınıfları için
+`DllRunner`/`LibRunner`'ın kendi `Main.cpp`'sine PGP'ninkiyle aynı kalıpta canlı demo scriptleri
+eklendi; (2) [[project_runner_parity_audit_findings]]'in 7 eksik script test ailesi (encrypt/
+decrypt, asymmetric, signature, key-agreement, random, PGP sign/verify, PGP wrapper availability)
+× 5 motor `DllRunner`/`LibRunner`'a taşındı.
+
+- **Gerçek bir hata bulunup düzeltildi** (madde 1 sırasında): script katmanının "önce boyut
+  sorgula (capacity=0), sonra gerçek çağrıyı yap" ikili-çağrı deseni, `CreateSelfSignedCertificate`
+  gibi HER ÇAĞRIDA taze rastgelelik üreten (128-bit rastgele seri numarası) metotlarla birleşince
+  arada bir `BUFFER_TOO_SMALL` veriyordu (iki bağımsız rastgele üretimin DER kodlama boyutu 1 bayt
+  farklı olabiliyor) — hem `ScriptCertificateManager`/`ScriptCertificateManagerDll`'in elle yazılmış
+  çift-çıktılı metotlarına hem de 6 dosyadaki paylaşılan `callBinaryOutput`/`callTextOutput`
+  yardımcılarına 5 denemelik sınırlı bir yeniden-deneme döngüsü eklendi. PGP script dosyalarına
+  DOKUNULMADI (aynı örüntüyü paylaşıyorlar ama bu oturumda hiç böyle bir hata gözlenmedi, kapsam
+  dışı bırakıldı).
+- **sol2'nin `ToBytes` kaydı** yanlışlıkla `#ifndef DLL_RUNNER` bloğunun içindeydi (ChaiScript/
+  Python'un kendi `ToBytes` kayıtları koşulsuzdu) — DllRunner'da sol2 script'lerinin ham byte
+  vektörü inşa etmesinin tek yolu olduğu için blok dışına taşındı.
+- **DllRunner tarafında gerçek bir kapsam genişletmesi gerekti**: `CScriptCryptoApiDll`/
+  `ScriptPgpEngineDll`'in metot yüzeyi "ihtiyaç oldukça büyür" diye tasarlanmıştı ve
+  EncryptString/DecryptString, asimetrik/imza/anahtar-anlaşması/rastgele metotları, ve
+  ClearSignString/VerifyClearSignedString hiç yoktu — ~18 yeni metot + 5 motorun hepsindeki
+  bağlamaları eklendi (gerçek, sınırlı bir özellik büyümesi, salt dosya kopyalama değil).
+- **KeyAgreement sadece DllRunner'da SKIPPED bırakıldı** (5 motorun hepsi için, belgelenmiş): gerçek
+  bir iki-taraflı değişim ikinci, bağımsız bir `ICryptoApi` DLL nesnesi gerektiriyor ama
+  `SetDllCryptoApi` her motora hep aynı sabit `"cryptoApi"` global adını enjekte ediyor —
+  ikinci, farklı adlı bir global daha kablolamak gerekirdi. `LibRunner`'ın kendi KeyAgreement bloğu
+  (iki bağımsız statik-linkli `CryptoApi.new()`/`CryptoApi()` örneği, alice/bob) sorunsuz çalışıyor.
+- Tüm 4 derleme konfigürasyonunda `AppBuilder`/`DllRunner`/`LibRunner` sıfır hatayla derlendi.
+  `LibRunner`: 2 tam çalıştırma, 110/110 PASSED (bir çalıştırmada ilgisiz, önceden var olan,
+  zararsız bir `CryptoPP::Inflator::DecodeBody` debug-assert print'i görüldü, bu işle ilgisi yok).
+  `DllRunner`: 3 çalıştırma, 30/30 yeni demo satırı PASSED (KeyAgreement doğru şekilde SKIPPED).
 
 ## 30. AES Online Tool Araştırması — Kullanıcı Tarafından Girilebilen Opsiyonlar
 

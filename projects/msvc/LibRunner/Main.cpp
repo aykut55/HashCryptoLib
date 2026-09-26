@@ -36,6 +36,9 @@
 #include "Scripts/ScriptCryptoApi.h"
 #include "Scripts/ScriptPgpEngine.h"
 #include "Scripts/ScriptPgpEngineWrapper.h"
+#include "Scripts/ScriptCertificateManager.h"
+#include "Scripts/ScriptCmsService.h"
+#include "Scripts/ScriptTimestampService.h"
 #include "Scripts/LuaScript/LuaScriptEngineSol.h"
 #include "Scripts/LuaScript/LuaScriptEngineLuaBridge.h"
 #include "Scripts/LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
@@ -464,6 +467,788 @@ int main()
 
             std::remove(progressInputPath);
             std::remove(progressEncPath);
+        }
+
+        // Remaining script test families per the 2026-09-22 parity audit
+        // ([[project_runner_parity_audit_findings]]): symmetric EncryptString/DecryptString,
+        // asymmetric RSA round trip, signature Sign/Verify, ECDH/X25519 key agreement, random byte
+        // generation, PGP clear-sign/verify, and PGP wrapper (real GnuPG) availability -- same
+        // scripts ScriptEngineTester.cpp's own RunXxxScriptYyyTest family already exercises
+        // natively, shown here working from a statically-linked LibRunner build too, same
+        // "Static-link ... (engine): PASSED/FAILED" convention as the blocks above.
+        {
+            std::cout << std::endl;
+
+            const char* encryptDecryptLuaScript =
+                "local api = CryptoApi.new()\n"
+                "local password = \"s3cr3t-librunner-lua-password\"\n"
+                "local plaintext = \"Hello from LibRunner Lua!\"\n"
+                "local ciphertext = api:EncryptString(password, plaintext)\n"
+                "local decrypted = api:DecryptString(password, ciphertext)\n"
+                "ok = (decrypted == plaintext)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(encryptDecryptLuaScript);
+                std::cout << "Static-link scripting EncryptDecrypt (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting EncryptDecrypt (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* encryptDecryptLuaBridgeScript =
+                "local api = CryptoApi()\n"
+                "local password = \"s3cr3t-librunner-luabridge-password\"\n"
+                "local plaintext = \"Hello from LibRunner LuaBridge!\"\n"
+                "local ciphertext = api:EncryptString(password, plaintext)\n"
+                "local decrypted = api:DecryptString(password, ciphertext)\n"
+                "ok = (decrypted == plaintext)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(encryptDecryptLuaBridgeScript);
+                std::cout << "Static-link scripting EncryptDecrypt (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting EncryptDecrypt (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(encryptDecryptLuaBridgeScript);
+                std::cout << "Static-link scripting EncryptDecrypt (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting EncryptDecrypt (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* encryptDecryptChaiScript =
+                "var api = CryptoApi();\n"
+                "var password = \"s3cr3t-librunner-chaiscript-password\";\n"
+                "var plaintext = \"Hello from LibRunner ChaiScript!\";\n"
+                "var ciphertext = api.EncryptString(password, plaintext);\n"
+                "var decrypted = api.DecryptString(password, ciphertext);\n"
+                "global ok = (decrypted == plaintext);\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(encryptDecryptChaiScript);
+                std::cout << "Static-link scripting EncryptDecrypt (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting EncryptDecrypt (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* encryptDecryptPythonScript =
+                "api = CryptoApi()\n"
+                "password = \"s3cr3t-librunner-python-password\"\n"
+                "plaintext = \"Hello from LibRunner Python!\"\n"
+                "ciphertext = api.EncryptString(password, plaintext)\n"
+                "decrypted = api.DecryptString(password, ciphertext)\n"
+                "ok = (decrypted == plaintext)\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(encryptDecryptPythonScript);
+                std::cout << "Static-link scripting EncryptDecrypt (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting EncryptDecrypt (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* asymmetricLuaScript =
+                "local api = CryptoApi.new()\n"
+                "api:GenerateAsymmetricKeyPair()\n"
+                "local plaintext = \"RSA round trip via LibRunner Lua\"\n"
+                "local inputBytes = ToBytes(plaintext)\n"
+                "local ciphertext = api:EncryptWithPublicKey(inputBytes)\n"
+                "local decryptedBytes = api:DecryptWithPrivateKey(ciphertext)\n"
+                "local chars = {}\n"
+                "for i = 1, #decryptedBytes do chars[i] = string.char(decryptedBytes[i]) end\n"
+                "ok = (table.concat(chars) == plaintext) and (#ciphertext == api:GetAsymmetricCiphertextSize())\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(asymmetricLuaScript);
+                std::cout << "Static-link scripting Asymmetric (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Asymmetric (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* asymmetricLuaBridgeScript =
+                "local api = CryptoApi()\n"
+                "api:GenerateAsymmetricKeyPair()\n"
+                "local plaintext = \"RSA round trip via LibRunner LuaBridge\"\n"
+                "local inputBytes = {}\n"
+                "for i = 1, #plaintext do inputBytes[i] = string.byte(plaintext, i) end\n"
+                "local ciphertext = api:EncryptWithPublicKey(inputBytes)\n"
+                "local decryptedBytes = api:DecryptWithPrivateKey(ciphertext)\n"
+                "local chars = {}\n"
+                "for i = 1, #decryptedBytes do chars[i] = string.char(decryptedBytes[i]) end\n"
+                "ok = (table.concat(chars) == plaintext) and (#ciphertext == api:GetAsymmetricCiphertextSize())\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(asymmetricLuaBridgeScript);
+                std::cout << "Static-link scripting Asymmetric (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Asymmetric (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(asymmetricLuaBridgeScript);
+                std::cout << "Static-link scripting Asymmetric (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Asymmetric (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* asymmetricChaiScript =
+                "var api = CryptoApi();\n"
+                "api.GenerateAsymmetricKeyPair();\n"
+                "var plaintext = \"RSA round trip via LibRunner ChaiScript\";\n"
+                "var inputBytes = ToBytes(plaintext);\n"
+                "var ciphertext = api.EncryptWithPublicKey(inputBytes);\n"
+                "var decryptedBytes = api.DecryptWithPrivateKey(ciphertext);\n"
+                "var decryptedText = ToStringFromBytes(decryptedBytes);\n"
+                "global ok = (decryptedText == plaintext) && (ciphertext.size() == api.GetAsymmetricCiphertextSize());\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(asymmetricChaiScript);
+                std::cout << "Static-link scripting Asymmetric (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Asymmetric (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* asymmetricPythonScript =
+                "api = CryptoApi()\n"
+                "api.GenerateAsymmetricKeyPair()\n"
+                "plaintext = \"RSA round trip via LibRunner Python\"\n"
+                "inputBytes = ToBytes(plaintext)\n"
+                "ciphertext = api.EncryptWithPublicKey(inputBytes)\n"
+                "decryptedBytes = api.DecryptWithPrivateKey(ciphertext)\n"
+                "decryptedText = ToStringFromBytes(decryptedBytes)\n"
+                "ok = (decryptedText == plaintext) and (len(ciphertext) == api.GetAsymmetricCiphertextSize())\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(asymmetricPythonScript);
+                std::cout << "Static-link scripting Asymmetric (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Asymmetric (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* signatureLuaScript =
+                "local api = CryptoApi.new()\n"
+                "api:GenerateSignatureKeyPair()\n"
+                "local message = \"Sign this message from LibRunner Lua\"\n"
+                "local inputBytes = ToBytes(message)\n"
+                "local signature = api:SignBuffer(inputBytes)\n"
+                "ok = api:VerifyBuffer(inputBytes, signature) and (#signature == api:GetSignatureSize())\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(signatureLuaScript);
+                std::cout << "Static-link scripting Signature (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Signature (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* signatureLuaBridgeScript =
+                "local api = CryptoApi()\n"
+                "api:GenerateSignatureKeyPair()\n"
+                "local message = \"Sign this message from LibRunner LuaBridge\"\n"
+                "local inputBytes = {}\n"
+                "for i = 1, #message do inputBytes[i] = string.byte(message, i) end\n"
+                "local signature = api:SignBuffer(inputBytes)\n"
+                "ok = api:VerifyBuffer(inputBytes, signature) and (#signature == api:GetSignatureSize())\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(signatureLuaBridgeScript);
+                std::cout << "Static-link scripting Signature (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Signature (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(signatureLuaBridgeScript);
+                std::cout << "Static-link scripting Signature (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Signature (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* signatureChaiScript =
+                "var api = CryptoApi();\n"
+                "api.GenerateSignatureKeyPair();\n"
+                "var message = \"Sign this message from LibRunner ChaiScript\";\n"
+                "var inputBytes = ToBytes(message);\n"
+                "var signature = api.SignBuffer(inputBytes);\n"
+                "global ok = api.VerifyBuffer(inputBytes, signature) && (signature.size() == api.GetSignatureSize());\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(signatureChaiScript);
+                std::cout << "Static-link scripting Signature (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Signature (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* signaturePythonScript =
+                "api = CryptoApi()\n"
+                "api.GenerateSignatureKeyPair()\n"
+                "message = \"Sign this message from LibRunner Python\"\n"
+                "inputBytes = ToBytes(message)\n"
+                "signature = api.SignBuffer(inputBytes)\n"
+                "ok = api.VerifyBuffer(inputBytes, signature) and (len(signature) == api.GetSignatureSize())\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(signaturePythonScript);
+                std::cout << "Static-link scripting Signature (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Signature (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* keyAgreementLuaScript =
+                "local alice = CryptoApi.new()\n"
+                "local bob = CryptoApi.new()\n"
+                "alice:GenerateKeyAgreementKeyPair()\n"
+                "bob:GenerateKeyAgreementKeyPair()\n"
+                "local alicePublic = alice:ExportKeyAgreementPublicKey()\n"
+                "local bobPublic = bob:ExportKeyAgreementPublicKey()\n"
+                "local aliceSecret = alice:DeriveSharedSecret(bobPublic)\n"
+                "local bobSecret = bob:DeriveSharedSecret(alicePublic)\n"
+                "ok = (#aliceSecret == #bobSecret) and (#aliceSecret == alice:GetSharedSecretSize())\n"
+                "for i = 1, #aliceSecret do\n"
+                "    if aliceSecret[i] ~= bobSecret[i] then ok = false end\n"
+                "end\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(keyAgreementLuaScript);
+                std::cout << "Static-link scripting KeyAgreement (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting KeyAgreement (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* keyAgreementLuaBridgeScript =
+                "local alice = CryptoApi()\n"
+                "local bob = CryptoApi()\n"
+                "alice:GenerateKeyAgreementKeyPair()\n"
+                "bob:GenerateKeyAgreementKeyPair()\n"
+                "local alicePublic = alice:ExportKeyAgreementPublicKey()\n"
+                "local bobPublic = bob:ExportKeyAgreementPublicKey()\n"
+                "local aliceSecret = alice:DeriveSharedSecret(bobPublic)\n"
+                "local bobSecret = bob:DeriveSharedSecret(alicePublic)\n"
+                "ok = (#aliceSecret == #bobSecret) and (#aliceSecret == alice:GetSharedSecretSize())\n"
+                "for i = 1, #aliceSecret do\n"
+                "    if aliceSecret[i] ~= bobSecret[i] then ok = false end\n"
+                "end\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(keyAgreementLuaBridgeScript);
+                std::cout << "Static-link scripting KeyAgreement (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting KeyAgreement (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(keyAgreementLuaBridgeScript);
+                std::cout << "Static-link scripting KeyAgreement (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting KeyAgreement (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* keyAgreementChaiScript =
+                "var alice = CryptoApi();\n"
+                "var bob = CryptoApi();\n"
+                "alice.GenerateKeyAgreementKeyPair();\n"
+                "bob.GenerateKeyAgreementKeyPair();\n"
+                "var alicePublic = alice.ExportKeyAgreementPublicKey();\n"
+                "var bobPublic = bob.ExportKeyAgreementPublicKey();\n"
+                "var aliceSecret = alice.DeriveSharedSecret(bobPublic);\n"
+                "var bobSecret = bob.DeriveSharedSecret(alicePublic);\n"
+                "global ok = (aliceSecret.size() == bobSecret.size()) && (aliceSecret.size() == alice.GetSharedSecretSize());\n"
+                "for (auto i = 0; i < aliceSecret.size(); ++i) {\n"
+                "    if (aliceSecret[i] != bobSecret[i]) { ok = false; }\n"
+                "}\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(keyAgreementChaiScript);
+                std::cout << "Static-link scripting KeyAgreement (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting KeyAgreement (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* keyAgreementPythonScript =
+                "alice = CryptoApi()\n"
+                "bob = CryptoApi()\n"
+                "alice.GenerateKeyAgreementKeyPair()\n"
+                "bob.GenerateKeyAgreementKeyPair()\n"
+                "alicePublic = alice.ExportKeyAgreementPublicKey()\n"
+                "bobPublic = bob.ExportKeyAgreementPublicKey()\n"
+                "aliceSecret = alice.DeriveSharedSecret(bobPublic)\n"
+                "bobSecret = bob.DeriveSharedSecret(alicePublic)\n"
+                "ok = (len(aliceSecret) == len(bobSecret)) and (len(aliceSecret) == alice.GetSharedSecretSize())\n"
+                "for i in range(len(aliceSecret)):\n"
+                "    if aliceSecret[i] != bobSecret[i]:\n"
+                "        ok = False\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(keyAgreementPythonScript);
+                std::cout << "Static-link scripting KeyAgreement (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting KeyAgreement (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* randomLuaScript =
+                "local api = CryptoApi.new()\n"
+                "local randomBytes = api:GenerateRandomBytes(32)\n"
+                "ok = (#randomBytes == 32)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(randomLuaScript);
+                std::cout << "Static-link scripting Random (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Random (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* randomLuaBridgeScript =
+                "local api = CryptoApi()\n"
+                "local randomBytes = api:GenerateRandomBytes(32)\n"
+                "ok = (#randomBytes == 32)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(randomLuaBridgeScript);
+                std::cout << "Static-link scripting Random (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Random (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(randomLuaBridgeScript);
+                std::cout << "Static-link scripting Random (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Random (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* randomChaiScript =
+                "var api = CryptoApi();\n"
+                "var randomBytes = api.GenerateRandomBytes(32);\n"
+                "global ok = (randomBytes.size() == 32);\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(randomChaiScript);
+                std::cout << "Static-link scripting Random (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Random (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* randomPythonScript =
+                "api = CryptoApi()\n"
+                "randomBytes = api.GenerateRandomBytes(32)\n"
+                "ok = (len(randomBytes) == 32)\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(randomPythonScript);
+                std::cout << "Static-link scripting Random (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Random (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpSignVerifyLuaScript =
+                "local alice = PgpEngine.new()\n"
+                "local bob = PgpEngine.new()\n"
+                "alice:GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-librunner-lua-pw\")\n"
+                "bob:GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-librunner-lua-pw\")\n"
+                "bob:ImportPeerPublicKey(alice:ExportPublicKeyArmored())\n"
+                "local message = \"This clear-signed message comes from LibRunner Lua.\"\n"
+                "local signed = alice:ClearSignString(\"alice-librunner-lua-pw\", message)\n"
+                "ok = bob:VerifyClearSignedString(signed)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(pgpSignVerifyLuaScript);
+                std::cout << "Static-link scripting PgpSignVerify (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpSignVerify (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpSignVerifyLuaBridgeScript =
+                "local alice = PgpEngine()\n"
+                "local bob = PgpEngine()\n"
+                "alice:GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-librunner-luabridge-pw\")\n"
+                "bob:GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-librunner-luabridge-pw\")\n"
+                "bob:ImportPeerPublicKey(alice:ExportPublicKeyArmored())\n"
+                "local message = \"This clear-signed message comes from LibRunner LuaBridge.\"\n"
+                "local signed = alice:ClearSignString(\"alice-librunner-luabridge-pw\", message)\n"
+                "ok = bob:VerifyClearSignedString(signed)\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(pgpSignVerifyLuaBridgeScript);
+                std::cout << "Static-link scripting PgpSignVerify (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpSignVerify (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(pgpSignVerifyLuaBridgeScript);
+                std::cout << "Static-link scripting PgpSignVerify (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpSignVerify (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpSignVerifyChaiScript =
+                "var alice = PgpEngine();\n"
+                "var bob = PgpEngine();\n"
+                "alice.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-librunner-chaiscript-pw\");\n"
+                "bob.GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-librunner-chaiscript-pw\");\n"
+                "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored());\n"
+                "var message = \"This clear-signed message comes from LibRunner ChaiScript.\";\n"
+                "var signedMessage = alice.ClearSignString(\"alice-librunner-chaiscript-pw\", message);\n"
+                "global ok = bob.VerifyClearSignedString(signedMessage);\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(pgpSignVerifyChaiScript);
+                std::cout << "Static-link scripting PgpSignVerify (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpSignVerify (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpSignVerifyPythonScript =
+                "alice = PgpEngine()\n"
+                "bob = PgpEngine()\n"
+                "alice.GenerateKeyPair(\"Alice <alice@example.com>\", \"alice-librunner-python-pw\")\n"
+                "bob.GenerateKeyPair(\"Bob <bob@example.com>\", \"bob-librunner-python-pw\")\n"
+                "bob.ImportPeerPublicKey(alice.ExportPublicKeyArmored())\n"
+                "message = \"This clear-signed message comes from LibRunner Python.\"\n"
+                "signedMessage = alice.ClearSignString(\"alice-librunner-python-pw\", message)\n"
+                "ok = bob.VerifyClearSignedString(signedMessage)\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(pgpSignVerifyPythonScript);
+                std::cout << "Static-link scripting PgpSignVerify (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpSignVerify (Python): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpWrapperAvailabilityLuaScript =
+                "local wrapper = PgpEngineWrapper.new()\n"
+                "gnupgAvailable = wrapper:IsGnuPgAvailable()\n"
+                "ok = true\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(pgpWrapperAvailabilityLuaScript);
+                std::cout << "Static-link scripting PgpWrapperAvailability (sol2): PASSED (GnuPG available=" << (luaEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpWrapperAvailability (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpWrapperAvailabilityLuaBridgeScript =
+                "local wrapper = PgpEngineWrapper()\n"
+                "gnupgAvailable = wrapper:IsGnuPgAvailable()\n"
+                "ok = true\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(pgpWrapperAvailabilityLuaBridgeScript);
+                std::cout << "Static-link scripting PgpWrapperAvailability (LuaBridge3): PASSED (GnuPG available=" << (luaBridgeEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpWrapperAvailability (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(pgpWrapperAvailabilityLuaBridgeScript);
+                std::cout << "Static-link scripting PgpWrapperAvailability (LuaBridge 2.10): PASSED (GnuPG available=" << (luaBridgeLegacyEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpWrapperAvailability (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpWrapperAvailabilityChaiScript =
+                "var wrapper = PgpEngineWrapper();\n"
+                "global gnupgAvailable = wrapper.IsGnuPgAvailable();\n"
+                "global ok = true;\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(pgpWrapperAvailabilityChaiScript);
+                std::cout << "Static-link scripting PgpWrapperAvailability (ChaiScript): PASSED (GnuPG available=" << (chaiEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpWrapperAvailability (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pgpWrapperAvailabilityPythonScript =
+                "wrapper = PgpEngineWrapper()\n"
+                "gnupgAvailable = wrapper.IsGnuPgAvailable()\n"
+                "ok = True\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(pgpWrapperAvailabilityPythonScript);
+                std::cout << "Static-link scripting PgpWrapperAvailability (Python): PASSED (GnuPG available=" << (pythonEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting PgpWrapperAvailability (Python): FAILED exception " << ex.what() << std::endl;
+            }
+        }
+
+        // Certificate/CMS/Timestamp scripting via the SAME statically-linked-facade convention as
+        // the CryptoApi/PgpEngine block above -- CertificateManager.new()/CmsService.new()/
+        // TimestampService.new() (sol2) or CertificateManager()/CmsService()/TimestampService()
+        // (the rest) construct a fresh CScriptCertificateManager/CScriptCmsService/
+        // CScriptTimestampService owning its own concrete CCertificateManager/CCmsService/
+        // CTimestampService BY VALUE, no DLL boundary involved. Same script bodies
+        // ScriptEngineTester.cpp's own RunLuaScriptCertificateTest family already exercises
+        // natively (self-signed cert + CMS sign/verify + RFC 3161 request creation), shown here
+        // working from a statically-linked LibRunner build too, same as DllRunner's DLL-hosted
+        // Certificate/CMS/Timestamp block above.
+        {
+            std::cout << std::endl;
+
+            const char* luaScript =
+                "local cert = CertificateManager.new()\n"
+                "local certDer = cert:CreateSelfSignedCertificate(\"librunner-lua.example.com\", \"\", 0, 30, 1, 0, 0)\n"
+                "local info = cert:GetCertificateInfoText(certDer)\n"
+                "local certOk = (#certDer > 0) and (#info > 0)\n"
+                "local cms = CmsService.new()\n"
+                "local privateKeyPem = cert:GetLastPrivateKeyPem()\n"
+                "local data = ToBytes(\"CMS test data from LibRunner Lua\")\n"
+                "local cmsDer = cms:SignDetached(data, certDer, privateKeyPem, 0)\n"
+                "local verifyResult = cms:VerifyDetached(data, cmsDer, ToBytes(\"\"))\n"
+                "local cmsOk = (verifyResult == 0)\n"
+                "local ts = TimestampService.new()\n"
+                "local digest = ToBytes(\"0123456789012345678901234567890a\")\n"
+                "local requestDer = ts:CreateTimestampRequest(digest, 0)\n"
+                "local tsOk = (#requestDer > 0)\n"
+                "ok = certOk and cmsOk and tsOk\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                luaEngine.RunString(luaScript);
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (sol2): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* luaBridgeScript =
+                "local cert = CertificateManager()\n"
+                "local certDer = cert:CreateSelfSignedCertificate(\"librunner-luabridge.example.com\", \"\", 0, 30, 1, 0, 0)\n"
+                "local info = cert:GetCertificateInfoText(certDer)\n"
+                "local certOk = (#certDer > 0) and (#info > 0)\n"
+                "local cms = CmsService()\n"
+                "local privateKeyPem = cert:GetLastPrivateKeyPem()\n"
+                "local message = \"CMS test data from LibRunner LuaBridge\"\n"
+                "local data = {}\n"
+                "for i = 1, #message do data[i] = string.byte(message, i) end\n"
+                "local cmsDer = cms:SignDetached(data, certDer, privateKeyPem, 0)\n"
+                "local verifyResult = cms:VerifyDetached(data, cmsDer, {})\n"
+                "local cmsOk = (verifyResult == 0)\n"
+                "local ts = TimestampService()\n"
+                "local digestMsg = \"0123456789012345678901234567890a\"\n"
+                "local digest = {}\n"
+                "for i = 1, #digestMsg do digest[i] = string.byte(digestMsg, i) end\n"
+                "local requestDer = ts:CreateTimestampRequest(digest, 0)\n"
+                "local tsOk = (#requestDer > 0)\n"
+                "ok = certOk and cmsOk and tsOk\n";
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                luaBridgeEngine.RunString(luaBridgeScript);
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+            }
+
+            try
+            {
+                CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                luaBridgeLegacyEngine.RunString(luaBridgeScript);
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* chaiScript =
+                "var cert = CertificateManager();\n"
+                "var certDer = cert.CreateSelfSignedCertificate(\"librunner-chai.example.com\", \"\", 0, 30, 1, 0, 0);\n"
+                "var info = cert.GetCertificateInfoText(certDer);\n"
+                "var certOk = (certDer.size() > 0) && (info.size() > 0);\n"
+                "var cms = CmsService();\n"
+                "var privateKeyPem = cert.GetLastPrivateKeyPem();\n"
+                "var data = ToBytes(\"CMS test data from LibRunner ChaiScript\");\n"
+                "var emptyBytes = ToBytes(\"\");\n"
+                "var cmsDer = cms.SignDetached(data, certDer, privateKeyPem, 0);\n"
+                "var verifyResult = cms.VerifyDetached(data, cmsDer, emptyBytes);\n"
+                "var cmsOk = (verifyResult == 0);\n"
+                "var ts = TimestampService();\n"
+                "var digest = ToBytes(\"0123456789012345678901234567890a\");\n"
+                "var requestDer = ts.CreateTimestampRequest(digest, 0);\n"
+                "var tsOk = (requestDer.size() > 0);\n"
+                "global ok = certOk && cmsOk && tsOk;\n";
+
+            try
+            {
+                CryptoApiNS::CChaiScriptEngine chaiEngine;
+                chaiEngine.RunString(chaiScript);
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (ChaiScript): FAILED exception " << ex.what() << std::endl;
+            }
+
+            const char* pythonScript =
+                "cert = CertificateManager()\n"
+                "certDer = cert.CreateSelfSignedCertificate(\"librunner-python.example.com\", \"\", 0, 30, 1, 0, 0)\n"
+                "info = cert.GetCertificateInfoText(certDer)\n"
+                "certOk = (len(certDer) > 0) and (len(info) > 0)\n"
+                "cms = CmsService()\n"
+                "privateKeyPem = cert.GetLastPrivateKeyPem()\n"
+                "data = ToBytes(\"CMS test data from LibRunner Python\")\n"
+                "cmsDer = cms.SignDetached(data, certDer, privateKeyPem, 0)\n"
+                "verifyResult = cms.VerifyDetached(data, cmsDer, [])\n"
+                "cmsOk = (verifyResult == 0)\n"
+                "ts = TimestampService()\n"
+                "digest = ToBytes(\"0123456789012345678901234567890a\")\n"
+                "requestDer = ts.CreateTimestampRequest(digest, 0)\n"
+                "tsOk = (len(requestDer) > 0)\n"
+                "ok = certOk and cmsOk and tsOk\n";
+
+            try
+            {
+                CryptoApiNS::CPythonScriptEngine pythonEngine;
+                pythonEngine.RunString(pythonScript);
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << "Static-link scripting Certificate/CMS/Timestamp (Python): FAILED exception " << ex.what() << std::endl;
+            }
         }
 
         std::cout << std::endl;

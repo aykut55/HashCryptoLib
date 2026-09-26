@@ -15,8 +15,21 @@ std::vector<unsigned char> CScriptCmsService::callBinaryOutput(const char* metho
             throw CScriptException(static_cast<ErrorCode>(rc), std::string(methodName) + ": size query failed");
         }
 
-        std::vector<unsigned char> output(static_cast<size_t>(requiredSize));
-        rc = fn(requiredSize, output.empty() ? nullptr : &output[0], &requiredSize);
+        // Bounded retry: the underlying call can be non-idempotent (fresh randomness -- e.g. a
+        // random serial number, a new signature, an RFC 3161 nonce -- each time it runs), so the
+        // size this query just reported is not guaranteed to still fit the NEXT (real) invocation
+        // of the same method. Re-querying and retrying keeps this self-correcting instead of
+        // surfacing a spurious BUFFER_TOO_SMALL as a generic "call failed".
+        std::vector<unsigned char> output;
+        for (int attempt = 0; attempt < 5; ++attempt)
+        {
+            output.assign(static_cast<size_t>(requiredSize), 0);
+            rc = fn(requiredSize, output.empty() ? nullptr : &output[0], &requiredSize);
+            if (rc != BUFFER_TOO_SMALL)
+            {
+                break;
+            }
+        }
         if (rc != NO_ERROR)
         {
             throw CScriptException(static_cast<ErrorCode>(rc), std::string(methodName) + ": call failed");

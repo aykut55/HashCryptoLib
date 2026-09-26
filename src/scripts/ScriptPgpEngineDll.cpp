@@ -143,4 +143,37 @@ std::vector<unsigned char> CScriptPgpEngineDll::DecryptStringArmored(const std::
 }
 // -----------------------------------------------------------------------------
 
+std::string CScriptPgpEngineDll::ClearSignString(const std::string& password, const std::string& input)
+{
+    return callTextOutput("ClearSignString", [this, &password, &input](int capacity, char* buffer, int* actualSize)
+    {
+        return engine_->ClearSignString(password.data(), static_cast<int>(password.size()), input.data(), static_cast<int>(input.size()), capacity, buffer, actualSize);
+    });
+}
+// -----------------------------------------------------------------------------
+
+bool CScriptPgpEngineDll::VerifyClearSignedString(const std::string& clearSignedString)
+{
+    try
+    {
+        bool isValid = false;
+        int rc = engine_->VerifyClearSignedString(clearSignedString.data(), static_cast<int>(clearSignedString.size()), &isValid);
+        if (rc != NO_ERROR)
+        {
+            throw CScriptException(static_cast<ErrorCode>(rc), "VerifyClearSignedString: verification could not run");
+        }
+
+        return isValid;
+    }
+    catch (const CScriptException&)
+    {
+        throw;
+    }
+    catch (const std::exception& ex)
+    {
+        throw CScriptException(UNEXPECTED_ERROR, std::string("VerifyClearSignedString: ") + ex.what());
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

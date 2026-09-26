@@ -368,6 +368,8 @@ public:
 
     virtual int RunCmsUntrustedSignerRejectionTest(void) = 0;
 
+    virtual int RunCmsSigningCertificateV2AttributeTest(void) = 0;
+
     virtual int RunTimestampRequestResponseRoundtripTest(void) = 0;
 
     virtual int RunTimestampVerifyTest(void) = 0;

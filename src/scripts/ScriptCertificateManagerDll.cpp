@@ -15,6 +15,8 @@ std::string CScriptCertificateManagerDll::callTextOutput(const char* methodName,
             throw CScriptException(static_cast<ErrorCode>(rc), std::string(methodName) + ": size query failed");
         }
 
+        // (No retry loop needed here -- every callTextOutput caller inspects EXISTING, already-
+        // generated data, so its output length is deterministic given the same input.)
         std::vector<char> output(static_cast<size_t>(requiredSize));
         rc = fn(requiredSize, output.empty() ? nullptr : &output[0], &requiredSize);
         if (rc != NO_ERROR)
@@ -61,13 +63,26 @@ std::vector<unsigned char> CScriptCertificateManagerDll::CreateSelfSignedCertifi
             throw CScriptException(static_cast<ErrorCode>(rc), "CreateSelfSignedCertificate: size query failed");
         }
 
-        std::vector<unsigned char> certDer(static_cast<size_t>(certRequiredSize));
-        std::vector<char> keyPem(static_cast<size_t>(keyRequiredSize));
-        rc = manager_->CreateSelfSignedCertificate( subjectCommonName.data(), static_cast<int>(subjectCommonName.size()), nullptr, 0,
-                                                    static_cast<CertificateKeyAlgorithm>(keyAlgorithm), validityDays, 0, 0,
-                                                    static_cast<CertificateDigestAlgorithm>(digestAlgorithm),
-                                                    certRequiredSize, certDer.empty() ? nullptr : &certDer[0], &certRequiredSize,
-                                                    keyRequiredSize, keyPem.empty() ? nullptr : &keyPem[0], &keyRequiredSize);
+        // Bounded retry: CCertificateManager::CreateSelfSignedCertificate picks a fresh 128-bit
+        // random serial number (BN_rand) on every call, whose DER-encoded length can differ by a
+        // byte between this size query and the next (real) call below -- self-correcting instead
+        // of surfacing a spurious BUFFER_TOO_SMALL as "call failed".
+        std::vector<unsigned char> certDer;
+        std::vector<char> keyPem;
+        for (int attempt = 0; attempt < 5; ++attempt)
+        {
+            certDer.assign(static_cast<size_t>(certRequiredSize), 0);
+            keyPem.assign(static_cast<size_t>(keyRequiredSize), 0);
+            rc = manager_->CreateSelfSignedCertificate( subjectCommonName.data(), static_cast<int>(subjectCommonName.size()), nullptr, 0,
+                                                        static_cast<CertificateKeyAlgorithm>(keyAlgorithm), validityDays, 0, 0,
+                                                        static_cast<CertificateDigestAlgorithm>(digestAlgorithm),
+                                                        certRequiredSize, certDer.empty() ? nullptr : &certDer[0], &certRequiredSize,
+                                                        keyRequiredSize, keyPem.empty() ? nullptr : &keyPem[0], &keyRequiredSize);
+            if (rc != BUFFER_TOO_SMALL)
+            {
+                break;
+            }
+        }
         if (rc != NO_ERROR)
         {
             throw CScriptException(static_cast<ErrorCode>(rc), "CreateSelfSignedCertificate: call failed");

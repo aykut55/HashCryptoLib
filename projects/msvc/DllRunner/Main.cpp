@@ -37,6 +37,9 @@
 #include "Scripts/ScriptCryptoApiDll.h"
 #include "Scripts/ScriptPgpEngineDll.h"
 #include "Scripts/ScriptPgpEngineWrapperDll.h"
+#include "Scripts/ScriptCertificateManagerDll.h"
+#include "Scripts/ScriptCmsServiceDll.h"
+#include "Scripts/ScriptTimestampServiceDll.h"
 #include "Scripts/LuaScript/LuaScriptEngineSol.h"
 #include "Scripts/LuaScript/LuaScriptEngineLuaBridge.h"
 #include "Scripts/LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
@@ -523,6 +526,534 @@ int main()
 
                 std::remove(progressInputPath);
                 std::remove(progressEncPath);
+
+                // Remaining script test families per the 2026-09-22 parity audit
+                // ([[project_runner_parity_audit_findings]]): symmetric EncryptString/
+                // DecryptString, asymmetric RSA round trip, signature Sign/Verify, ECDH/X25519 key
+                // agreement, random byte generation, PGP clear-sign/verify, and PGP wrapper (real
+                // GnuPG) availability -- reuses the SAME scriptCryptoApi/scriptPgpEngine/
+                // scriptPgpEngineWrapper DLL-hosted facade instances the hash+PGP demo above just
+                // exercised, over the SAME pre-injected globals ("cryptoApi"/"pgpEngine"/
+                // "pgpEngineWrapper"). CScriptCryptoApiDll/CScriptPgpEngineDll's method surface was
+                // extended (2026-09-26) specifically to make this possible -- see those classes' own
+                // header comments.
+                const char* encryptDecryptLuaScript =
+                    "local password = \"s3cr3t-dllrunner-lua-password\"\n"
+                    "local plaintext = \"Hello from DLL Lua!\"\n"
+                    "local ciphertext = cryptoApi:EncryptString(password, plaintext)\n"
+                    "local decrypted = cryptoApi:DecryptString(password, ciphertext)\n"
+                    "ok = (decrypted == plaintext)\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaEngine.RunString(encryptDecryptLuaScript);
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* encryptDecryptLuaBridgeScript =
+                    "local password = \"s3cr3t-dllrunner-luabridge-password\"\n"
+                    "local plaintext = \"Hello from DLL LuaBridge!\"\n"
+                    "local ciphertext = cryptoApi:EncryptString(password, plaintext)\n"
+                    "local decrypted = cryptoApi:DecryptString(password, ciphertext)\n"
+                    "ok = (decrypted == plaintext)\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeEngine.RunString(encryptDecryptLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeLegacyEngine.RunString(encryptDecryptLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* encryptDecryptChaiScript =
+                    "var password = \"s3cr3t-dllrunner-chaiscript-password\";\n"
+                    "var plaintext = \"Hello from DLL ChaiScript!\";\n"
+                    "var ciphertext = cryptoApi.EncryptString(password, plaintext);\n"
+                    "var decrypted = cryptoApi.DecryptString(password, ciphertext);\n"
+                    "global ok = (decrypted == plaintext);\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    chaiEngine.RunString(encryptDecryptChaiScript);
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* encryptDecryptPythonScript =
+                    "password = \"s3cr3t-dllrunner-python-password\"\n"
+                    "plaintext = \"Hello from DLL Python!\"\n"
+                    "ciphertext = cryptoApi.EncryptString(password, plaintext)\n"
+                    "decrypted = cryptoApi.DecryptString(password, ciphertext)\n"
+                    "ok = (decrypted == plaintext)\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    pythonEngine.RunString(encryptDecryptPythonScript);
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting EncryptDecrypt (Python): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* asymmetricLuaScript =
+                    "cryptoApi:GenerateAsymmetricKeyPair()\n"
+                    "local plaintext = \"RSA round trip via DLL Lua\"\n"
+                    "local inputBytes = ToBytes(plaintext)\n"
+                    "local ciphertext = cryptoApi:EncryptWithPublicKey(inputBytes)\n"
+                    "local decryptedBytes = cryptoApi:DecryptWithPrivateKey(ciphertext)\n"
+                    "local chars = {}\n"
+                    "for i = 1, #decryptedBytes do chars[i] = string.char(decryptedBytes[i]) end\n"
+                    "ok = (table.concat(chars) == plaintext) and (#ciphertext == cryptoApi:GetAsymmetricCiphertextSize())\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaEngine.RunString(asymmetricLuaScript);
+                    std::cout << "DLL-hosted scripting Asymmetric (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Asymmetric (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* asymmetricLuaBridgeScript =
+                    "cryptoApi:GenerateAsymmetricKeyPair()\n"
+                    "local plaintext = \"RSA round trip via DLL LuaBridge\"\n"
+                    "local inputBytes = {}\n"
+                    "for i = 1, #plaintext do inputBytes[i] = string.byte(plaintext, i) end\n"
+                    "local ciphertext = cryptoApi:EncryptWithPublicKey(inputBytes)\n"
+                    "local decryptedBytes = cryptoApi:DecryptWithPrivateKey(ciphertext)\n"
+                    "local chars = {}\n"
+                    "for i = 1, #decryptedBytes do chars[i] = string.char(decryptedBytes[i]) end\n"
+                    "ok = (table.concat(chars) == plaintext) and (#ciphertext == cryptoApi:GetAsymmetricCiphertextSize())\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeEngine.RunString(asymmetricLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting Asymmetric (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Asymmetric (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeLegacyEngine.RunString(asymmetricLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting Asymmetric (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Asymmetric (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* asymmetricChaiScript =
+                    "cryptoApi.GenerateAsymmetricKeyPair();\n"
+                    "var plaintext = \"RSA round trip via DLL ChaiScript\";\n"
+                    "var inputBytes = ToBytes(plaintext);\n"
+                    "var ciphertext = cryptoApi.EncryptWithPublicKey(inputBytes);\n"
+                    "var decryptedBytes = cryptoApi.DecryptWithPrivateKey(ciphertext);\n"
+                    "var decryptedText = ToStringFromBytes(decryptedBytes);\n"
+                    "global ok = (decryptedText == plaintext) && (ciphertext.size() == cryptoApi.GetAsymmetricCiphertextSize());\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    chaiEngine.RunString(asymmetricChaiScript);
+                    std::cout << "DLL-hosted scripting Asymmetric (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Asymmetric (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* asymmetricPythonScript =
+                    "cryptoApi.GenerateAsymmetricKeyPair()\n"
+                    "plaintext = \"RSA round trip via DLL Python\"\n"
+                    "inputBytes = ToBytes(plaintext)\n"
+                    "ciphertext = cryptoApi.EncryptWithPublicKey(inputBytes)\n"
+                    "decryptedBytes = cryptoApi.DecryptWithPrivateKey(ciphertext)\n"
+                    "decryptedText = ToStringFromBytes(decryptedBytes)\n"
+                    "ok = (decryptedText == plaintext) and (len(ciphertext) == cryptoApi.GetAsymmetricCiphertextSize())\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    pythonEngine.RunString(asymmetricPythonScript);
+                    std::cout << "DLL-hosted scripting Asymmetric (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Asymmetric (Python): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* signatureLuaScript =
+                    "cryptoApi:GenerateSignatureKeyPair()\n"
+                    "local message = \"Sign this message from DLL Lua\"\n"
+                    "local inputBytes = ToBytes(message)\n"
+                    "local signature = cryptoApi:SignBuffer(inputBytes)\n"
+                    "ok = cryptoApi:VerifyBuffer(inputBytes, signature) and (#signature == cryptoApi:GetSignatureSize())\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaEngine.RunString(signatureLuaScript);
+                    std::cout << "DLL-hosted scripting Signature (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Signature (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* signatureLuaBridgeScript =
+                    "cryptoApi:GenerateSignatureKeyPair()\n"
+                    "local message = \"Sign this message from DLL LuaBridge\"\n"
+                    "local inputBytes = {}\n"
+                    "for i = 1, #message do inputBytes[i] = string.byte(message, i) end\n"
+                    "local signature = cryptoApi:SignBuffer(inputBytes)\n"
+                    "ok = cryptoApi:VerifyBuffer(inputBytes, signature) and (#signature == cryptoApi:GetSignatureSize())\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeEngine.RunString(signatureLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting Signature (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Signature (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeLegacyEngine.RunString(signatureLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting Signature (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Signature (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* signatureChaiScript =
+                    "cryptoApi.GenerateSignatureKeyPair();\n"
+                    "var message = \"Sign this message from DLL ChaiScript\";\n"
+                    "var inputBytes = ToBytes(message);\n"
+                    "var signature = cryptoApi.SignBuffer(inputBytes);\n"
+                    "global ok = cryptoApi.VerifyBuffer(inputBytes, signature) && (signature.size() == cryptoApi.GetSignatureSize());\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    chaiEngine.RunString(signatureChaiScript);
+                    std::cout << "DLL-hosted scripting Signature (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Signature (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* signaturePythonScript =
+                    "cryptoApi.GenerateSignatureKeyPair()\n"
+                    "message = \"Sign this message from DLL Python\"\n"
+                    "inputBytes = ToBytes(message)\n"
+                    "signature = cryptoApi.SignBuffer(inputBytes)\n"
+                    "ok = cryptoApi.VerifyBuffer(inputBytes, signature) and (len(signature) == cryptoApi.GetSignatureSize())\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    pythonEngine.RunString(signaturePythonScript);
+                    std::cout << "DLL-hosted scripting Signature (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Signature (Python): FAILED exception " << ex.what() << std::endl;
+                }
+
+                // KeyAgreement deliberately SKIPPED here (unlike LibRunner's equivalent block,
+                // which has two independent statically-linked CryptoApi.new()/CryptoApi() instances
+                // to play alice/bob): a real two-party exchange needs two INDEPENDENT ICryptoApi
+                // instances, but SetDllCryptoApi always injects a single fixed global named
+                // "cryptoApi" per engine -- supporting a second, differently-named alias would mean
+                // growing every engine's binding surface again beyond what this round already did.
+                // Not a correctness gap in CScriptCryptoApiDll itself, just an unexercised DLL-demo
+                // wiring limitation.
+                std::cout << "DLL-hosted scripting KeyAgreement: SKIPPED for all 5 engines (needs a second independently-named DLL-hosted CryptoApi global, not currently wired -- see this block's own comment)" << std::endl;
+
+                const char* randomLuaScript =
+                    "local randomBytes = cryptoApi:GenerateRandomBytes(32)\n"
+                    "ok = (#randomBytes == 32)\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaEngine.RunString(randomLuaScript);
+                    std::cout << "DLL-hosted scripting Random (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Random (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* randomLuaBridgeScript =
+                    "local randomBytes = cryptoApi:GenerateRandomBytes(32)\n"
+                    "ok = (#randomBytes == 32)\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeEngine.RunString(randomLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting Random (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Random (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    luaBridgeLegacyEngine.RunString(randomLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting Random (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Random (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* randomChaiScript =
+                    "var randomBytes = cryptoApi.GenerateRandomBytes(32);\n"
+                    "global ok = (randomBytes.size() == 32);\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    chaiEngine.RunString(randomChaiScript);
+                    std::cout << "DLL-hosted scripting Random (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Random (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* randomPythonScript =
+                    "randomBytes = cryptoApi.GenerateRandomBytes(32)\n"
+                    "ok = (len(randomBytes) == 32)\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllCryptoApi(&scriptCryptoApi);
+                    pythonEngine.RunString(randomPythonScript);
+                    std::cout << "DLL-hosted scripting Random (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Random (Python): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpSignVerifyLuaScript =
+                    "local message = \"This clear-signed message comes from DLL Lua.\"\n"
+                    "local signed = pgpEngine:ClearSignString(\"ScriptTestPassword123\", message)\n"
+                    "ok = pgpEngine:VerifyClearSignedString(signed)\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    luaEngine.RunString(pgpSignVerifyLuaScript);
+                    std::cout << "DLL-hosted scripting PgpSignVerify (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpSignVerify (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpSignVerifyLuaBridgeScript =
+                    "local message = \"This clear-signed message comes from DLL LuaBridge.\"\n"
+                    "local signed = pgpEngine:ClearSignString(\"ScriptTestPassword123\", message)\n"
+                    "ok = pgpEngine:VerifyClearSignedString(signed)\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    luaBridgeEngine.RunString(pgpSignVerifyLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting PgpSignVerify (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpSignVerify (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    luaBridgeLegacyEngine.RunString(pgpSignVerifyLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting PgpSignVerify (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpSignVerify (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpSignVerifyChaiScript =
+                    "var message = \"This clear-signed message comes from DLL ChaiScript.\";\n"
+                    "var signedMessage = pgpEngine.ClearSignString(\"ScriptTestPassword123\", message);\n"
+                    "global ok = pgpEngine.VerifyClearSignedString(signedMessage);\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    chaiEngine.RunString(pgpSignVerifyChaiScript);
+                    std::cout << "DLL-hosted scripting PgpSignVerify (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpSignVerify (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpSignVerifyPythonScript =
+                    "message = \"This clear-signed message comes from DLL Python.\"\n"
+                    "signedMessage = pgpEngine.ClearSignString(\"ScriptTestPassword123\", message)\n"
+                    "ok = pgpEngine.VerifyClearSignedString(signedMessage)\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllPgpEngine(&scriptPgpEngine);
+                    pythonEngine.RunString(pgpSignVerifyPythonScript);
+                    std::cout << "DLL-hosted scripting PgpSignVerify (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpSignVerify (Python): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpWrapperAvailabilityLuaScript =
+                    "gnupgAvailable = pgpEngineWrapper:IsGnuPgAvailable()\n"
+                    "ok = true\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    luaEngine.RunString(pgpWrapperAvailabilityLuaScript);
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (sol2): PASSED (GnuPG available=" << (luaEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpWrapperAvailabilityLuaBridgeScript =
+                    "gnupgAvailable = pgpEngineWrapper:IsGnuPgAvailable()\n"
+                    "ok = true\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    luaBridgeEngine.RunString(pgpWrapperAvailabilityLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (LuaBridge3): PASSED (GnuPG available=" << (luaBridgeEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    luaBridgeLegacyEngine.RunString(pgpWrapperAvailabilityLuaBridgeScript);
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (LuaBridge 2.10): PASSED (GnuPG available=" << (luaBridgeLegacyEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpWrapperAvailabilityChaiScript =
+                    "global gnupgAvailable = pgpEngineWrapper.IsGnuPgAvailable();\n"
+                    "global ok = true;\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    chaiEngine.RunString(pgpWrapperAvailabilityChaiScript);
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (ChaiScript): PASSED (GnuPG available=" << (chaiEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pgpWrapperAvailabilityPythonScript =
+                    "gnupgAvailable = pgpEngineWrapper.IsGnuPgAvailable()\n"
+                    "ok = True\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllPgpEngineWrapper(&scriptPgpEngineWrapper);
+                    pythonEngine.RunString(pgpWrapperAvailabilityPythonScript);
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (Python): PASSED (GnuPG available=" << (pythonEngine.GetGlobalBool("gnupgAvailable") ? "true" : "false") << ")" << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting PgpWrapperAvailability (Python): FAILED exception " << ex.what() << std::endl;
+                }
             }
 
             if (pScriptCryptoApi)
@@ -536,6 +1067,171 @@ int main()
             if (pScriptPgpEngineWrapper)
             {
                 pCryptoApiDllLoader->DestroyPgpEngineWrapperObject(pScriptPgpEngineWrapper);
+            }
+
+            // Scripting via the DLL, continued: Certificate/CMS/Timestamp facades over the SAME
+            // loaded CryptoAPI.dll, same reduced-surface *Dll classes CScriptCertificateManagerDll.h
+            // etc. document (GetLastPrivateKeyPem's own "stash secondary output" pattern, plain-int
+            // algorithm parameters, VerifyDetached with no trust-root parameter at all here). Same
+            // pre-injected-global convention as cryptoApi/pgpEngine above (SetDllCertificateManager/
+            // SetDllCmsService/SetDllTimestampService -> "certificateManager"/"cmsService"/
+            // "timestampService"), so the scripts below match ScriptEngineTester.cpp's own
+            // RunLuaScriptCertificateTest family almost exactly, just without the
+            // "CertificateManager.new()"/"CertificateManager()" constructor call.
+            CryptoApiNS::ICertificateManager* pScriptCertificateManager = pCryptoApiDllLoader->GetCertificateManagerObject();
+            CryptoApiNS::ICmsService* pScriptCmsService = pCryptoApiDllLoader->GetCmsServiceObject();
+            CryptoApiNS::ITimestampService* pScriptTimestampService = pCryptoApiDllLoader->GetTimestampServiceObject();
+
+            if (pScriptCertificateManager && pScriptCmsService && pScriptTimestampService)
+            {
+                std::cout << std::endl;
+
+                CryptoApiNS::CScriptCertificateManagerDll scriptCertificateManager(pScriptCertificateManager);
+                CryptoApiNS::CScriptCmsServiceDll scriptCmsService(pScriptCmsService);
+                CryptoApiNS::CScriptTimestampServiceDll scriptTimestampService(pScriptTimestampService);
+
+                const char* luaCertScript =
+                    "local certDer = certificateManager:CreateSelfSignedCertificate(\"dllscripttest-lua.example.com\", 0, 30, 0)\n"
+                    "local info = certificateManager:GetCertificateInfoText(certDer)\n"
+                    "local certOk = (#certDer > 0) and (#info > 0)\n"
+                    "local privateKeyPem = certificateManager:GetLastPrivateKeyPem()\n"
+                    "local data = ToBytes(\"CMS test data from DLL Lua\")\n"
+                    "local cmsDer = cmsService:SignDetached(data, certDer, privateKeyPem, 0)\n"
+                    "local verifyResult = cmsService:VerifyDetached(data, cmsDer)\n"
+                    "local cmsOk = (verifyResult == 0)\n"
+                    "local digest = ToBytes(\"0123456789012345678901234567890a\")\n"
+                    "local requestDer = timestampService:CreateTimestampRequest(digest, 0)\n"
+                    "local tsOk = (#requestDer > 0)\n"
+                    "ok = certOk and cmsOk and tsOk\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                    luaEngine.SetDllCertificateManager(&scriptCertificateManager);
+                    luaEngine.SetDllCmsService(&scriptCmsService);
+                    luaEngine.SetDllTimestampService(&scriptTimestampService);
+                    luaEngine.RunString(luaCertScript);
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (sol2): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* luaBridgeCertScript =
+                    "local certDer = certificateManager:CreateSelfSignedCertificate(\"dllscripttest-luabridge.example.com\", 0, 30, 0)\n"
+                    "local info = certificateManager:GetCertificateInfoText(certDer)\n"
+                    "local certOk = (#certDer > 0) and (#info > 0)\n"
+                    "local privateKeyPem = certificateManager:GetLastPrivateKeyPem()\n"
+                    "local message = \"CMS test data from DLL LuaBridge3\"\n"
+                    "local data = {}\n"
+                    "for i = 1, #message do data[i] = string.byte(message, i) end\n"
+                    "local cmsDer = cmsService:SignDetached(data, certDer, privateKeyPem, 0)\n"
+                    "local verifyResult = cmsService:VerifyDetached(data, cmsDer)\n"
+                    "local cmsOk = (verifyResult == 0)\n"
+                    "local digestMsg = \"0123456789012345678901234567890a\"\n"
+                    "local digest = {}\n"
+                    "for i = 1, #digestMsg do digest[i] = string.byte(digestMsg, i) end\n"
+                    "local requestDer = timestampService:CreateTimestampRequest(digest, 0)\n"
+                    "local tsOk = (#requestDer > 0)\n"
+                    "ok = certOk and cmsOk and tsOk\n";
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                    luaBridgeEngine.SetDllCertificateManager(&scriptCertificateManager);
+                    luaBridgeEngine.SetDllCmsService(&scriptCmsService);
+                    luaBridgeEngine.SetDllTimestampService(&scriptTimestampService);
+                    luaBridgeEngine.RunString(luaBridgeCertScript);
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                }
+
+                try
+                {
+                    CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                    luaBridgeLegacyEngine.SetDllCertificateManager(&scriptCertificateManager);
+                    luaBridgeLegacyEngine.SetDllCmsService(&scriptCmsService);
+                    luaBridgeLegacyEngine.SetDllTimestampService(&scriptTimestampService);
+                    luaBridgeLegacyEngine.RunString(luaBridgeCertScript);
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* chaiCertScript =
+                    "var certDer = certificateManager.CreateSelfSignedCertificate(\"dllscripttest-chai.example.com\", 0, 30, 0);\n"
+                    "var info = certificateManager.GetCertificateInfoText(certDer);\n"
+                    "var certOk = (certDer.size() > 0) && (info.size() > 0);\n"
+                    "var privateKeyPem = certificateManager.GetLastPrivateKeyPem();\n"
+                    "var data = ToBytes(\"CMS test data from DLL ChaiScript\");\n"
+                    "var cmsDer = cmsService.SignDetached(data, certDer, privateKeyPem, 0);\n"
+                    "var verifyResult = cmsService.VerifyDetached(data, cmsDer);\n"
+                    "var cmsOk = (verifyResult == 0);\n"
+                    "var digest = ToBytes(\"0123456789012345678901234567890a\");\n"
+                    "var requestDer = timestampService.CreateTimestampRequest(digest, 0);\n"
+                    "var tsOk = (requestDer.size() > 0);\n"
+                    "global ok = certOk && cmsOk && tsOk;\n";
+
+                try
+                {
+                    CryptoApiNS::CChaiScriptEngine chaiEngine;
+                    chaiEngine.SetDllCertificateManager(&scriptCertificateManager);
+                    chaiEngine.SetDllCmsService(&scriptCmsService);
+                    chaiEngine.SetDllTimestampService(&scriptTimestampService);
+                    chaiEngine.RunString(chaiCertScript);
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                }
+
+                const char* pythonCertScript =
+                    "certDer = certificateManager.CreateSelfSignedCertificate(\"dllscripttest-python.example.com\", 0, 30, 0)\n"
+                    "info = certificateManager.GetCertificateInfoText(certDer)\n"
+                    "certOk = (len(certDer) > 0) and (len(info) > 0)\n"
+                    "privateKeyPem = certificateManager.GetLastPrivateKeyPem()\n"
+                    "data = ToBytes(\"CMS test data from DLL Python\")\n"
+                    "cmsDer = cmsService.SignDetached(data, certDer, privateKeyPem, 0)\n"
+                    "verifyResult = cmsService.VerifyDetached(data, cmsDer)\n"
+                    "cmsOk = (verifyResult == 0)\n"
+                    "digest = ToBytes(\"0123456789012345678901234567890a\")\n"
+                    "requestDer = timestampService.CreateTimestampRequest(digest, 0)\n"
+                    "tsOk = (len(requestDer) > 0)\n"
+                    "ok = certOk and cmsOk and tsOk\n";
+
+                try
+                {
+                    CryptoApiNS::CPythonScriptEngine pythonEngine;
+                    pythonEngine.SetDllCertificateManager(&scriptCertificateManager);
+                    pythonEngine.SetDllCmsService(&scriptCmsService);
+                    pythonEngine.SetDllTimestampService(&scriptTimestampService);
+                    pythonEngine.RunString(pythonCertScript);
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cout << "DLL-hosted scripting Certificate/CMS/Timestamp (Python): FAILED exception " << ex.what() << std::endl;
+                }
+            }
+
+            if (pScriptCertificateManager)
+            {
+                pCryptoApiDllLoader->DestroyCertificateManagerObject(pScriptCertificateManager);
+            }
+            if (pScriptCmsService)
+            {
+                pCryptoApiDllLoader->DestroyCmsServiceObject(pScriptCmsService);
+            }
+            if (pScriptTimestampService)
+            {
+                pCryptoApiDllLoader->DestroyTimestampServiceObject(pScriptTimestampService);
             }
         }
 

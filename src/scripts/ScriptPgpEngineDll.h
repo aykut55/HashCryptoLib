@@ -33,6 +33,12 @@ public:
     std::string EncryptStringArmored(const std::string& input);
     std::vector<unsigned char> DecryptStringArmored(const std::string& password, const std::string& input);
 
+    // Grown on demand (2026-09-26) to close the 2026-09-22 parity audit's "PGP sign/verify" missing
+    // script test family for DllRunner -- same shape as CScriptPgpEngine's own identically-named
+    // overloads.
+    std::string ClearSignString(const std::string& password, const std::string& input);
+    bool VerifyClearSignedString(const std::string& clearSignedString);
+
 protected:
 
 private:

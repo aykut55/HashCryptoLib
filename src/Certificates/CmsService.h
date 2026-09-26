@@ -36,11 +36,14 @@ public:
              CCmsService();
 
     // Builds a detached CMS SignedData (RFC 5652) over dataBuffer, signed with signerPrivateKeyPem/
-    // signerCertDerBuffer. v1 scope simplification: does NOT include the RFC 5035
-    // signing-certificate-v2 signed attribute (ICmsService.h's own doc comment still names it as
-    // the design target; adding it needs OpenSSL's lower-level ESS API, deferred to a later pass)
-    // -- the signingTime/content-type/message-digest attributes CMS_sign's own default set adds
-    // are still present.
+    // signerCertDerBuffer. Includes the RFC 5035 signing-certificate-v2 signed attribute
+    // (ESS_SIGNING_CERT_V2, OpenSSL's OSSL_ESS_signing_cert_v2_new_init + CMS_signed_add1_attr_by_NID,
+    // added to the SignerInfo before CMS_final so it is itself covered by the signature) binding the
+    // signature to signerCertDerBuffer's own SHA-256 hash + issuer/serial -- closes the gap this
+    // comment used to note as deferred. digestAlgorithm only controls the message-digest algorithm;
+    // the signing-certificate-v2 attribute's own hash is always SHA-256 per RFC 5035's own
+    // recommendation, independent of digestAlgorithm. The signingTime/content-type/message-digest
+    // attributes CMS_sign's own default set adds are still present alongside it.
     int SignDetached( const unsigned char* dataBuffer, const int dataBufferSize,
                       const unsigned char* signerCertDerBuffer, const int signerCertDerBufferSize,
                       const char* signerPrivateKeyPem, const int signerPrivateKeyPemSize,
@@ -53,6 +56,12 @@ public:
     // supplied does a second pass check the embedded signer certificate chains to it; failing only
     // this second pass means CMS_VERIFICATION_UNTRUSTED_SIGNER. This two-pass shape is what lets
     // the two outcomes be told apart deterministically without parsing OpenSSL's own error queue.
+    // Additionally, if a signing-certificate-v2 attribute is present (SignDetached above always
+    // adds one; a CMS blob from elsewhere with none at all is not affected by this check),
+    // OSSL_ESS_check_signing_certs confirms it actually matches the signer certificate CMS_verify
+    // used -- a mismatch (cryptographically valid signature, but the ESS attribute names a
+    // different certificate) reports CMS_VERIFICATION_SIGNING_CERT_MISMATCH instead of VALID,
+    // checked before either pass above would report VALID.
     int VerifyDetached( const unsigned char* dataBuffer, const int dataBufferSize,
                        const unsigned char* cmsDerBuffer, const int cmsDerBufferSize,
                        const unsigned char* trustedRootCertDerBuffer, const int trustedRootCertDerBufferSize,

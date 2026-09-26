@@ -15,8 +15,21 @@ std::vector<unsigned char> CScriptCertificateManager::callBinaryOutput(const cha
             throw CScriptException(static_cast<ErrorCode>(rc), std::string(methodName) + ": size query failed");
         }
 
-        std::vector<unsigned char> output(static_cast<size_t>(requiredSize));
-        rc = fn(requiredSize, output.empty() ? nullptr : &output[0], &requiredSize);
+        // Bounded retry: the underlying call can be non-idempotent (fresh randomness -- e.g. a
+        // random serial number, a new signature, an RFC 3161 nonce -- each time it runs), so the
+        // size this query just reported is not guaranteed to still fit the NEXT (real) invocation
+        // of the same method. Re-querying and retrying keeps this self-correcting instead of
+        // surfacing a spurious BUFFER_TOO_SMALL as a generic "call failed".
+        std::vector<unsigned char> output;
+        for (int attempt = 0; attempt < 5; ++attempt)
+        {
+            output.assign(static_cast<size_t>(requiredSize), 0);
+            rc = fn(requiredSize, output.empty() ? nullptr : &output[0], &requiredSize);
+            if (rc != BUFFER_TOO_SMALL)
+            {
+                break;
+            }
+        }
         if (rc != NO_ERROR)
         {
             throw CScriptException(static_cast<ErrorCode>(rc), std::string(methodName) + ": call failed");
@@ -42,6 +55,8 @@ std::string CScriptCertificateManager::callTextOutput(const char* methodName, co
     {
         int requiredSize = 0;
         int rc = fn(0, nullptr, &requiredSize);
+        // (No retry loop needed here -- every callTextOutput caller inspects EXISTING, already-
+        // generated data, so its output length is deterministic given the same input.)
         if (rc != NO_ERROR && rc != BUFFER_TOO_SMALL)
         {
             throw CScriptException(static_cast<ErrorCode>(rc), std::string(methodName) + ": size query failed");
@@ -144,14 +159,27 @@ std::vector<unsigned char> CScriptCertificateManager::CreateSelfSignedCertificat
             throw CScriptException(static_cast<ErrorCode>(rc), "CreateSelfSignedCertificate: size query failed");
         }
 
-        std::vector<unsigned char> certDer(static_cast<size_t>(certRequiredSize));
-        std::vector<char> keyPem(static_cast<size_t>(keyRequiredSize));
-        rc = engine_.CreateSelfSignedCertificate( subjectCommonName.data(), static_cast<int>(subjectCommonName.size()),
-                                                  sanDnsNamesCsv.data(), static_cast<int>(sanDnsNamesCsv.size()),
-                                                  static_cast<CertificateKeyAlgorithm>(keyAlgorithm), validityDays,
-                                                  keyUsageFlags, extendedKeyUsageFlags, static_cast<CertificateDigestAlgorithm>(digestAlgorithm),
-                                                  certRequiredSize, certDer.empty() ? nullptr : &certDer[0], &certRequiredSize,
-                                                  keyRequiredSize, keyPem.empty() ? nullptr : &keyPem[0], &keyRequiredSize);
+        // Bounded retry: CCertificateManager::CreateSelfSignedCertificate picks a fresh 128-bit
+        // random serial number (BN_rand) on every call, whose DER-encoded length can differ by a
+        // byte between this size query and the next (real) call below -- self-correcting instead
+        // of surfacing a spurious BUFFER_TOO_SMALL as "call failed".
+        std::vector<unsigned char> certDer;
+        std::vector<char> keyPem;
+        for (int attempt = 0; attempt < 5; ++attempt)
+        {
+            certDer.assign(static_cast<size_t>(certRequiredSize), 0);
+            keyPem.assign(static_cast<size_t>(keyRequiredSize), 0);
+            rc = engine_.CreateSelfSignedCertificate( subjectCommonName.data(), static_cast<int>(subjectCommonName.size()),
+                                                      sanDnsNamesCsv.data(), static_cast<int>(sanDnsNamesCsv.size()),
+                                                      static_cast<CertificateKeyAlgorithm>(keyAlgorithm), validityDays,
+                                                      keyUsageFlags, extendedKeyUsageFlags, static_cast<CertificateDigestAlgorithm>(digestAlgorithm),
+                                                      certRequiredSize, certDer.empty() ? nullptr : &certDer[0], &certRequiredSize,
+                                                      keyRequiredSize, keyPem.empty() ? nullptr : &keyPem[0], &keyRequiredSize);
+            if (rc != BUFFER_TOO_SMALL)
+            {
+                break;
+            }
+        }
         if (rc != NO_ERROR)
         {
             throw CScriptException(static_cast<ErrorCode>(rc), "CreateSelfSignedCertificate: call failed");
@@ -188,13 +216,25 @@ std::vector<unsigned char> CScriptCertificateManager::CreateCertificateRequest( 
             throw CScriptException(static_cast<ErrorCode>(rc), "CreateCertificateRequest: size query failed");
         }
 
-        std::vector<unsigned char> csrDer(static_cast<size_t>(csrRequiredSize));
-        std::vector<char> keyPem(static_cast<size_t>(keyRequiredSize));
-        rc = engine_.CreateCertificateRequest( subjectCommonName.data(), static_cast<int>(subjectCommonName.size()),
-                                               sanDnsNamesCsv.data(), static_cast<int>(sanDnsNamesCsv.size()),
-                                               static_cast<CertificateKeyAlgorithm>(keyAlgorithm), static_cast<CertificateDigestAlgorithm>(digestAlgorithm),
-                                               csrRequiredSize, csrDer.empty() ? nullptr : &csrDer[0], &csrRequiredSize,
-                                               keyRequiredSize, keyPem.empty() ? nullptr : &keyPem[0], &keyRequiredSize);
+        // Bounded retry, same defensive reasoning as CreateSelfSignedCertificate above -- a CSR has
+        // no serial number, but its self-signature (over a fresh key pair) is not guaranteed
+        // fixed-size for every CertificateKeyAlgorithm (ECDSA's DER-encoded r/s can vary by a byte).
+        std::vector<unsigned char> csrDer;
+        std::vector<char> keyPem;
+        for (int attempt = 0; attempt < 5; ++attempt)
+        {
+            csrDer.assign(static_cast<size_t>(csrRequiredSize), 0);
+            keyPem.assign(static_cast<size_t>(keyRequiredSize), 0);
+            rc = engine_.CreateCertificateRequest( subjectCommonName.data(), static_cast<int>(subjectCommonName.size()),
+                                                   sanDnsNamesCsv.data(), static_cast<int>(sanDnsNamesCsv.size()),
+                                                   static_cast<CertificateKeyAlgorithm>(keyAlgorithm), static_cast<CertificateDigestAlgorithm>(digestAlgorithm),
+                                                   csrRequiredSize, csrDer.empty() ? nullptr : &csrDer[0], &csrRequiredSize,
+                                                   keyRequiredSize, keyPem.empty() ? nullptr : &keyPem[0], &keyRequiredSize);
+            if (rc != BUFFER_TOO_SMALL)
+            {
+                break;
+            }
+        }
         if (rc != NO_ERROR)
         {
             throw CScriptException(static_cast<ErrorCode>(rc), "CreateCertificateRequest: call failed");

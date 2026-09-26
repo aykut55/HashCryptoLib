@@ -411,6 +411,8 @@ int runTestsViaCryptoApiTester()
 
     cryptoApiTester.RunCmsUntrustedSignerRejectionTest();
 
+    cryptoApiTester.RunCmsSigningCertificateV2AttributeTest();
+
     cryptoApiTester.RunTimestampRequestResponseRoundtripTest();
 
     cryptoApiTester.RunTimestampVerifyTest();

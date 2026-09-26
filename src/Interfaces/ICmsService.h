@@ -23,13 +23,20 @@ enum CmsDigestAlgorithm
 // signed digest does not match dataBuffer; CMS_VERIFICATION_UNTRUSTED_SIGNER means the signature
 // itself checked out but the signer certificate did not chain to the supplied trusted root (only
 // possible when VerifyDetached was given one -- see that method's own doc comment);
-// CMS_VERIFICATION_TECHNICAL_ERROR means verification could not run at all (malformed CMS, etc.).
+// CMS_VERIFICATION_TECHNICAL_ERROR means verification could not run at all (malformed CMS, etc.);
+// CMS_VERIFICATION_SIGNING_CERT_MISMATCH means the signature and digest are cryptographically
+// valid but the embedded RFC 5035 signing-certificate-v2 attribute's hash does not match the
+// actual signer certificate carried in the CMS structure -- a certificate-substitution attack
+// (only detected when the attribute is present, which SignDetached always adds; a CMS blob
+// produced by a different signer with no such attribute at all falls back to VALID/UNTRUSTED as
+// before, same as before this attribute existed).
 enum CmsVerificationResult
 {
-    CMS_VERIFICATION_VALID             = 0,
-    CMS_VERIFICATION_TAMPERED_DATA     = 1,
-    CMS_VERIFICATION_UNTRUSTED_SIGNER  = 2,
-    CMS_VERIFICATION_TECHNICAL_ERROR   = 3
+    CMS_VERIFICATION_VALID                    = 0,
+    CMS_VERIFICATION_TAMPERED_DATA            = 1,
+    CMS_VERIFICATION_UNTRUSTED_SIGNER         = 2,
+    CMS_VERIFICATION_TECHNICAL_ERROR          = 3,
+    CMS_VERIFICATION_SIGNING_CERT_MISMATCH    = 4
 };
 
 // Pure-virtual mirror of CCmsService's instance methods (see Certificates/CmsService.h for full
