@@ -131,6 +131,17 @@ public:
                        const RevocationMode revocationMode, const RevocationNetworkMode revocationNetworkMode,
                        int* trustResult, int* revocationStatus) override;
 
+    // OpenSSL-side CRL check (RFC 5280 CertificateList: d2i_X509_CRL + X509_CRL_get0_by_serial),
+    // complementing ValidateChain above -- for callers holding a CRL directly rather than relying
+    // on CryptoAPI's own CDP/OCSP fetch machinery. crlIssuerCertDerBuffer/crlIssuerCertDerBufferSize
+    // may be nullptr/0 to skip the CRL's own signature verification (same "optional trust check"
+    // convention as ICmsService::VerifyDetached's trustedRootCertDer). A CRL past its own
+    // nextUpdate is treated as stale and always reports REVOCATION_STATUS_UNKNOWN.
+    int CheckCertificateAgainstCrl( const unsigned char* certDerBuffer, const int certDerBufferSize,
+                                    const unsigned char* crlDerBuffer, const int crlDerBufferSize,
+                                    const unsigned char* crlIssuerCertDerBuffer, const int crlIssuerCertDerBufferSize,
+                                    int* revocationStatus) override;
+
     // ============================================================================================
     // Store (Windows Crypt32-backed: CertOpenStore/CertAddEncodedCertificateToStore/
     // CertFindCertificateInStore/PFXImportCertStore) -- one store open at a time per instance.

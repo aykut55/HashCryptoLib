@@ -24,6 +24,7 @@
 #include "openssl/x509v3.h"
 
 #include <cstring>
+#include <ctime>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,6 +42,7 @@ namespace
 // ================================================================================================
 
 struct X509Deleter        { void operator()(X509* p)              const { if (p) X509_free(p); } };
+struct X509CrlDeleter      { void operator()(X509_CRL* p)          const { if (p) X509_CRL_free(p); } };
 struct X509ReqDeleter      { void operator()(X509_REQ* p)          const { if (p) X509_REQ_free(p); } };
 struct EvpPkeyDeleter      { void operator()(EVP_PKEY* p)          const { if (p) EVP_PKEY_free(p); } };
 struct EvpPkeyCtxDeleter   { void operator()(EVP_PKEY_CTX* p)      const { if (p) EVP_PKEY_CTX_free(p); } };
@@ -54,6 +56,7 @@ struct BitStringDeleter    { void operator()(ASN1_BIT_STRING* p)  const { if (p)
 struct ExtensionDeleter    { void operator()(X509_EXTENSION* p)   const { if (p) X509_EXTENSION_free(p); } };
 
 typedef std::unique_ptr<X509, X509Deleter> X509Ptr;
+typedef std::unique_ptr<X509_CRL, X509CrlDeleter> X509CrlPtr;
 typedef std::unique_ptr<X509_REQ, X509ReqDeleter> X509ReqPtr;
 typedef std::unique_ptr<EVP_PKEY, EvpPkeyDeleter> EvpPkeyPtr;
 typedef std::unique_ptr<EVP_PKEY_CTX, EvpPkeyCtxDeleter> EvpPkeyCtxPtr;
@@ -1296,6 +1299,72 @@ int CCertificateManager::ValidateChain( const unsigned char* leafCertDerBuffer, 
 
         *trustResult = localTrust;
         *revocationStatus = localRevocation;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCertificateManager::CheckCertificateAgainstCrl( const unsigned char* certDerBuffer, const int certDerBufferSize,
+                                                      const unsigned char* crlDerBuffer, const int crlDerBufferSize,
+                                                      const unsigned char* crlIssuerCertDerBuffer, const int crlIssuerCertDerBufferSize,
+                                                      int* revocationStatus)
+{
+    try
+    {
+        if (certDerBuffer == nullptr || certDerBufferSize <= 0 ||
+            crlDerBuffer == nullptr || crlDerBufferSize <= 0 || revocationStatus == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        X509Ptr cert(DerBufferToX509(certDerBuffer, certDerBufferSize));
+        if (!cert)
+        {
+            return INVALID_DATA;
+        }
+
+        const unsigned char* crlP = crlDerBuffer;
+        X509CrlPtr crl(d2i_X509_CRL(nullptr, &crlP, crlDerBufferSize));
+        if (!crl)
+        {
+            return INVALID_DATA;
+        }
+
+        if (crlIssuerCertDerBuffer != nullptr && crlIssuerCertDerBufferSize > 0)
+        {
+            X509Ptr issuerCert(DerBufferToX509(crlIssuerCertDerBuffer, crlIssuerCertDerBufferSize));
+            if (!issuerCert)
+            {
+                return INVALID_DATA;
+            }
+
+            EvpPkeyPtr issuerPubKey(X509_get_pubkey(issuerCert.get()));
+            if (!issuerPubKey || X509_CRL_verify(crl.get(), issuerPubKey.get()) != 1)
+            {
+                *revocationStatus = REVOCATION_STATUS_UNKNOWN;
+                return NO_ERROR;
+            }
+        }
+
+        // A CRL past its own nextUpdate is stale -- "not listed as revoked" from a stale CRL isn't
+        // trustworthy evidence of the certificate's current status. ASN1_TIME_cmp_time_t (not
+        // X509_cmp_current_time, deprecated since OpenSSL 4.0) returns <0 when nextUpdate is
+        // earlier than the given time_t.
+        const ASN1_TIME* nextUpdate = X509_CRL_get0_nextUpdate(crl.get());
+        if (nextUpdate != nullptr && ASN1_TIME_cmp_time_t(nextUpdate, std::time(nullptr)) < 0)
+        {
+            *revocationStatus = REVOCATION_STATUS_UNKNOWN;
+            return NO_ERROR;
+        }
+
+        X509_REVOKED* revokedEntry = nullptr;
+        const int found = X509_CRL_get0_by_serial(crl.get(), &revokedEntry, X509_get_serialNumber(cert.get()));
+
+        *revocationStatus = (found == 1) ? REVOCATION_STATUS_REVOKED : REVOCATION_STATUS_GOOD;
         return NO_ERROR;
     }
     catch (...)

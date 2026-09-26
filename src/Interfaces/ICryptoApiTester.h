@@ -306,6 +306,12 @@ public:
 
     virtual int RunPgpWrapperMultiRecipientEncryptTest(void) = 0;
 
+    virtual int RunPgpWrapperMultiRecipientEncryptStringArmoredTest(void) = 0;
+
+    virtual int RunPgpGetPeerKeyIdTest(void) = 0;
+
+    virtual int RunPgpWrapperGetPeerKeyIdTest(void) = 0;
+
     virtual int RunPgpWrapperEccKeyGenerationTest(void) = 0;
 
     virtual int RunPgpWrapperSymmetricEncryptDecryptTest(void) = 0;
@@ -345,6 +351,14 @@ public:
     virtual int RunCertificateChainExpiredTest(void) = 0;
 
     virtual int RunCertificateChainRevokedTest(void) = 0;
+
+    virtual int RunCertificateCrlCheckGoodTest(void) = 0;
+
+    virtual int RunCertificateCrlCheckRevokedTest(void) = 0;
+
+    virtual int RunCertificateCrlCheckStaleTest(void) = 0;
+
+    virtual int RunCertificateCrlCheckWrongIssuerRejectionTest(void) = 0;
 
     virtual int RunCertificateStoreMemoryFindTest(void) = 0;
 

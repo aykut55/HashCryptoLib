@@ -188,6 +188,18 @@ public:
                                const RevocationMode revocationMode, const RevocationNetworkMode revocationNetworkMode,
                                int* trustResult, int* revocationStatus) = 0;
 
+    // OpenSSL-side CRL check (RFC 5280 CertificateList), complementing ValidateChain's Crypt32-
+    // backed revocation checking above -- for callers holding a CRL directly (fetched out-of-band,
+    // or bundled with a CA distribution) rather than relying on CryptoAPI's own CDP/OCSP fetch
+    // machinery. crlIssuerCertDerBuffer/crlIssuerCertDerBufferSize may be nullptr/0 to skip the
+    // CRL's own signature verification; a CRL past its own nextUpdate is treated as stale and
+    // always reports REVOCATION_STATUS_UNKNOWN regardless of whether the target certificate's
+    // serial number appears in it.
+    virtual int CheckCertificateAgainstCrl( const unsigned char* certDerBuffer, const int certDerBufferSize,
+                                            const unsigned char* crlDerBuffer, const int crlDerBufferSize,
+                                            const unsigned char* crlIssuerCertDerBuffer, const int crlIssuerCertDerBufferSize,
+                                            int* revocationStatus) = 0;
+
     // ============================================================================================
     // Store -- OpenStore/CloseStore hold one Windows certificate store open at a time (Plan.md
     // 25.2's CertificateStore); Add/Remove/Find/ImportPfxToStore operate on whichever store is

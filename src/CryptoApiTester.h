@@ -774,6 +774,22 @@ public:
     // ciphertext bytes back to the original plaintext.
     int RunPgpWrapperMultiRecipientEncryptTest(void) override;
 
+    // Same shape as RunPgpWrapperMultiRecipientEncryptTest above, but exercises the ASCII-armored
+    // string overloads instead of the raw-buffer ones -- covers BOTH
+    // IPgpEngineWrapper::EncryptStringArmoredMultiRecipient overloads (with and without an explicit
+    // PgpCompressionAlgorithm), neither of which had any test coverage at all before this (flagged
+    // by the 2026-09-22 runner parity audit's interface-method-coverage scan). One shared
+    // ciphertext per overload, decrypted independently by both alice and carol via real gpg.
+    int RunPgpWrapperMultiRecipientEncryptStringArmoredTest(void) override;
+
+    // IPgpEngine::GetPeerKeyId had no test coverage at all before this (same parity-audit finding
+    // as the multi-recipient string overloads above). Alice imports bob's public key and confirms
+    // GetPeerKeyId reports exactly bob's own GetKeyId.
+    int RunPgpGetPeerKeyIdTest(void) override;
+
+    // Same as RunPgpGetPeerKeyIdTest above, for IPgpEngineWrapper::GetPeerKeyId (real gpg-backed).
+    int RunPgpWrapperGetPeerKeyIdTest(void) override;
+
     // Extra capability beyond CPgpEngine: real ECC/EdDSA identities. Generates an Ed25519/Cv25519
     // identity via GenerateKeyPairEcc, checks GetKeyId still reports a 16-hex-char Key ID and both
     // armored exports carry the expected framing, then exercises the SAME identity end to end:
@@ -901,6 +917,29 @@ public:
     // test list, documenting that full CRL-based revocation testing needs a real CRL distribution
     // point this SDK does not operate.
     int RunCertificateChainRevokedTest(void) override;
+
+    // Closes the gap the comment above documents: builds a real CRL (X509_CRL, signed by the CA
+    // key) with zero revoked entries and checks the leaf certificate against it via
+    // CCertificateManager::CheckCertificateAgainstCrl -- once with the CA cert supplied as
+    // crlIssuerCertDerBuffer (exercises the CRL signature-verification path) and once with it
+    // omitted (exercises the verification-skipped path), both expected to report
+    // REVOCATION_STATUS_GOOD.
+    int RunCertificateCrlCheckGoodTest(void) override;
+
+    // Same CA/leaf pair, but the CRL revokes the leaf's own serial number -- expects
+    // REVOCATION_STATUS_REVOKED.
+    int RunCertificateCrlCheckRevokedTest(void) override;
+
+    // Same CA/leaf pair, CRL has zero revoked entries but its nextUpdate is set to a date already
+    // in the past -- expects REVOCATION_STATUS_UNKNOWN even though the leaf's serial is not present
+    // in the (stale) revoked list, per CheckCertificateAgainstCrl's own "a stale CRL is not
+    // trustworthy evidence" policy.
+    int RunCertificateCrlCheckStaleTest(void) override;
+
+    // Same CRL as RunCertificateCrlCheckGoodTest, but crlIssuerCertDerBuffer is a different,
+    // unrelated self-signed certificate (not the real CRL signer) -- CRL signature verification
+    // fails, expects REVOCATION_STATUS_UNKNOWN.
+    int RunCertificateCrlCheckWrongIssuerRejectionTest(void) override;
 
     // OpenStore(CERTIFICATE_STORE_MEMORY), AddCertificateToStore a self-signed certificate,
     // FindCertificateInStoreBySubject by its CN substring, confirm the returned DER matches;

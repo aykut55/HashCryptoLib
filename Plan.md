@@ -1145,26 +1145,94 @@ zaman damgası** — bunlar §25'te hiç yok ve muhtemelen ayrı bir "§25.9 CMS
 yeni bir bölüm olarak ele alınmalı. İş, kullanıcı açıkça istemedikçe başlatılmayacak (bkz. memory
 `feedback_sdk_frozen_2026_09_20.md`).
 
-**§25 olduğu gibi implement edilirse yukarıdaki 11 maddelik listenin durumu:**
+**§25 olduğu gibi implement edilirse yukarıdaki 11 maddelik listenin durumu (2026-09-26 itibarıyla
+güncellendi — aşağıdaki §29.5'te anlatılan implementasyon sonrası):**
 
-| # | Yetenek | Kapsam | §25 implement edilince durum |
+| # | Yetenek | Kapsam | Durum |
 | --- | --- | --- | --- |
-| 1 | X.509 üretimi/CA | Genel (belge-bağımsız) | KISMEN — self-signed+CSR §25.5'te var; CA olarak başkasının CSR'ini imzalama (`IssueCertificate`) yok |
-| 2 | Sertifika/anahtar format dönüşümleri | Genel (belge-bağımsız) | KISMEN — DER/PEM/PFX §25.3'te var; P7B/XML/JWK/SSH/JKS/PPK yok |
-| 3 | Zincir kurma/doğrulama | Genel (belge-bağımsız) | DONE olur — §25.6 tam kapsıyor (`CertGetCertificateChain`+policy) |
-| 4 | Revocation (CRL/OCSP) | Genel (belge-bağımsız) | KISMEN — §25.6 Windows/`CertGetCertificateChain` üzerinden kapsıyor; OpenSSL/Botan için elle CRL parse planlanmadı |
-| 5 | PKCS#7/CMS detached imza | Genel (belge-bağımsız) — CMS/SignedData formatı S/MIME, kod imzalama, herhangi bir dosya için de geçerli; PDF sadece `SubFilter: /ETSI.CAdES.detached` ile onu kendi konteynerine gömüyor | HAYIR — §25'te yok, asıl boşluk |
-| 6 | RFC 3161 zaman damgası | Genel (belge-bağımsız) — protokol seviyesinde, PDF'le ilgisi yok | HAYIR — §25'te yok |
+| 1 | X.509 üretimi/CA | Genel (belge-bağımsız) | ✅ DONE (2026-09-26) — self-signed+CSR+CA-issuance (`IssueCertificateFromRequest`) hepsi var |
+| 2 | Sertifika/anahtar format dönüşümleri | Genel (belge-bağımsız) | KISMEN — DER/PEM/PFX var; P7B/XML/JWK/SSH/JKS/PPK hâlâ yok |
+| 3 | Zincir kurma/doğrulama | Genel (belge-bağımsız) | ✅ DONE (2026-09-26) — `ValidateChain`, Windows `CertGetCertificateChain`+policy üzerinden |
+| 4 | Revocation (CRL/OCSP) | Genel (belge-bağımsız) | ✅ DONE (2026-09-26) — Windows/`CertGetCertificateChain` üzerinden `RevocationMode`/`RevocationNetworkMode` (§25.6) + OpenSSL `X509_CRL` API'siyle doğrudan CRL kontrolü (`CheckCertificateAgainstCrl`, §29.6); OCSP hâlâ yok |
+| 5 | PKCS#7/CMS detached imza | Genel (belge-bağımsız) — CMS/SignedData formatı S/MIME, kod imzalama, herhangi bir dosya için de geçerli; PDF sadece `SubFilter: /ETSI.CAdES.detached` ile onu kendi konteynerine gömüyor | ✅ DONE (2026-09-26) — `CCmsService::SignDetached`/`VerifyDetached`; RFC 5035 signing-certificate-v2 özniteliği hâlâ eklenmedi (küçük, belgelenmiş bir eksik) |
+| 6 | RFC 3161 zaman damgası | Genel (belge-bağımsız) — protokol seviyesinde, PDF'le ilgisi yok | ✅ DONE (2026-09-26) — `CTimestampService`, gerçek bir TSA'ya karşı test edildi |
 | 7 | PAdES seviyeleri | **PDF'e özgü** | HAYIR / kapsam dışı |
 | 8 | PDF ByteRange/imza protokolü | **PDF'e özgü** | HAYIR / kapsam dışı |
 | 9 | PDF parola tabanlı şifreleme | **PDF'e özgü** | HAYIR / kapsam dışı |
-| 10 | PubSec (CMS EnvelopedData) | **PDF'e özgü** — CMS EnvelopedData'yı kullanıyor ama PDF dosya anahtarını sarmalama "handler"ı olarak, PDF dışında anlamı yok | HAYIR / kapsam dışı |
-| 11 | PKCS#11/HSM | Genel (belge-bağımsız) | HAYIR — §25'te hiç planlanmadı |
+| 10 | PubSec (CMS EnvelopedData) | **PDF'e özgü** — CMS EnvelopedData'yı kullanıyor ama PDF dosya anahtarını sarmalama "handler"ı olarak, PDF dışında anlamı yok | HAYIR / kapsam dışı (genel amaçlı CMS EnvelopedData de hiç implement edilmedi, sadece SignedData var) |
+| 11 | PKCS#11/HSM | Genel (belge-bağımsız) | HAYIR — bilinçli olarak kapsam dışı bırakıldı |
 
-**Sonuç:** HashCryptoLib için gerçek gap, PDF-spesifik olmayan **1-2-3-4-5-6-11** — yani genel amaçlı
-doküman/dosya imzalama-şifreleme için gereken PKI (X.509/CA/format/zincir/revocation) + CMS mesaj
-imzası + RFC 3161 zaman damgası + HSM katmanı. 7-8-9-10 PDF konteynerine özgü olduğu için
-HashCryptoLib'in hedefi değil, kapsam dışı kalmaya devam ediyor.
+**Sonuç (güncel, 2026-09-26 CRL eklemesi sonrası):** PDF-spesifik olmayan asıl boşluk artık sadece
+**2-11** — format çeşitliliği (XML/JWK/SSH/JKS/PPK) ve PKCS#11/HSM. 1-3-4-5-6 tamamlandı (bkz. §29.5,
+§29.6). 7-8-9-10 PDF konteynerine özgü olduğu için HashCryptoLib'in hedefi değil, kapsam dışı kalmaya
+devam ediyor.
+
+### 29.5 Certificates (§25) + CMS/RFC3161 implementasyonu — TAMAMLANDI (2026-09-26)
+
+Kullanıcının açık onayıyla (daha önce dondurulmuş SDK'ya rağmen) §25'in çekirdeği ve §29.4'ün 1/3/5/6
+numaralı boşlukları implement edildi. Hibrit backend: X.509/CMS/TS mekaniği OpenSSL
+(`3rdParty/openssl402`, zaten vendored ama kullanılmıyordu), store/zincir/revocation Windows Crypt32
+(OS root store ve revocation altyapısından yararlanmak için).
+
+- **`CCertificateManager`** (`src/Certificates/CertificateManager.h/.cpp`) — DER/PEM/PFX dönüşüm ve
+  inceleme (`GetCertificateInfoText`), self-signed sertifika + CSR üretimi (ephemeral key, v1
+  kapsamı — §12.1), CSR'dan CA-issuance (`IssueCertificateFromRequest`, §29.4 madde 1'i kapatıyor),
+  zincir doğrulama (`ValidateChain` — trust anchor'lar bu çağrı için toplanan self-signed
+  sertifikalar, gerçek Windows Root store'a hiç dokunmuyor, "ApplicationTrust" modeli, §25.6),
+  sertifika deposu (Memory/CurrentUser/LocalMachine, sadece Memory otomatik testli, §25.8).
+- **`CCmsService`** (`src/Certificates/CmsService.h/.cpp`) — detached PKCS#7/CMS SignedData imzalama
+  ve doğrulama (§29.4 madde 5); iki geçişli doğrulama (önce sadece kriptografik, sonra güven zinciri)
+  ile "bozulmuş veri" ile "güvenilmeyen imzalayan" ayrı ayrı ayırt ediliyor.
+- **`CTimestampService`** (`src/Certificates/TimestampService.h/.cpp`) — RFC 3161 istek/yanıt
+  (OpenSSL `ts.h`) + gerçek bir TSA'ya WinHTTP üzerinden HTTP POST (§29.4 madde 6).
+- 16 yeni `CCryptoApiTester` testi + `ICertificateManager`/`ICmsService`/`ITimestampService`
+  arayüzleri + `CryptoApiFactory`/`CCryptoApiDllLoader` kablolaması. Tüm 4 derleme konfigürasyonunda
+  (Debug/Release × Win32/x64) `DllBuilder`/`LibBuilder`/`AppBuilder`/`DllRunner`/`LibRunner` sıfır
+  hatayla derlendi, 16/16 test PASSED, regresyon yok.
+- **Ayrıca**: aynı üç sınıf için script entegrasyonu eklendi — `ScriptCertificateManager`/
+  `ScriptCmsService`/`ScriptTimestampService` (+ DLL-hosted azaltılmış-yüzey `*Dll` karşılıkları),
+  5 script motorunun (sol2/LuaBridge3/LuaBridge2.10/ChaiScript/Python) hepsine bağlandı, 5 yeni
+  `CScriptEngineTester` testi eklendi, hepsi PASSED.
+- **Bilinçli sınırlamalar** (kod içi yorumlarda belgelendi, sessizce atlanmadı): CMS'te RFC 5035
+  signing-certificate-v2 özniteliği yok; `ImportPfx`/`ExportPfx` tek-sertifika ile sınırlı;
+  `DllRunner`/`LibRunner`'ın kendi `Main.cpp`'sine yeni `*Dll` sınıflarını gösteren canlı bir demo
+  eklenmedi (bkz. §29.6'nın "Hâlâ açık" notu — gerçek CRL testi artık var, bu madde kapandı).
+- **Yan bulgular**: bu iş sırasında `LibRunner.vcxproj`'da eksik `winhttp.lib` bağımlılığı ve
+  `DllRunner.vcxproj.filters`/`LibRunner.vcxproj.filters`'ta eksik üst düzey `src` filtresi
+  bulunup düzeltildi (ikisi de bu implementasyonla ilgisiz, ayrı gerçek hatalardı).
+- **Hâlâ açık**: §25'in kalanı (format çeşitliliği, PKCS#11/HSM — yukarıdaki güncellenmiş tabloya
+  bkz.), ve Plan.md §26 (TLS)/§27 (SSH) hiç başlanmadı.
+
+### 29.6 OpenSSL-taraflı gerçek CRL kontrolü — TAMAMLANDI (2026-09-26)
+
+§29.5'in kendi "Bilinçli sınırlamalar" notunun işaret ettiği boşluğu kapatıyor: o zamana kadar
+`RunCertificateChainRevokedTest` gerçek bir CRL'e karşı test etmiyordu (test CA'sının CRL
+Distribution Point'i olmadığı için sadece Required+Offline → revocation-unknown senaryosunu
+sınıyordu). Artık `CCertificateManager`'a `ValidateChain`'i (Crypt32-backed) tamamlayan, OpenSSL
+`X509_CRL` API'sini doğrudan kullanan bir `CheckCertificateAgainstCrl` metodu eklendi.
+
+- **`CheckCertificateAgainstCrl`** (`ICertificateManager.h`, `CertificateManager.h/.cpp`) —
+  `d2i_X509_CRL` ile CRL'i parse ediyor, `crlIssuerCertDerBuffer` verilirse `X509_CRL_verify` ile
+  CRL'in kendi imzasını doğruluyor (verilmezse bu adım atlanıyor — `ICmsService::VerifyDetached`'ın
+  `trustedRootCertDer` parametresiyle aynı "opsiyonel güven kontrolü" kuralı), `nextUpdate`'i
+  geçmişte kalan bir CRL'i her zaman `REVOCATION_STATUS_UNKNOWN` olarak işaretliyor (bayat CRL'in
+  "listede yok" bilgisine güvenilmiyor), ve son olarak `X509_CRL_get0_by_serial` ile hedef
+  sertifikanın seri numarasını arıyor.
+- 4 yeni `CCryptoApiTester` testi eklendi (`RunCertificateCrlCheckGoodTest`/`RevokedTest`/
+  `StaleTest`/`WrongIssuerRejectionTest`), gerçek bir CA-imzalı CRL'e karşı — mocklama yok. Test
+  fixture'ı (`BuildTestCrlDer`, `CryptoApiTester.cpp`'nin kendi anonim namespace'inde, `src/`'de
+  hiçbir yerde expose edilmiyor) OpenSSL C API'siyle gerçek bir imzalı CRL üretiyor, çünkü
+  `CCertificateManager`'ın kendisi hâlâ bilinçli olarak CRL *üretme* API'si sunmuyor (v1 kapsamı
+  sadece *tüketme* tarafı).
+- Derleme sırasında gerçek bir hata bulunup düzeltildi: `X509_cmp_current_time` bu OpenSSL sürümünde
+  (4.0+) deprecated olduğu için derleme hatası veriyordu; `ASN1_TIME_cmp_time_t` ile değiştirildi.
+- Tüm 4 derleme konfigürasyonunda (Debug/Release × Win32/x64) `AppBuilder` sıfır hatayla derlendi,
+  ayrıca `DllBuilder`/`LibBuilder` Debug|x64 üzerinde de doğrulandı (yeni dosya eklenmedi, sadece
+  var olan `Certificates/CertificateManager.cpp` değişti, proje dosyalarında değişiklik gerekmedi).
+  4 yeni test de dahil 24 Certificate/CMS/Timestamp testi PASSED, regresyon yok.
+- **Hâlâ açık**: OCSP; `LibRunner`'ın kendi `Main.cpp`'si hâlâ HİÇ Certificate/CMS/Timestamp testi
+  çalıştırmıyor (bu implementasyondan önce de öyleydi — parity denetimi bunu şimdi ayrıca not ediyor,
+  bkz. görev listesi).
 
 ## 30. AES Online Tool Araştırması — Kullanıcı Tarafından Girilebilen Opsiyonlar
 

@@ -10,6 +10,18 @@
 #include "Providers/CryptoProviderRegistry.h"
 #include "Utils/Utils.h"
 
+// One-off exception to this file's usual "public facade only" testing policy, needed only by
+// RunCertificateCrlCheck*Test below -- CCertificateManager deliberately has no CRL-*issuance* API
+// (v1 scope only covers the *consumption* side, CheckCertificateAgainstCrl), so testing that
+// method against a real, CA-signed CRL needs some other way to produce one. BuildTestCrlDer builds
+// it with the OpenSSL C API this project already links against (same "already-available real
+// crypto engine" reasoning as everything else in Certificates/CertificateManager.cpp), kept
+// entirely inside this test file -- not exposed anywhere in src/.
+#include "openssl/bio.h"
+#include "openssl/evp.h"
+#include "openssl/pem.h"
+#include "openssl/x509.h"
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -76,6 +88,38 @@ bool ReadTesterFile(const char* path, std::vector<unsigned char>& data)
     }
 
     return static_cast<bool>(fileStream) || fileStream.eof();
+}
+// -----------------------------------------------------------------------------
+
+// Every RunPgpGnuPg*InteropTest below used to pass gpg.exe a FIXED, relative --homedir name (e.g.
+// "cryptoapi_pgp_gnupg_home") -- unlike CPgpEngineWrapper::Impl's own tests, which already use a
+// PID+tick-unique %TEMP% path (see PgpEngineWrapper.cpp's constructor). Since AppBuilder/DllRunner/
+// LibRunner all run from the same solution output folder (same cwd), a leftover gpg-agent.exe from
+// a PRIOR run/process sharing that same fixed name can hold a stale socket bound to it, making a
+// fresh "gpg --import" succeed at importing the key but still return rc=2 from the agent handshake
+// -- a real, previously-diagnosed nondeterministic failure (see GNUPG_INTEROP_FAILURE_ANALYSIS.md
+// at the repo root). Fixed by giving every one of these tests the same uniqueness CPgpEngineWrapper
+// itself already relies on, so no two runs/processes/tests can ever collide on the same homedir.
+std::string GenerateUniqueGnuPgHomeDir(const char* prefix)
+{
+    static unsigned int counter = 0;
+    ++counter;
+
+    char tempPathBuffer[MAX_PATH];
+    const DWORD tempPathLen = GetTempPathA(MAX_PATH, tempPathBuffer);
+    std::string base = (tempPathLen > 0 && tempPathLen < MAX_PATH) ? std::string(tempPathBuffer, tempPathLen) : std::string("C:\\Windows\\Temp\\");
+    if (!base.empty() && base[base.size() - 1] != '\\')
+    {
+        base.push_back('\\');
+    }
+
+    std::ostringstream nameStream;
+    nameStream << prefix << "_" << GetCurrentProcessId() << "_" << GetTickCount64() << "_" << counter;
+    const std::string homeDir = base + nameStream.str();
+
+    std::error_code creationError;
+    std::filesystem::create_directories(homeDir, creationError);
+    return homeDir;
 }
 // -----------------------------------------------------------------------------
 
@@ -150,6 +194,85 @@ int RunShellCommand(const std::string& command, std::string& output)
         output += buffer;
     }
     return _pclose(pipe);
+}
+// -----------------------------------------------------------------------------
+
+// See this file's own top-of-file comment on why this exists. Builds and CA-signs a real RFC 5280
+// CertificateList in DER form: issuer = caCertDer's subject, thisUpdate = now, nextUpdate = now +
+// nextUpdateDaysFromNow days (negative -> already-past, for the stale-CRL test), with exactly one
+// revoked entry (revokedCertDer's own serial number) when revokedCertDer is non-null, or zero
+// revoked entries otherwise. Returns an empty vector on any failure.
+std::vector<unsigned char> BuildTestCrlDer( const unsigned char* caCertDer, const int caCertDerSize,
+                                            const char* caKeyPem, const int caKeyPemSize,
+                                            const unsigned char* revokedCertDer, const int revokedCertDerSize,
+                                            const int nextUpdateDaysFromNow)
+{
+    std::vector<unsigned char> result;
+
+    const unsigned char* caCertP = caCertDer;
+    X509* caCert = d2i_X509(nullptr, &caCertP, caCertDerSize);
+    if (caCert == nullptr)
+    {
+        return result;
+    }
+
+    BIO* keyBio = BIO_new_mem_buf(caKeyPem, caKeyPemSize);
+    EVP_PKEY* caKey = keyBio != nullptr ? PEM_read_bio_PrivateKey(keyBio, nullptr, nullptr, nullptr) : nullptr;
+    if (keyBio != nullptr)
+    {
+        BIO_free(keyBio);
+    }
+    if (caKey == nullptr)
+    {
+        X509_free(caCert);
+        return result;
+    }
+
+    X509_CRL* crl = X509_CRL_new();
+    X509_CRL_set_version(crl, 1);
+    X509_CRL_set_issuer_name(crl, X509_get_subject_name(caCert));
+
+    ASN1_TIME* thisUpdate = X509_gmtime_adj(nullptr, 0);
+    ASN1_TIME* nextUpdate = X509_gmtime_adj(nullptr, static_cast<long>(nextUpdateDaysFromNow) * 24L * 60L * 60L);
+    X509_CRL_set1_lastUpdate(crl, thisUpdate);
+    X509_CRL_set1_nextUpdate(crl, nextUpdate);
+    ASN1_TIME_free(thisUpdate);
+    ASN1_TIME_free(nextUpdate);
+
+    if (revokedCertDer != nullptr && revokedCertDerSize > 0)
+    {
+        const unsigned char* revokedP = revokedCertDer;
+        X509* revokedCert = d2i_X509(nullptr, &revokedP, revokedCertDerSize);
+        if (revokedCert != nullptr)
+        {
+            X509_REVOKED* revoked = X509_REVOKED_new();
+            ASN1_INTEGER* serial = ASN1_INTEGER_dup(X509_get_serialNumber(revokedCert));
+            X509_REVOKED_set_serialNumber(revoked, serial);
+            ASN1_INTEGER_free(serial);
+            ASN1_TIME* revocationDate = X509_gmtime_adj(nullptr, 0);
+            X509_REVOKED_set_revocationDate(revoked, revocationDate);
+            ASN1_TIME_free(revocationDate);
+            X509_CRL_add0_revoked(crl, revoked);
+            X509_free(revokedCert);
+        }
+    }
+
+    X509_CRL_sort(crl);
+    if (X509_CRL_sign(crl, caKey, EVP_sha256()) > 0)
+    {
+        unsigned char* derPtr = nullptr;
+        const int derLen = i2d_X509_CRL(crl, &derPtr);
+        if (derLen > 0 && derPtr != nullptr)
+        {
+            result.assign(derPtr, derPtr + derLen);
+            OPENSSL_free(derPtr);
+        }
+    }
+
+    X509_CRL_free(crl);
+    EVP_PKEY_free(caKey);
+    X509_free(caCert);
+    return result;
 }
 // -----------------------------------------------------------------------------
 
@@ -14743,7 +14866,8 @@ int CCryptoApiTester::RunPgpGnuPgInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_gnupg_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_pub.asc";
         const char* plainPath = "cryptoapi_pgp_gnupg_plain.txt";
         const char* encryptedPath = "cryptoapi_pgp_gnupg_encrypted.asc";
@@ -14979,7 +15103,8 @@ int CCryptoApiTester::RunPgpGnuPgRevocationInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_gnupg_revoke_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_revoke_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_revoke_pub.asc";
         const char* revocationPath = "cryptoapi_pgp_gnupg_revoke_cert.asc";
         // Absolute path -- observed gpg resolving --homedir inconsistently between the import
@@ -15610,8 +15735,10 @@ int CCryptoApiTester::RunPgpGnuPgMultiRecipientInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir1 = "cryptoapi_pgp_gnupg_multi_home1";
-        const char* homeDir2 = "cryptoapi_pgp_gnupg_multi_home2";
+        const std::string homeDir1Str = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_multi_home1");
+        const char* homeDir1 = homeDir1Str.c_str();
+        const std::string homeDir2Str = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_multi_home2");
+        const char* homeDir2 = homeDir2Str.c_str();
         const char* pubKeyPath1 = "cryptoapi_pgp_gnupg_multi_pub1.asc";
         const char* pubKeyPath2 = "cryptoapi_pgp_gnupg_multi_pub2.asc";
         const char* encryptedPath = "cryptoapi_pgp_gnupg_multi_encrypted.asc";
@@ -15780,8 +15907,10 @@ int CCryptoApiTester::RunPgpGnuPgMixedAlgorithmRecipientInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir1 = "cryptoapi_pgp_gnupg_mixed_home1";
-        const char* homeDir2 = "cryptoapi_pgp_gnupg_mixed_home2";
+        const std::string homeDir1Str = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_mixed_home1");
+        const char* homeDir1 = homeDir1Str.c_str();
+        const std::string homeDir2Str = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_mixed_home2");
+        const char* homeDir2 = homeDir2Str.c_str();
         const char* pubKeyPath1 = "cryptoapi_pgp_gnupg_mixed_pub1.asc";
         const char* pubKeyPath2 = "cryptoapi_pgp_gnupg_mixed_pub2.asc";
         const char* encryptedPath = "cryptoapi_pgp_gnupg_mixed_encrypted.asc";
@@ -16319,7 +16448,8 @@ int CCryptoApiTester::RunPgpGnuPgEd25519InteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_gnupg_ed25519_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_ed25519_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_ed25519_pub.asc";
         const char* plainPath = "cryptoapi_pgp_gnupg_ed25519_plain.txt";
         const char* encryptedPath = "cryptoapi_pgp_gnupg_ed25519_encrypted.asc";
@@ -16579,7 +16709,8 @@ int CCryptoApiTester::RunPgpGnuPgEd25519RevocationInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_gnupg_ed25519_revoke_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_ed25519_revoke_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_ed25519_revoke_pub.asc";
         const char* revocationPath = "cryptoapi_pgp_gnupg_ed25519_revoke_cert.asc";
         // Absolute path -- observed gpg resolving --homedir inconsistently between the import
@@ -17397,7 +17528,8 @@ int CCryptoApiTester::RunPgpGnuPgBzip2InteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_gnupg_bzip2_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_bzip2_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_bzip2_pub.asc";
         const char* plainPath = "cryptoapi_pgp_gnupg_bzip2_plain.bin";
         const char* compressedPath = "cryptoapi_pgp_gnupg_bzip2.pgp";
@@ -17508,7 +17640,8 @@ int CCryptoApiTester::RunPgpGnuPgBzip2DecryptBufferInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_gnupg_bzip2_buf_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_bzip2_buf_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_bzip2_buf_pub.asc";
         const char* plainPath = "cryptoapi_pgp_gnupg_bzip2_buf_plain.bin";
         const char* compressedPath = "cryptoapi_pgp_gnupg_bzip2_buf.pgp";
@@ -17626,7 +17759,8 @@ int CCryptoApiTester::RunPgpGnuPgPartialBodyLengthInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_gnupg_partial_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_partial_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_gnupg_partial_pub.asc";
         const char* plainPath = "cryptoapi_pgp_gnupg_partial_plain.bin";
         const char* fileEncryptedPath = "cryptoapi_pgp_gnupg_partial_fromfile.pgp";
@@ -18772,7 +18906,8 @@ int CCryptoApiTester::RunPgpGnuPgInspectionInteropTest(void)
             return NO_ERROR;
         }
 
-        const char* homeDir = "cryptoapi_pgp_inspect_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_inspect_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_inspect_pub.asc";
         const char* plainPath = "cryptoapi_pgp_inspect_plain.txt";
         const char* encryptedPath = "cryptoapi_pgp_inspect_encrypted.asc";
@@ -20017,7 +20152,8 @@ int CCryptoApiTester::RunPgpWrapperKeyRevocationTest(void)
         int pubActualSize = 0;
         pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
 
-        const char* homeDir = "cryptoapi_pgp_wrapper_revoke_home";
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_wrapper_revoke_home");
+        const char* homeDir = homeDirStr.c_str();
         const char* pubKeyPath = "cryptoapi_pgp_wrapper_revoke_pub.asc";
         const char* revocationPath = "cryptoapi_pgp_wrapper_revoke_cert.asc";
         const std::string absoluteHomeDir = std::filesystem::absolute(homeDir).string();
@@ -20293,6 +20429,324 @@ int CCryptoApiTester::RunPgpWrapperMultiRecipientEncryptTest(void)
 
         std::cout << "RunPgpWrapperMultiRecipientEncryptTest: PASSED one shared ciphertext (" << actualCipherSize
                   << " bytes) decrypted independently by both alice and carol via real gpg" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperMultiRecipientEncryptStringArmoredTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper bob;
+        if (!bob.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper alice;
+        CPgpEngineWrapper carol;
+        const char* bobUserId = "Bob <bob-wrapper-multistr@example.com>";
+        const char* aliceUserId = "Alice <alice-wrapper-multistr@example.com>";
+        const char* carolUserId = "Carol <carol-wrapper-multistr@example.com>";
+        const char* bobPassword = "bob-password-1";
+        const char* alicePassword = "alice-password-1";
+        const char* carolPassword = "carol-password-1";
+
+        int status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = carol.GenerateKeyPair(carolUserId, static_cast<int>(std::strlen(carolUserId)), carolPassword, static_cast<int>(std::strlen(carolPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED carol GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int carolKeySize = 0;
+        carol.ExportPublicKeyArmored(0, nullptr, &carolKeySize);
+        std::vector<char> carolPublicKey(static_cast<std::size_t>(carolKeySize));
+        int carolActualKeySize = 0;
+        carol.ExportPublicKeyArmored(carolKeySize, &carolPublicKey[0], &carolActualKeySize);
+
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&carolPublicKey[0]), carolActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED bob ImportPeerPublicKey(carol) status=" << status << std::endl;
+            return status;
+        }
+
+        char aliceKeyId[17];
+        char carolKeyId[17];
+        bob.GetImportedPeerKeyId(0, aliceKeyId, 17);
+        bob.GetImportedPeerKeyId(1, carolKeyId, 17);
+        const char* recipients[2] = { aliceKeyId, carolKeyId };
+
+        const char* plaintext = "Shared armored secret for alice and carol!";
+        const int plaintextSize = static_cast<int>(std::strlen(plaintext));
+
+        // Overload 1: no explicit compression algorithm.
+        int armoredSize = 0;
+        status = bob.EncryptStringArmoredMultiRecipient(plaintext, plaintextSize, recipients, 2, 0, nullptr, &armoredSize);
+        if (status != BUFFER_TOO_SMALL || armoredSize <= 0)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED EncryptStringArmoredMultiRecipient(no compression) capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize));
+        int actualArmoredSize = 0;
+        status = bob.EncryptStringArmoredMultiRecipient(plaintext, plaintextSize, recipients, 2, static_cast<int>(armored.size()), &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED EncryptStringArmoredMultiRecipient(no compression) status=" << status << std::endl;
+            return status;
+        }
+        const std::string armoredStr(&armored[0], static_cast<std::size_t>(actualArmoredSize));
+
+        int aliceDecodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), armoredStr.data(), static_cast<int>(armoredStr.size()), 0, nullptr, &aliceDecodedSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED alice DecryptStringArmored(no compression) capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> aliceDecoded(static_cast<std::size_t>(aliceDecodedSize));
+        int aliceActualDecodedSize = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), armoredStr.data(), static_cast<int>(armoredStr.size()), aliceDecodedSize, &aliceDecoded[0], &aliceActualDecodedSize);
+        if (status != NO_ERROR || std::string(aliceDecoded.begin(), aliceDecoded.end()) != plaintext)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED alice DecryptStringArmored(no compression) status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int carolDecodedSize = 0;
+        status = carol.DecryptStringArmored(carolPassword, static_cast<int>(std::strlen(carolPassword)), armoredStr.data(), static_cast<int>(armoredStr.size()), 0, nullptr, &carolDecodedSize);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED carol DecryptStringArmored(no compression) capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> carolDecoded(static_cast<std::size_t>(carolDecodedSize));
+        int carolActualDecodedSize = 0;
+        status = carol.DecryptStringArmored(carolPassword, static_cast<int>(std::strlen(carolPassword)), armoredStr.data(), static_cast<int>(armoredStr.size()), carolDecodedSize, &carolDecoded[0], &carolActualDecodedSize);
+        if (status != NO_ERROR || std::string(carolDecoded.begin(), carolDecoded.end()) != plaintext)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED carol DecryptStringArmored(no compression) status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Overload 2: explicit PgpCompressionAlgorithm.
+        int armoredSize2 = 0;
+        status = bob.EncryptStringArmoredMultiRecipient(plaintext, plaintextSize, recipients, 2, PGP_COMPRESSION_ALGORITHM_ZIP, 0, nullptr, &armoredSize2);
+        if (status != BUFFER_TOO_SMALL || armoredSize2 <= 0)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED EncryptStringArmoredMultiRecipient(ZIP) capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> armored2(static_cast<std::size_t>(armoredSize2));
+        int actualArmoredSize2 = 0;
+        status = bob.EncryptStringArmoredMultiRecipient(plaintext, plaintextSize, recipients, 2, PGP_COMPRESSION_ALGORITHM_ZIP, static_cast<int>(armored2.size()), &armored2[0], &actualArmoredSize2);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED EncryptStringArmoredMultiRecipient(ZIP) status=" << status << std::endl;
+            return status;
+        }
+        const std::string armoredStr2(&armored2[0], static_cast<std::size_t>(actualArmoredSize2));
+
+        int aliceDecodedSize2 = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), armoredStr2.data(), static_cast<int>(armoredStr2.size()), 0, nullptr, &aliceDecodedSize2);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED alice DecryptStringArmored(ZIP) capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> aliceDecoded2(static_cast<std::size_t>(aliceDecodedSize2));
+        int aliceActualDecodedSize2 = 0;
+        status = alice.DecryptStringArmored(alicePassword, static_cast<int>(std::strlen(alicePassword)), armoredStr2.data(), static_cast<int>(armoredStr2.size()), aliceDecodedSize2, &aliceDecoded2[0], &aliceActualDecodedSize2);
+        if (status != NO_ERROR || std::string(aliceDecoded2.begin(), aliceDecoded2.end()) != plaintext)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED alice DecryptStringArmored(ZIP) status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int carolDecodedSize2 = 0;
+        status = carol.DecryptStringArmored(carolPassword, static_cast<int>(std::strlen(carolPassword)), armoredStr2.data(), static_cast<int>(armoredStr2.size()), 0, nullptr, &carolDecodedSize2);
+        if (status != BUFFER_TOO_SMALL)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED carol DecryptStringArmored(ZIP) capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> carolDecoded2(static_cast<std::size_t>(carolDecodedSize2));
+        int carolActualDecodedSize2 = 0;
+        status = carol.DecryptStringArmored(carolPassword, static_cast<int>(std::strlen(carolPassword)), armoredStr2.data(), static_cast<int>(armoredStr2.size()), carolDecodedSize2, &carolDecoded2[0], &carolActualDecodedSize2);
+        if (status != NO_ERROR || std::string(carolDecoded2.begin(), carolDecoded2.end()) != plaintext)
+        {
+            std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: FAILED carol DecryptStringArmored(ZIP) status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperMultiRecipientEncryptStringArmoredTest: PASSED both overloads (no-compression + ZIP), "
+                  << "both alice and carol decrypted independently via real gpg" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpGetPeerKeyIdTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        const char* aliceUserId = "Alice <alice-peerkeyid@example.com>";
+        const char* bobUserId = "Bob <bob-peerkeyid@example.com>";
+        const char* alicePassword = "alice-password-1";
+        const char* bobPassword = "bob-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGetPeerKeyIdTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGetPeerKeyIdTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char bobOwnKeyId[17];
+        bob.GetKeyId(bobOwnKeyId, 17);
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGetPeerKeyIdTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        char peerKeyId[17];
+        status = alice.GetPeerKeyId(peerKeyId, 17);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGetPeerKeyIdTest: FAILED GetPeerKeyId status=" << status << std::endl;
+            return status;
+        }
+
+        if (std::strcmp(peerKeyId, bobOwnKeyId) != 0)
+        {
+            std::cout << "RunPgpGetPeerKeyIdTest: FAILED peerKeyId=\"" << peerKeyId << "\" expected=\"" << bobOwnKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGetPeerKeyIdTest: PASSED peerKeyId=" << peerKeyId << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperGetPeerKeyIdTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperGetPeerKeyIdTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPgpEngineWrapper bob;
+        const char* aliceUserId = "Alice <alice-wrapper-peerkeyid@example.com>";
+        const char* bobUserId = "Bob <bob-wrapper-peerkeyid@example.com>";
+        const char* alicePassword = "alice-password-1";
+        const char* bobPassword = "bob-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperGetPeerKeyIdTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperGetPeerKeyIdTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char bobOwnKeyId[17];
+        bob.GetKeyId(bobOwnKeyId, 17);
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperGetPeerKeyIdTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        char peerKeyId[17];
+        status = alice.GetPeerKeyId(peerKeyId, 17);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperGetPeerKeyIdTest: FAILED GetPeerKeyId status=" << status << std::endl;
+            return status;
+        }
+
+        if (std::strcmp(peerKeyId, bobOwnKeyId) != 0)
+        {
+            std::cout << "RunPgpWrapperGetPeerKeyIdTest: FAILED peerKeyId=\"" << peerKeyId << "\" expected=\"" << bobOwnKeyId << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperGetPeerKeyIdTest: PASSED peerKeyId=" << peerKeyId << std::endl;
         return NO_ERROR;
     }
     catch (...)
@@ -22141,6 +22595,307 @@ int CCryptoApiTester::RunCertificateChainRevokedTest(void)
         }
 
         std::cout << "RunCertificateChainRevokedTest: PASSED trust=" << trustResult << " revocation=" << revocationStatus << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateCrlCheckGoodTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-crlgood-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN | CERTIFICATE_KEY_USAGE_CRL_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckGoodTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-crlgood-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckGoodTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckGoodTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> crlDer = BuildTestCrlDer(caCertDer, caCertSize, caKeyPem, caKeySize, nullptr, 0, 30);
+        if (crlDer.empty())
+        {
+            std::cout << "RunCertificateCrlCheckGoodTest: FAILED BuildTestCrlDer produced an empty CRL" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int revocationStatus = -1;
+        status = certManager.CheckCertificateAgainstCrl(leafCertDer, leafCertSize, crlDer.data(), static_cast<int>(crlDer.size()),
+                                                         caCertDer, caCertSize, &revocationStatus);
+        if (status != NO_ERROR || revocationStatus != REVOCATION_STATUS_GOOD)
+        {
+            std::cout << "RunCertificateCrlCheckGoodTest: FAILED (with issuer) status=" << status << " revocation=" << revocationStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int revocationStatusNoIssuer = -1;
+        status = certManager.CheckCertificateAgainstCrl(leafCertDer, leafCertSize, crlDer.data(), static_cast<int>(crlDer.size()),
+                                                         nullptr, 0, &revocationStatusNoIssuer);
+        if (status != NO_ERROR || revocationStatusNoIssuer != REVOCATION_STATUS_GOOD)
+        {
+            std::cout << "RunCertificateCrlCheckGoodTest: FAILED (no issuer) status=" << status << " revocation=" << revocationStatusNoIssuer << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateCrlCheckGoodTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateCrlCheckRevokedTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-crlrevoked-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN | CERTIFICATE_KEY_USAGE_CRL_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckRevokedTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-crlrevoked-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckRevokedTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckRevokedTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> crlDer = BuildTestCrlDer(caCertDer, caCertSize, caKeyPem, caKeySize, leafCertDer, leafCertSize, 30);
+        if (crlDer.empty())
+        {
+            std::cout << "RunCertificateCrlCheckRevokedTest: FAILED BuildTestCrlDer produced an empty CRL" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int revocationStatus = -1;
+        status = certManager.CheckCertificateAgainstCrl(leafCertDer, leafCertSize, crlDer.data(), static_cast<int>(crlDer.size()),
+                                                         caCertDer, caCertSize, &revocationStatus);
+        if (status != NO_ERROR || revocationStatus != REVOCATION_STATUS_REVOKED)
+        {
+            std::cout << "RunCertificateCrlCheckRevokedTest: FAILED status=" << status << " revocation=" << revocationStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateCrlCheckRevokedTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateCrlCheckStaleTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-crlstale-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN | CERTIFICATE_KEY_USAGE_CRL_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckStaleTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-crlstale-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckStaleTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckStaleTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        // nextUpdateDaysFromNow=-1 -> the CRL's own nextUpdate is already in the past, even though
+        // the leaf's serial number is not present among its (zero) revoked entries.
+        const std::vector<unsigned char> crlDer = BuildTestCrlDer(caCertDer, caCertSize, caKeyPem, caKeySize, nullptr, 0, -1);
+        if (crlDer.empty())
+        {
+            std::cout << "RunCertificateCrlCheckStaleTest: FAILED BuildTestCrlDer produced an empty CRL" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int revocationStatus = -1;
+        status = certManager.CheckCertificateAgainstCrl(leafCertDer, leafCertSize, crlDer.data(), static_cast<int>(crlDer.size()),
+                                                         caCertDer, caCertSize, &revocationStatus);
+        if (status != NO_ERROR || revocationStatus != REVOCATION_STATUS_UNKNOWN)
+        {
+            std::cout << "RunCertificateCrlCheckStaleTest: FAILED status=" << status << " revocation=" << revocationStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateCrlCheckStaleTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateCrlCheckWrongIssuerRejectionTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-crlwrongissuer-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN | CERTIFICATE_KEY_USAGE_CRL_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckWrongIssuerRejectionTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* otherCn = "cryptoapi-test-crlwrongissuer-other.example.com";
+        unsigned char otherCertDer[8192];
+        int otherCertSize = 0;
+        char otherKeyPem[8192];
+        int otherKeySize = 0;
+        status = certManager.CreateSelfSignedCertificate(otherCn, static_cast<int>(std::strlen(otherCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                          CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN | CERTIFICATE_KEY_USAGE_CRL_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(otherCertDer), otherCertDer, &otherCertSize, sizeof(otherKeyPem), otherKeyPem, &otherKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckWrongIssuerRejectionTest: FAILED other CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-crlwrongissuer-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckWrongIssuerRejectionTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCrlCheckWrongIssuerRejectionTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> crlDer = BuildTestCrlDer(caCertDer, caCertSize, caKeyPem, caKeySize, nullptr, 0, 30);
+        if (crlDer.empty())
+        {
+            std::cout << "RunCertificateCrlCheckWrongIssuerRejectionTest: FAILED BuildTestCrlDer produced an empty CRL" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int revocationStatus = -1;
+        status = certManager.CheckCertificateAgainstCrl(leafCertDer, leafCertSize, crlDer.data(), static_cast<int>(crlDer.size()),
+                                                         otherCertDer, otherCertSize, &revocationStatus);
+        if (status != NO_ERROR || revocationStatus != REVOCATION_STATUS_UNKNOWN)
+        {
+            std::cout << "RunCertificateCrlCheckWrongIssuerRejectionTest: FAILED status=" << status << " revocation=" << revocationStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateCrlCheckWrongIssuerRejectionTest: PASSED" << std::endl;
         return NO_ERROR;
     }
     catch (...)

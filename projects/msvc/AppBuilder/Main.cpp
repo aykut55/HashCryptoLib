@@ -364,6 +364,19 @@ int runTestsViaCryptoApiTester()
 #endif
 
 #if 1
+    // Closes 3 previously-zero-coverage interface methods flagged by the 2026-09-22 runner parity
+    // audit (see memory project_runner_parity_audit_findings.md): IPgpEngine::GetPeerKeyId,
+    // IPgpEngineWrapper::GetPeerKeyId, and both IPgpEngineWrapper::EncryptStringArmoredMultiRecipient
+    // overloads. Kept in its own always-on block (independent of the surrounding #if 0 PGP-wrapper
+    // block above) so these run regardless of that block's own on/off state.
+    cryptoApiTester.RunPgpGetPeerKeyIdTest();
+
+    cryptoApiTester.RunPgpWrapperGetPeerKeyIdTest();
+
+    cryptoApiTester.RunPgpWrapperMultiRecipientEncryptStringArmoredTest();
+#endif
+
+#if 1
     cryptoApiTester.RunCertificateSelfSignedTest();
 
     cryptoApiTester.RunCertificateDerPemRoundtripTest();
@@ -381,6 +394,14 @@ int runTestsViaCryptoApiTester()
     cryptoApiTester.RunCertificateChainExpiredTest();
 
     cryptoApiTester.RunCertificateChainRevokedTest();
+
+    cryptoApiTester.RunCertificateCrlCheckGoodTest();
+
+    cryptoApiTester.RunCertificateCrlCheckRevokedTest();
+
+    cryptoApiTester.RunCertificateCrlCheckStaleTest();
+
+    cryptoApiTester.RunCertificateCrlCheckWrongIssuerRejectionTest();
 
     cryptoApiTester.RunCertificateStoreMemoryFindTest();
 
