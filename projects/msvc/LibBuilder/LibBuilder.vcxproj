@@ -183,6 +183,9 @@
     <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h" />
     <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h" />
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
@@ -212,6 +215,9 @@
     <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Certificates\CertificateManager.h" />
+    <ClInclude Include="..\..\..\src\Certificates\CmsService.h" />
+    <ClInclude Include="..\..\..\src\Certificates\TimestampService.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp" />
@@ -219,6 +225,9 @@
     <ClCompile Include="..\..\..\src\Interfaces\ICryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\IPgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\IPgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ICertificateManager.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ICmsService.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
@@ -245,6 +254,9 @@
     <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Certificates\CertificateManager.cpp" />
+    <ClCompile Include="..\..\..\src\Certificates\CmsService.cpp" />
+    <ClCompile Include="..\..\..\src\Certificates\TimestampService.cpp" />
     <!-- Botan's amalgamation bakes the target architecture into the generated source (used for
          e.g. MSVC's 64-bit-only _umul128 intrinsic), so Win32 and x64 each need their own copy;
          $(Platform) picks the right one. -->

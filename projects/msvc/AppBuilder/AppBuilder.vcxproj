@@ -126,7 +126,7 @@
   <ItemDefinitionGroup>
     <Link>
       <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\openssl402\_libs\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>libcrypto.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libcrypto.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <!-- libcrypto.lib's PDB (ossl_static.pdb) isn't archived alongside it, so the linker warns
            LNK4099 for every OpenSSL object; harmless (no debug info for OpenSSL internals), so
            silence it rather than leave noise in the build log. -->
@@ -246,6 +246,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h" />
     <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h" />
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
@@ -275,6 +278,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngine.h" />
     <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Certificates\CertificateManager.h" />
+    <ClInclude Include="..\..\..\src\Certificates\CmsService.h" />
+    <ClInclude Include="..\..\..\src\Certificates\TimestampService.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptException.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApi.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngine.h" />
@@ -295,6 +301,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Interfaces\ICryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\IPgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\IPgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ICertificateManager.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ICmsService.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
@@ -321,6 +330,9 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Providers\LibgcryptProvider\LibgcryptProviderFactory.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Certificates\CertificateManager.cpp" />
+    <ClCompile Include="..\..\..\src\Certificates\CmsService.cpp" />
+    <ClCompile Include="..\..\..\src\Certificates\TimestampService.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApi.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngine.cpp" />

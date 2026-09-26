@@ -363,6 +363,40 @@ int runTestsViaCryptoApiTester()
     cryptoApiTester.RunPgpWrapperInspectionSignatureTest();
 #endif
 
+#if 1
+    cryptoApiTester.RunCertificateSelfSignedTest();
+
+    cryptoApiTester.RunCertificateDerPemRoundtripTest();
+
+    cryptoApiTester.RunCertificatePfxImportExportTest();
+
+    cryptoApiTester.RunCertificateCsrGenerationTest();
+
+    cryptoApiTester.RunCertificateIssueFromRequestTest();
+
+    cryptoApiTester.RunCertificateChainValidTest();
+
+    cryptoApiTester.RunCertificateChainUntrustedRootTest();
+
+    cryptoApiTester.RunCertificateChainExpiredTest();
+
+    cryptoApiTester.RunCertificateChainRevokedTest();
+
+    cryptoApiTester.RunCertificateStoreMemoryFindTest();
+
+    cryptoApiTester.RunCmsSignVerifyDetachedTest();
+
+    cryptoApiTester.RunCmsTamperedDataRejectionTest();
+
+    cryptoApiTester.RunCmsUntrustedSignerRejectionTest();
+
+    cryptoApiTester.RunTimestampRequestResponseRoundtripTest();
+
+    cryptoApiTester.RunTimestampVerifyTest();
+
+    cryptoApiTester.RunTimestampTamperedDigestRejectionTest();
+#endif
+
     return 0;
 }
 
@@ -519,7 +553,7 @@ int main()
 
     std::cout << std::endl;
 
-    //runTestsViaCryptoApiTester();
+    runTestsViaCryptoApiTester();
 
 
 

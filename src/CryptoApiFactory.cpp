@@ -103,3 +103,81 @@ void DestroyPgpEngineWrapper(CryptoApiNS::IPgpEngineWrapper* pPgpEngineWrapper)
     }
 }
 // -----------------------------------------------------------------------------
+
+CryptoApiNS::ICertificateManager* CreateCertificateManager(void)
+{
+    try
+    {
+        return new CryptoApiNS::CCertificateManager();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+void DestroyCertificateManager(CryptoApiNS::ICertificateManager* pCertificateManager)
+{
+    try
+    {
+        delete pCertificateManager;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+CryptoApiNS::ICmsService* CreateCmsService(void)
+{
+    try
+    {
+        return new CryptoApiNS::CCmsService();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+void DestroyCmsService(CryptoApiNS::ICmsService* pCmsService)
+{
+    try
+    {
+        delete pCmsService;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+CryptoApiNS::ITimestampService* CreateTimestampService(void)
+{
+    try
+    {
+        return new CryptoApiNS::CTimestampService();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+void DestroyTimestampService(CryptoApiNS::ITimestampService* pTimestampService)
+{
+    try
+    {
+        delete pTimestampService;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------

@@ -148,6 +148,66 @@ bool CCryptoApiDllLoader::LoadLibrary(void)
             FreeLibrary(hDll);
             return isLoaded;
         }
+
+        CreateCertificateManager = (CreateCertificateManagerFunc)::GetProcAddress(hDll, "CreateCertificateManager");
+        if (!CreateCertificateManager)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        DestroyCertificateManager = (DestroyCertificateManagerFunc)::GetProcAddress(hDll, "DestroyCertificateManager");
+        if (!DestroyCertificateManager)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        CreateCmsService = (CreateCmsServiceFunc)::GetProcAddress(hDll, "CreateCmsService");
+        if (!CreateCmsService)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        DestroyCmsService = (DestroyCmsServiceFunc)::GetProcAddress(hDll, "DestroyCmsService");
+        if (!DestroyCmsService)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        CreateTimestampService = (CreateTimestampServiceFunc)::GetProcAddress(hDll, "CreateTimestampService");
+        if (!CreateTimestampService)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        DestroyTimestampService = (DestroyTimestampServiceFunc)::GetProcAddress(hDll, "DestroyTimestampService");
+        if (!DestroyTimestampService)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
     }
     catch (...)
     {
@@ -313,6 +373,99 @@ void CCryptoApiDllLoader::DestroyPgpEngineWrapperObject(IPgpEngineWrapper* pPgpE
 }
 //---------------------------------------------------------------------------
 
+ICertificateManager* CCryptoApiDllLoader::GetCertificateManagerObject()
+{
+    ICertificateManager* pCertificateManager = 0;
+
+    try
+    {
+        pCertificateManager = CreateCertificateManager();
+    }
+    catch (...)
+    {
+
+    }
+
+    return pCertificateManager;
+}
+//---------------------------------------------------------------------------
+
+void CCryptoApiDllLoader::DestroyCertificateManagerObject(ICertificateManager* pCertificateManager)
+{
+    try
+    {
+        DestroyCertificateManager(pCertificateManager);
+        pCertificateManager = 0;
+    }
+    catch (...)
+    {
+
+    }
+}
+//---------------------------------------------------------------------------
+
+ICmsService* CCryptoApiDllLoader::GetCmsServiceObject()
+{
+    ICmsService* pCmsService = 0;
+
+    try
+    {
+        pCmsService = CreateCmsService();
+    }
+    catch (...)
+    {
+
+    }
+
+    return pCmsService;
+}
+//---------------------------------------------------------------------------
+
+void CCryptoApiDllLoader::DestroyCmsServiceObject(ICmsService* pCmsService)
+{
+    try
+    {
+        DestroyCmsService(pCmsService);
+        pCmsService = 0;
+    }
+    catch (...)
+    {
+
+    }
+}
+//---------------------------------------------------------------------------
+
+ITimestampService* CCryptoApiDllLoader::GetTimestampServiceObject()
+{
+    ITimestampService* pTimestampService = 0;
+
+    try
+    {
+        pTimestampService = CreateTimestampService();
+    }
+    catch (...)
+    {
+
+    }
+
+    return pTimestampService;
+}
+//---------------------------------------------------------------------------
+
+void CCryptoApiDllLoader::DestroyTimestampServiceObject(ITimestampService* pTimestampService)
+{
+    try
+    {
+        DestroyTimestampService(pTimestampService);
+        pTimestampService = 0;
+    }
+    catch (...)
+    {
+
+    }
+}
+//---------------------------------------------------------------------------
+
 void* CCryptoApiDllLoader::GetProcAddress(const char* functionName)
 {
     try
@@ -331,4 +484,4 @@ void* CCryptoApiDllLoader::GetProcAddress(const char* functionName)
 }
 //---------------------------------------------------------------------------
 
-} // namespace CryptoApiNS
+} // namespace CryptoApiNS

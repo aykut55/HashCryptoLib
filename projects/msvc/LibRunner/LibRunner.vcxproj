@@ -126,7 +126,7 @@
   <ItemDefinitionGroup>
     <Link>
       <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\cryptopp890\$(Platform)\Output\$(Configuration);$(ProjectDir)..\..\..\3rdParty\openssl402\_libs\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>cryptlib.lib;libcrypto.lib;Lua547.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>cryptlib.lib;libcrypto.lib;Lua547.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <!-- Same LNK4099 (missing OpenSSL PDB) silencing as AppBuilder/DllBuilder. -->
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>

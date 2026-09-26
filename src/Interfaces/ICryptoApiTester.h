@@ -322,6 +322,44 @@ public:
 
     virtual int RunPgpWrapperInspectionSignatureTest(void) = 0;
 
+    // ============================================================================================
+    // Certificates (§25) / CMS (§29.4 gap #5) / RFC 3161 timestamping (§29.4 gap #6) -- see
+    // Certificates/CertificateManager.h, CmsService.h, TimestampService.h for the engines these
+    // exercise.
+    // ============================================================================================
+
+    virtual int RunCertificateSelfSignedTest(void) = 0;
+
+    virtual int RunCertificateDerPemRoundtripTest(void) = 0;
+
+    virtual int RunCertificatePfxImportExportTest(void) = 0;
+
+    virtual int RunCertificateCsrGenerationTest(void) = 0;
+
+    virtual int RunCertificateIssueFromRequestTest(void) = 0;
+
+    virtual int RunCertificateChainValidTest(void) = 0;
+
+    virtual int RunCertificateChainUntrustedRootTest(void) = 0;
+
+    virtual int RunCertificateChainExpiredTest(void) = 0;
+
+    virtual int RunCertificateChainRevokedTest(void) = 0;
+
+    virtual int RunCertificateStoreMemoryFindTest(void) = 0;
+
+    virtual int RunCmsSignVerifyDetachedTest(void) = 0;
+
+    virtual int RunCmsTamperedDataRejectionTest(void) = 0;
+
+    virtual int RunCmsUntrustedSignerRejectionTest(void) = 0;
+
+    virtual int RunTimestampRequestResponseRoundtripTest(void) = 0;
+
+    virtual int RunTimestampVerifyTest(void) = 0;
+
+    virtual int RunTimestampTamperedDigestRejectionTest(void) = 0;
+
 protected:
 
 private:

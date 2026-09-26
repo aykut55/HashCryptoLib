@@ -5,6 +5,9 @@
 #include "CryptoApiTester.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#include "Certificates/CertificateManager.h"
+#include "Certificates/CmsService.h"
+#include "Certificates/TimestampService.h"
 
 // extern "C" DLL entry points resolved by CCryptoApiDllLoader via GetProcAddress (see
 // DllLoader/CryptoApiDllLoader.h) -- not part of the CryptoApiNS namespace since C linkage cannot
@@ -30,5 +33,18 @@ extern "C" CRYPTOAPI_API void					  DestroyPgpEngine(CryptoApiNS::IPgpEngine* pP
 // rsaKeyBits constructor is unreachable through this DLL boundary for the same reason.
 extern "C" CRYPTOAPI_API CryptoApiNS::IPgpEngineWrapper* CreatePgpEngineWrapper(void);
 extern "C" CRYPTOAPI_API void						  DestroyPgpEngineWrapper(CryptoApiNS::IPgpEngineWrapper* pPgpEngineWrapper);
+
+// Same reasoning, for CCertificateManager/ICertificateManager, CCmsService/ICmsService and
+// CTimestampService/ITimestampService. Always default-constructs; none of the three declares any
+// other constructor, so there is no unreachable-overload limitation to note here (unlike
+// CreatePgpEngine/CreateCryptoApi above).
+extern "C" CRYPTOAPI_API CryptoApiNS::ICertificateManager* CreateCertificateManager(void);
+extern "C" CRYPTOAPI_API void						  DestroyCertificateManager(CryptoApiNS::ICertificateManager* pCertificateManager);
+
+extern "C" CRYPTOAPI_API CryptoApiNS::ICmsService* CreateCmsService(void);
+extern "C" CRYPTOAPI_API void						  DestroyCmsService(CryptoApiNS::ICmsService* pCmsService);
+
+extern "C" CRYPTOAPI_API CryptoApiNS::ITimestampService* CreateTimestampService(void);
+extern "C" CRYPTOAPI_API void						  DestroyTimestampService(CryptoApiNS::ITimestampService* pTimestampService);
 
 #endif

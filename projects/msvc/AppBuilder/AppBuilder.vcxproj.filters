@@ -46,6 +46,9 @@
     <Filter Include="src\Pgp">
       <UniqueIdentifier>{7A1C3E5F-2B4D-4A6C-8E9F-3D5B7C9E1A02}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Certificates">
+      <UniqueIdentifier>{2E4F6A8C-3B5D-4E7F-9A1C-6D8E0F2A4C61}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Interfaces">
       <UniqueIdentifier>{9C1D2E3F-4A5B-6C7D-8E9F-0A1B2C3D4E5F}</UniqueIdentifier>
     </Filter>
@@ -79,6 +82,15 @@
       <Filter>src\Interfaces</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\Interfaces\IPgpEngineWrapper.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\ICertificateManager.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\ICmsService.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp">
       <Filter>src\Interfaces</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp">
@@ -159,6 +171,15 @@
     <ClCompile Include="..\..\..\src\Pgp\PgpEngineWrapper.cpp">
       <Filter>src\Pgp</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Certificates\CertificateManager.cpp">
+      <Filter>src\Certificates</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Certificates\CmsService.cpp">
+      <Filter>src\Certificates</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Certificates\TimestampService.cpp">
+      <Filter>src\Certificates</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
@@ -222,6 +243,15 @@
       <Filter>src\Interfaces</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h">
       <Filter>src\Interfaces</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h">
@@ -304,6 +334,15 @@
     </ClInclude>
     <ClInclude Include="..\..\..\src\Pgp\PgpEngineWrapper.h">
       <Filter>src\Pgp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Certificates\CertificateManager.h">
+      <Filter>src\Certificates</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Certificates\CmsService.h">
+      <Filter>src\Certificates</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Certificates\TimestampService.h">
+      <Filter>src\Certificates</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptException.h">
       <Filter>src\Scripts</Filter>

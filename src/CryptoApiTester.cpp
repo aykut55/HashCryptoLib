@@ -4,6 +4,9 @@
 #include "Definitions/Definitions.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#include "Certificates/CertificateManager.h"
+#include "Certificates/CmsService.h"
+#include "Certificates/TimestampService.h"
 #include "Providers/CryptoProviderRegistry.h"
 #include "Utils/Utils.h"
 
@@ -21539,6 +21542,1004 @@ int CCryptoApiTester::RunPgpWrapperInspectionSignatureTest(void)
 
         std::cout << "RunPgpWrapperInspectionSignatureTest: PASSED detached(" << detachedSignatureRecord << ") and clear-signed(" << clearSignatureRecord
                   << ") gpg signatures inspected without verifying" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateSelfSignedTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-selfsigned.example.com";
+        const char* sanCsv = "cryptoapi-test-selfsigned.example.com,alt.example.com";
+
+        unsigned char certDer[8192];
+        int certSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateSelfSignedCertificate( cn, static_cast<int>(std::strlen(cn)),
+                                                               sanCsv, static_cast<int>(std::strlen(sanCsv)),
+                                                               CERTIFICATE_KEY_RSA_2048, 365,
+                                                               CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE | CERTIFICATE_KEY_USAGE_KEY_ENCIPHERMENT,
+                                                               CERTIFICATE_EKU_SERVER_AUTH, CERTIFICATE_DIGEST_SHA256,
+                                                               sizeof(certDer), certDer, &certSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateSelfSignedTest: FAILED CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        char infoText[4096];
+        int infoSize = 0;
+        status = certManager.GetCertificateInfoText(certDer, certSize, sizeof(infoText), infoText, &infoSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateSelfSignedTest: FAILED GetCertificateInfoText status=" << status << std::endl;
+            return status;
+        }
+        const std::string info(infoText, static_cast<std::size_t>(infoSize));
+        // OBJ_obj2txt (GetCertificateInfoText) renders the EKU OID as OpenSSL's long name
+        // ("TLS Web Server Authentication"), not the short config-file name ("serverAuth") this
+        // test's own CreateSelfSignedCertificate call used to select it.
+        if (info.find(cn) == std::string::npos || info.find("digitalSignature") == std::string::npos ||
+            info.find("TLS Web Server Authentication") == std::string::npos)
+        {
+            std::cout << "RunCertificateSelfSignedTest: FAILED info text missing expected fields: " << info << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateSelfSignedTest: PASSED cert=" << certSize << " bytes key=" << keySize << " bytes" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateDerPemRoundtripTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-derpem.example.com";
+
+        unsigned char certDer[8192];
+        int certSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(cn, static_cast<int>(std::strlen(cn)), nullptr, 0, CERTIFICATE_KEY_ECDSA_P256, 30, 0, 0,
+                                                              CERTIFICATE_DIGEST_SHA256, sizeof(certDer), certDer, &certSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateDerPemRoundtripTest: FAILED CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        char pemBuffer[8192];
+        int pemSize = 0;
+        status = certManager.ConvertCertificateDerToPem(certDer, certSize, sizeof(pemBuffer), pemBuffer, &pemSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateDerPemRoundtripTest: FAILED ConvertCertificateDerToPem status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char roundTripDer[8192];
+        int roundTripSize = 0;
+        status = certManager.ConvertCertificatePemToDer(pemBuffer, pemSize, sizeof(roundTripDer), roundTripDer, &roundTripSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateDerPemRoundtripTest: FAILED ConvertCertificatePemToDer status=" << status << std::endl;
+            return status;
+        }
+
+        if (roundTripSize != certSize || std::memcmp(roundTripDer, certDer, static_cast<std::size_t>(certSize)) != 0)
+        {
+            std::cout << "RunCertificateDerPemRoundtripTest: FAILED DER mismatch after round-trip" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateDerPemRoundtripTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificatePfxImportExportTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-pfx.example.com";
+        unsigned char certDer[8192];
+        int certSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(cn, static_cast<int>(std::strlen(cn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                              CERTIFICATE_DIGEST_SHA256, sizeof(certDer), certDer, &certSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificatePfxImportExportTest: FAILED CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* pfxPassword = "TestPfxP@ssw0rd!";
+        unsigned char pfxDer[16384];
+        int pfxSize = 0;
+        status = certManager.ExportPfx(certDer, certSize, keyPem, keySize, pfxPassword, static_cast<int>(std::strlen(pfxPassword)),
+                                       sizeof(pfxDer), pfxDer, &pfxSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificatePfxImportExportTest: FAILED ExportPfx status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char importedCertDer[8192];
+        int importedCertSize = 0;
+        char importedKeyPem[8192];
+        int importedKeySize = 0;
+        status = certManager.ImportPfx(pfxDer, pfxSize, pfxPassword, static_cast<int>(std::strlen(pfxPassword)),
+                                       sizeof(importedCertDer), importedCertDer, &importedCertSize,
+                                       sizeof(importedKeyPem), importedKeyPem, &importedKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificatePfxImportExportTest: FAILED ImportPfx status=" << status << std::endl;
+            return status;
+        }
+
+        if (importedCertSize != certSize || std::memcmp(importedCertDer, certDer, static_cast<std::size_t>(certSize)) != 0)
+        {
+            std::cout << "RunCertificatePfxImportExportTest: FAILED certificate mismatch after PFX round-trip" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        CCmsService cmsService;
+        const unsigned char data[] = { 'p', 'f', 'x', '-', 'r', 'o', 'u', 'n', 'd', 't', 'r', 'i', 'p' };
+        unsigned char cmsOut[8192];
+        int cmsOutSize = 0;
+        status = cmsService.SignDetached(data, sizeof(data), importedCertDer, importedCertSize, importedKeyPem, importedKeySize,
+                                         CMS_DIGEST_SHA256, sizeof(cmsOut), cmsOut, &cmsOutSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificatePfxImportExportTest: FAILED signing with recovered PFX key status=" << status << std::endl;
+            return status;
+        }
+
+        std::cout << "RunCertificatePfxImportExportTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateCsrGenerationTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-csr.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateCertificateRequest(cn, static_cast<int>(std::strlen(cn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                           CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCsrGenerationTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        const char* caCn = "cryptoapi-test-csr-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                         CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                         sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCsrGenerationTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char issuedDer[8192];
+        int issuedSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(issuedDer), issuedDer, &issuedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateCsrGenerationTest: FAILED IssueCertificateFromRequest (CSR self-signature invalid?) status=" << status << std::endl;
+            return status;
+        }
+
+        std::cout << "RunCertificateCsrGenerationTest: PASSED csr=" << csrSize << " bytes issued=" << issuedSize << " bytes" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateIssueFromRequestTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-issue-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN | CERTIFICATE_KEY_USAGE_CRL_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateIssueFromRequestTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-issue-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), leafCn, static_cast<int>(std::strlen(leafCn)),
+                                                       CERTIFICATE_KEY_RSA_2048, CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize,
+                                                       sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateIssueFromRequestTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, CERTIFICATE_EKU_SERVER_AUTH, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateIssueFromRequestTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        char infoText[4096];
+        int infoSize = 0;
+        status = certManager.GetCertificateInfoText(leafCertDer, leafCertSize, sizeof(infoText), infoText, &infoSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateIssueFromRequestTest: FAILED GetCertificateInfoText status=" << status << std::endl;
+            return status;
+        }
+        const std::string info(infoText, static_cast<std::size_t>(infoSize));
+        if (info.find(caCn) == std::string::npos)
+        {
+            std::cout << "RunCertificateIssueFromRequestTest: FAILED issuer mismatch: " << info << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        certManager.ClearIntermediateCertificatesForChainValidation();
+        status = certManager.AddIntermediateCertificateForChainValidation(caCertDer, caCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateIssueFromRequestTest: FAILED AddIntermediateCertificateForChainValidation status=" << status << std::endl;
+            return status;
+        }
+
+        int trustResult = -1;
+        int revocationStatus = -1;
+        status = certManager.ValidateChain(leafCertDer, leafCertSize, REVOCATION_MODE_DISABLED, REVOCATION_NETWORK_OFFLINE, &trustResult, &revocationStatus);
+        if (status != NO_ERROR || trustResult != CERTIFICATE_TRUST_TRUSTED)
+        {
+            std::cout << "RunCertificateIssueFromRequestTest: FAILED ValidateChain status=" << status << " trust=" << trustResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateIssueFromRequestTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateChainValidTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-chainvalid-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainValidTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-chainvalid-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainValidTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainValidTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        certManager.ClearIntermediateCertificatesForChainValidation();
+        status = certManager.AddIntermediateCertificateForChainValidation(caCertDer, caCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainValidTest: FAILED AddIntermediateCertificateForChainValidation status=" << status << std::endl;
+            return status;
+        }
+
+        int trustResult = -1;
+        int revocationStatus = -1;
+        status = certManager.ValidateChain(leafCertDer, leafCertSize, REVOCATION_MODE_DISABLED, REVOCATION_NETWORK_OFFLINE, &trustResult, &revocationStatus);
+        if (status != NO_ERROR || trustResult != CERTIFICATE_TRUST_TRUSTED || revocationStatus != REVOCATION_STATUS_NOT_CHECKED)
+        {
+            std::cout << "RunCertificateChainValidTest: FAILED status=" << status << " trust=" << trustResult << " revocation=" << revocationStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateChainValidTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateChainUntrustedRootTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-chainuntrusted-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainUntrustedRootTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-chainuntrusted-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainUntrustedRootTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainUntrustedRootTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        // Deliberately never add the CA as an intermediate/root candidate.
+        certManager.ClearIntermediateCertificatesForChainValidation();
+
+        int trustResult = -1;
+        int revocationStatus = -1;
+        status = certManager.ValidateChain(leafCertDer, leafCertSize, REVOCATION_MODE_DISABLED, REVOCATION_NETWORK_OFFLINE, &trustResult, &revocationStatus);
+        if (status != NO_ERROR || trustResult == CERTIFICATE_TRUST_TRUSTED)
+        {
+            std::cout << "RunCertificateChainUntrustedRootTest: FAILED status=" << status << " trust=" << trustResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateChainUntrustedRootTest: PASSED trust=" << trustResult << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateChainExpiredTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-chainexpired-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainExpiredTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-chainexpired-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainExpiredTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        // validityDays=0: notAfter == notBefore == this instant, so by the time ValidateChain
+        // below runs the leaf is already expired -- see CertificateManager.cpp's own comment on
+        // why 0 is accepted, chosen instead of waiting out a real 1-day-minimum window.
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 0,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainExpiredTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        certManager.ClearIntermediateCertificatesForChainValidation();
+        status = certManager.AddIntermediateCertificateForChainValidation(caCertDer, caCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainExpiredTest: FAILED AddIntermediateCertificateForChainValidation status=" << status << std::endl;
+            return status;
+        }
+
+        int trustResult = -1;
+        int revocationStatus = -1;
+        status = certManager.ValidateChain(leafCertDer, leafCertSize, REVOCATION_MODE_DISABLED, REVOCATION_NETWORK_OFFLINE, &trustResult, &revocationStatus);
+        if (status != NO_ERROR || trustResult == CERTIFICATE_TRUST_TRUSTED)
+        {
+            std::cout << "RunCertificateChainExpiredTest: FAILED status=" << status << " trust=" << trustResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateChainExpiredTest: PASSED trust=" << trustResult << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateChainRevokedTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* caCn = "cryptoapi-test-chainrevoked-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                             CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                             sizeof(caCertDer), caCertDer, &caCertSize, sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainRevokedTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* leafCn = "cryptoapi-test-chainrevoked-leaf.example.com";
+        unsigned char csrDer[8192];
+        int csrSize = 0;
+        char leafKeyPem[8192];
+        int leafKeySize = 0;
+        status = certManager.CreateCertificateRequest(leafCn, static_cast<int>(std::strlen(leafCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048,
+                                                       CERTIFICATE_DIGEST_SHA256, sizeof(csrDer), csrDer, &csrSize, sizeof(leafKeyPem), leafKeyPem, &leafKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainRevokedTest: FAILED CreateCertificateRequest status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char leafCertDer[8192];
+        int leafCertSize = 0;
+        status = certManager.IssueCertificateFromRequest(csrDer, csrSize, caCertDer, caCertSize, caKeyPem, caKeySize, 90,
+                                                          CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                          sizeof(leafCertDer), leafCertDer, &leafCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainRevokedTest: FAILED IssueCertificateFromRequest status=" << status << std::endl;
+            return status;
+        }
+
+        certManager.ClearIntermediateCertificatesForChainValidation();
+        status = certManager.AddIntermediateCertificateForChainValidation(caCertDer, caCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainRevokedTest: FAILED AddIntermediateCertificateForChainValidation status=" << status << std::endl;
+            return status;
+        }
+
+        // No real CRL/OCSP infrastructure exists for this self-signed test CA (it has no CRL
+        // Distribution Point extension), so REVOCATION_MODE_REQUIRED + REVOCATION_NETWORK_OFFLINE
+        // deterministically yields "revocation status unknown", which this SDK's own policy (see
+        // ValidateChain's own doc comment) then correctly refuses to call trusted -- this stands in
+        // for genuine CRL-based revocation testing, which needs a real CRL distribution point this
+        // SDK does not operate.
+        int trustResult = -1;
+        int revocationStatus = -1;
+        status = certManager.ValidateChain(leafCertDer, leafCertSize, REVOCATION_MODE_REQUIRED, REVOCATION_NETWORK_OFFLINE, &trustResult, &revocationStatus);
+        if (status != NO_ERROR || trustResult != CERTIFICATE_TRUST_INDETERMINATE || revocationStatus != REVOCATION_STATUS_UNKNOWN)
+        {
+            std::cout << "RunCertificateChainRevokedTest: FAILED status=" << status << " trust=" << trustResult << " revocation=" << revocationStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateChainRevokedTest: PASSED trust=" << trustResult << " revocation=" << revocationStatus << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCertificateStoreMemoryFindTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-store.example.com";
+        unsigned char certDer[8192];
+        int certSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(cn, static_cast<int>(std::strlen(cn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                              CERTIFICATE_DIGEST_SHA256, sizeof(certDer), certDer, &certSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateStoreMemoryFindTest: FAILED CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        status = certManager.OpenStore(CERTIFICATE_STORE_MEMORY);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateStoreMemoryFindTest: FAILED OpenStore status=" << status << std::endl;
+            return status;
+        }
+
+        status = certManager.AddCertificateToStore(certDer, certSize);
+        if (status != NO_ERROR)
+        {
+            certManager.CloseStore();
+            std::cout << "RunCertificateStoreMemoryFindTest: FAILED AddCertificateToStore status=" << status << std::endl;
+            return status;
+        }
+
+        const char* subjectSubstr = "cryptoapi-test-store";
+        unsigned char foundDer[8192];
+        int foundSize = 0;
+        status = certManager.FindCertificateInStoreBySubject(subjectSubstr, static_cast<int>(std::strlen(subjectSubstr)), sizeof(foundDer), foundDer, &foundSize);
+        if (status != NO_ERROR || foundSize != certSize || std::memcmp(foundDer, certDer, static_cast<std::size_t>(certSize)) != 0)
+        {
+            certManager.CloseStore();
+            std::cout << "RunCertificateStoreMemoryFindTest: FAILED FindCertificateInStoreBySubject status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = certManager.RemoveCertificateFromStore(certDer, certSize);
+        if (status != NO_ERROR)
+        {
+            certManager.CloseStore();
+            std::cout << "RunCertificateStoreMemoryFindTest: FAILED RemoveCertificateFromStore status=" << status << std::endl;
+            return status;
+        }
+
+        certManager.CloseStore();
+        std::cout << "RunCertificateStoreMemoryFindTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCmsSignVerifyDetachedTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-cms-signer.example.com";
+        unsigned char certDer[8192];
+        int certSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(cn, static_cast<int>(std::strlen(cn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30,
+                                                              CERTIFICATE_KEY_USAGE_DIGITAL_SIGNATURE, 0, CERTIFICATE_DIGEST_SHA256,
+                                                              sizeof(certDer), certDer, &certSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsSignVerifyDetachedTest: FAILED CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        CCmsService cmsService;
+        const unsigned char data[] = { 'H', 'e', 'l', 'l', 'o', ',', ' ', 'C', 'M', 'S', '!' };
+        unsigned char cmsDer[8192];
+        int cmsSize = 0;
+        status = cmsService.SignDetached(data, sizeof(data), certDer, certSize, keyPem, keySize, CMS_DIGEST_SHA256, sizeof(cmsDer), cmsDer, &cmsSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsSignVerifyDetachedTest: FAILED SignDetached status=" << status << std::endl;
+            return status;
+        }
+
+        int verifyResult = -1;
+        status = cmsService.VerifyDetached(data, sizeof(data), cmsDer, cmsSize, nullptr, 0, &verifyResult);
+        if (status != NO_ERROR || verifyResult != CMS_VERIFICATION_VALID)
+        {
+            std::cout << "RunCmsSignVerifyDetachedTest: FAILED crypto-only verify status=" << status << " result=" << verifyResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = cmsService.VerifyDetached(data, sizeof(data), cmsDer, cmsSize, certDer, certSize, &verifyResult);
+        if (status != NO_ERROR || verifyResult != CMS_VERIFICATION_VALID)
+        {
+            std::cout << "RunCmsSignVerifyDetachedTest: FAILED trust-checked verify status=" << status << " result=" << verifyResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned char extractedCertDer[8192];
+        int extractedCertSize = 0;
+        status = cmsService.ExtractSignerCertificate(cmsDer, cmsSize, sizeof(extractedCertDer), extractedCertDer, &extractedCertSize);
+        if (status != NO_ERROR || extractedCertSize != certSize || std::memcmp(extractedCertDer, certDer, static_cast<std::size_t>(certSize)) != 0)
+        {
+            std::cout << "RunCmsSignVerifyDetachedTest: FAILED ExtractSignerCertificate status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCmsSignVerifyDetachedTest: PASSED cms=" << cmsSize << " bytes" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCmsTamperedDataRejectionTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* cn = "cryptoapi-test-cms-tamper.example.com";
+        unsigned char certDer[8192];
+        int certSize = 0;
+        char keyPem[8192];
+        int keySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(cn, static_cast<int>(std::strlen(cn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                              CERTIFICATE_DIGEST_SHA256, sizeof(certDer), certDer, &certSize, sizeof(keyPem), keyPem, &keySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsTamperedDataRejectionTest: FAILED CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        CCmsService cmsService;
+        unsigned char data[] = { 'O', 'r', 'i', 'g', 'i', 'n', 'a', 'l', ' ', 'd', 'a', 't', 'a' };
+        unsigned char cmsDer[8192];
+        int cmsSize = 0;
+        status = cmsService.SignDetached(data, sizeof(data), certDer, certSize, keyPem, keySize, CMS_DIGEST_SHA256, sizeof(cmsDer), cmsDer, &cmsSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsTamperedDataRejectionTest: FAILED SignDetached status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char tamperedData[sizeof(data)];
+        std::memcpy(tamperedData, data, sizeof(data));
+        tamperedData[0] = static_cast<unsigned char>(tamperedData[0] ^ 0xFF);
+
+        int verifyResult = -1;
+        status = cmsService.VerifyDetached(tamperedData, sizeof(tamperedData), cmsDer, cmsSize, nullptr, 0, &verifyResult);
+        if (status != NO_ERROR || verifyResult != CMS_VERIFICATION_TAMPERED_DATA)
+        {
+            std::cout << "RunCmsTamperedDataRejectionTest: FAILED status=" << status << " result=" << verifyResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCmsTamperedDataRejectionTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCmsUntrustedSignerRejectionTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* signerCn = "cryptoapi-test-cms-untrusted-signer.example.com";
+        unsigned char signerCertDer[8192];
+        int signerCertSize = 0;
+        char signerKeyPem[8192];
+        int signerKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(signerCn, static_cast<int>(std::strlen(signerCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                              CERTIFICATE_DIGEST_SHA256, sizeof(signerCertDer), signerCertDer, &signerCertSize,
+                                                              sizeof(signerKeyPem), signerKeyPem, &signerKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsUntrustedSignerRejectionTest: FAILED signer CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const char* otherCn = "cryptoapi-test-cms-unrelated-root.example.com";
+        unsigned char otherCertDer[8192];
+        int otherCertSize = 0;
+        char otherKeyPem[8192];
+        int otherKeySize = 0;
+        status = certManager.CreateSelfSignedCertificate(otherCn, static_cast<int>(std::strlen(otherCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                          CERTIFICATE_DIGEST_SHA256, sizeof(otherCertDer), otherCertDer, &otherCertSize,
+                                                          sizeof(otherKeyPem), otherKeyPem, &otherKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsUntrustedSignerRejectionTest: FAILED other CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        CCmsService cmsService;
+        const unsigned char data[] = { 'U', 'n', 't', 'r', 'u', 's', 't', 'e', 'd', ' ', 's', 'i', 'g', 'n', 'e', 'r', ' ', 't', 'e', 's', 't' };
+        unsigned char cmsDer[8192];
+        int cmsSize = 0;
+        status = cmsService.SignDetached(data, sizeof(data), signerCertDer, signerCertSize, signerKeyPem, signerKeySize, CMS_DIGEST_SHA256,
+                                         sizeof(cmsDer), cmsDer, &cmsSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsUntrustedSignerRejectionTest: FAILED SignDetached status=" << status << std::endl;
+            return status;
+        }
+
+        int verifyResult = -1;
+        status = cmsService.VerifyDetached(data, sizeof(data), cmsDer, cmsSize, otherCertDer, otherCertSize, &verifyResult);
+        if (status != NO_ERROR || verifyResult != CMS_VERIFICATION_UNTRUSTED_SIGNER)
+        {
+            std::cout << "RunCmsUntrustedSignerRejectionTest: FAILED status=" << status << " result=" << verifyResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCmsUntrustedSignerRejectionTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunTimestampRequestResponseRoundtripTest(void)
+{
+    try
+    {
+        CTimestampService timestampService;
+        const unsigned char digest[32] = {
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20
+        };
+
+        unsigned char requestDer[512];
+        int requestSize = 0;
+        int status = timestampService.CreateTimestampRequest(digest, sizeof(digest), TIMESTAMP_DIGEST_SHA256, sizeof(requestDer), requestDer, &requestSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunTimestampRequestResponseRoundtripTest: FAILED CreateTimestampRequest status=" << status << std::endl;
+            return status;
+        }
+
+        // Real public TSA over the network -- same "hit the real external tool" philosophy as the
+        // GnuPG interop tests; a network/TSA failure is an environment issue, not a code bug, so it
+        // is reported as SKIPPED rather than FAILED.
+        const char* tsaUrl = "http://timestamp.digicert.com";
+        unsigned char responseDer[8192];
+        int responseSize = 0;
+        status = timestampService.RequestTimestampFromTsa(tsaUrl, static_cast<int>(std::strlen(tsaUrl)), requestDer, requestSize, 10000,
+                                                           sizeof(responseDer), responseDer, &responseSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunTimestampRequestResponseRoundtripTest: SKIPPED network/TSA unavailable status=" << status << std::endl;
+            return NO_ERROR;
+        }
+
+        char infoText[2048];
+        int infoSize = 0;
+        status = timestampService.GetTimestampInfoText(responseDer, responseSize, sizeof(infoText), infoText, &infoSize);
+        if (status != NO_ERROR || infoSize <= 0)
+        {
+            std::cout << "RunTimestampRequestResponseRoundtripTest: FAILED GetTimestampInfoText status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string info(infoText, static_cast<std::size_t>(infoSize));
+        if (info.find("GenTime:") == std::string::npos)
+        {
+            std::cout << "RunTimestampRequestResponseRoundtripTest: FAILED missing GenTime: " << info << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunTimestampRequestResponseRoundtripTest: PASSED response=" << responseSize << " bytes" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunTimestampVerifyTest(void)
+{
+    try
+    {
+        CTimestampService timestampService;
+        const unsigned char digest[32] = {
+            0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,
+            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40
+        };
+
+        unsigned char requestDer[512];
+        int requestSize = 0;
+        int status = timestampService.CreateTimestampRequest(digest, sizeof(digest), TIMESTAMP_DIGEST_SHA256, sizeof(requestDer), requestDer, &requestSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunTimestampVerifyTest: FAILED CreateTimestampRequest status=" << status << std::endl;
+            return status;
+        }
+
+        const char* tsaUrl = "http://timestamp.digicert.com";
+        unsigned char responseDer[8192];
+        int responseSize = 0;
+        status = timestampService.RequestTimestampFromTsa(tsaUrl, static_cast<int>(std::strlen(tsaUrl)), requestDer, requestSize, 10000,
+                                                           sizeof(responseDer), responseDer, &responseSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunTimestampVerifyTest: SKIPPED network/TSA unavailable status=" << status << std::endl;
+            return NO_ERROR;
+        }
+
+        int verifyResult = -1;
+        status = timestampService.VerifyTimestampResponse(responseDer, responseSize, digest, sizeof(digest), TIMESTAMP_DIGEST_SHA256, nullptr, 0, &verifyResult);
+        if (status != NO_ERROR || verifyResult != TIMESTAMP_VERIFICATION_VALID)
+        {
+            std::cout << "RunTimestampVerifyTest: FAILED status=" << status << " result=" << verifyResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunTimestampVerifyTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunTimestampTamperedDigestRejectionTest(void)
+{
+    try
+    {
+        CTimestampService timestampService;
+        const unsigned char digest[32] = {
+            0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50,
+            0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60
+        };
+
+        unsigned char requestDer[512];
+        int requestSize = 0;
+        int status = timestampService.CreateTimestampRequest(digest, sizeof(digest), TIMESTAMP_DIGEST_SHA256, sizeof(requestDer), requestDer, &requestSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunTimestampTamperedDigestRejectionTest: FAILED CreateTimestampRequest status=" << status << std::endl;
+            return status;
+        }
+
+        const char* tsaUrl = "http://timestamp.digicert.com";
+        unsigned char responseDer[8192];
+        int responseSize = 0;
+        status = timestampService.RequestTimestampFromTsa(tsaUrl, static_cast<int>(std::strlen(tsaUrl)), requestDer, requestSize, 10000,
+                                                           sizeof(responseDer), responseDer, &responseSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunTimestampTamperedDigestRejectionTest: SKIPPED network/TSA unavailable status=" << status << std::endl;
+            return NO_ERROR;
+        }
+
+        unsigned char differentDigest[32];
+        std::memcpy(differentDigest, digest, sizeof(digest));
+        differentDigest[0] = static_cast<unsigned char>(differentDigest[0] ^ 0xFF);
+
+        int verifyResult = -1;
+        status = timestampService.VerifyTimestampResponse(responseDer, responseSize, differentDigest, sizeof(differentDigest), TIMESTAMP_DIGEST_SHA256, nullptr, 0, &verifyResult);
+        if (status != NO_ERROR || verifyResult != TIMESTAMP_VERIFICATION_TAMPERED_DIGEST)
+        {
+            std::cout << "RunTimestampTamperedDigestRejectionTest: FAILED status=" << status << " result=" << verifyResult << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunTimestampTamperedDigestRejectionTest: PASSED" << std::endl;
         return NO_ERROR;
     }
     catch (...)

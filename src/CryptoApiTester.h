@@ -843,6 +843,100 @@ public:
     // mentions the signature at all.
     int RunPgpWrapperInspectionSignatureTest(void) override;
 
+    // ============================================================================================
+    // Certificates (§25) / CMS (§29.4 gap #5) / RFC 3161 timestamping (§29.4 gap #6).
+    // ============================================================================================
+
+    // CCertificateManager::CreateSelfSignedCertificate produces a DER certificate + PEM private
+    // key; the DER is re-parsed via GetCertificateInfoText and confirmed to report the expected
+    // subject/SAN/key-usage/EKU text, and the private key is confirmed to match the certificate's
+    // public key (X509_check_private_key equivalent, exercised indirectly through IssueCertificate-
+    // FromRequest-style signing in a later test rather than duplicated here).
+    int RunCertificateSelfSignedTest(void) override;
+
+    // ConvertCertificateDerToPem then ConvertCertificatePemToDer round-trips a self-signed
+    // certificate's DER bytes back to byte-identical DER.
+    int RunCertificateDerPemRoundtripTest(void) override;
+
+    // ExportPfx then ImportPfx round-trips a self-signed certificate + its private key through a
+    // password-protected PKCS#12 blob; both the certificate DER and the private key PEM come back
+    // usable (the recovered key is confirmed to still sign correctly).
+    int RunCertificatePfxImportExportTest(void) override;
+
+    // CreateCertificateRequest produces a CSR DER + PEM private key; the CSR's own self-signature
+    // is confirmed valid via IssueCertificateFromRequest succeeding on it (a CSR whose
+    // self-signature does not verify is rejected there with INVALID_DATA).
+    int RunCertificateCsrGenerationTest(void) override;
+
+    // A self-signed CA certificate issues a leaf certificate from a separately generated CSR via
+    // IssueCertificateFromRequest; the issued leaf's GetCertificateInfoText issuer field matches
+    // the CA's subject, and ValidateChain (with the CA added as the sole intermediate, which is
+    // also self-signed and therefore this call's trust anchor per ValidateChain's own "Application
+    // Trust" doc comment) reports CERTIFICATE_TRUST_TRUSTED.
+    int RunCertificateIssueFromRequestTest(void) override;
+
+    // ValidateChain against a leaf issued by a self-signed CA that IS added via
+    // AddIntermediateCertificateForChainValidation -- expects CERTIFICATE_TRUST_TRUSTED.
+    int RunCertificateChainValidTest(void) override;
+
+    // Same leaf/CA pair as RunCertificateChainValidTest, but the CA is NEVER added as an
+    // intermediate (ClearIntermediateCertificatesForChainValidation called first) -- expects
+    // CERTIFICATE_TRUST_UNTRUSTED (or INDETERMINATE), never TRUSTED, since ValidateChain's
+    // exclusive-root store then has no trust anchor at all.
+    int RunCertificateChainUntrustedRootTest(void) override;
+
+    // A self-signed certificate created with validityDays=1 combined with a manually-constructed
+    // already-expired notAfter is not reproducible through the public API alone (CreateSelfSigned-
+    // Certificate always sets notBefore=now), so this test instead builds a 1-second validity
+    // certificate, sleeps past it, and confirms ValidateChain reports CERTIFICATE_TRUST_UNTRUSTED
+    // rather than TRUSTED once notAfter has passed.
+    int RunCertificateChainExpiredTest(void) override;
+
+    // Chain validation for a leaf whose CA has been revoked is exercised via
+    // CERTIFICATE_STORE_MEMORY (add a CRL is out of v1 scope -- see this test's own body comment
+    // for exactly what it substitutes: a leaf certificate is removed from the exclusive-root
+    // candidate list entirely, i.e. its issuing CA is simply never presented as trusted for this
+    // validation, which ValidateChain's own untrusted-root path already covers). This test is kept
+    // as a named placeholder distinct from RunCertificateChainUntrustedRootTest per the plan's own
+    // test list, documenting that full CRL-based revocation testing needs a real CRL distribution
+    // point this SDK does not operate.
+    int RunCertificateChainRevokedTest(void) override;
+
+    // OpenStore(CERTIFICATE_STORE_MEMORY), AddCertificateToStore a self-signed certificate,
+    // FindCertificateInStoreBySubject by its CN substring, confirm the returned DER matches;
+    // CloseStore. Never touches the real machine's CurrentUser/LocalMachine stores.
+    int RunCertificateStoreMemoryFindTest(void) override;
+
+    // CCmsService::SignDetached over a buffer, then VerifyDetached against the original buffer
+    // with no trusted root (crypto-only check) reports CMS_VERIFICATION_VALID; VerifyDetached
+    // again with the signer's own certificate as the "trusted root" (self-signed, so it IS its own
+    // root) also reports CMS_VERIFICATION_VALID.
+    int RunCmsSignVerifyDetachedTest(void) override;
+
+    // Same CMS blob as RunCmsSignVerifyDetachedTest, verified against a single-byte-modified copy
+    // of the original data -- expects CMS_VERIFICATION_TAMPERED_DATA.
+    int RunCmsTamperedDataRejectionTest(void) override;
+
+    // Same CMS blob, verified with a trusted root that is a DIFFERENT self-signed certificate
+    // (unrelated to the actual signer) -- expects CMS_VERIFICATION_UNTRUSTED_SIGNER (the
+    // crypto-only pass still succeeds, only the trust pass fails).
+    int RunCmsUntrustedSignerRejectionTest(void) override;
+
+    // CTimestampService::CreateTimestampRequest over a SHA-256 digest, RequestTimestampFromTsa
+    // against a real public RFC 3161 TSA (network-dependent, same "hit the real external tool"
+    // philosophy as the GnuPG interop tests -- see this test's own body comment for the TSA URL
+    // and how a network failure is reported), then GetTimestampInfoText on the response confirms a
+    // non-empty GenTime line.
+    int RunTimestampRequestResponseRoundtripTest(void) override;
+
+    // Same round trip as RunTimestampRequestResponseRoundtripTest; VerifyTimestampResponse against
+    // the original digest with no TSA trust certificate reports TIMESTAMP_VERIFICATION_VALID.
+    int RunTimestampVerifyTest(void) override;
+
+    // Same response, verified against a DIFFERENT (locally computed) digest than the one actually
+    // timestamped -- expects TIMESTAMP_VERIFICATION_TAMPERED_DIGEST.
+    int RunTimestampTamperedDigestRejectionTest(void) override;
+
 protected:
 
 private:

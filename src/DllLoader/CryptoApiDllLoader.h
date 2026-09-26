@@ -21,6 +21,9 @@
 #include "Interfaces/ICryptoApiTester.h"
 #include "Interfaces/IPgpEngine.h"
 #include "Interfaces/IPgpEngineWrapper.h"
+#include "Interfaces/ICertificateManager.h"
+#include "Interfaces/ICmsService.h"
+#include "Interfaces/ITimestampService.h"
 //---------------------------------------------------------------------------
 
 namespace CryptoApiNS
@@ -36,6 +39,12 @@ class CCryptoApiDllLoader
     typedef void                (*DestroyPgpEngineFunc)(IPgpEngine*);
     typedef IPgpEngineWrapper*  (*CreatePgpEngineWrapperFunc)();
     typedef void                (*DestroyPgpEngineWrapperFunc)(IPgpEngineWrapper*);
+    typedef ICertificateManager* (*CreateCertificateManagerFunc)();
+    typedef void                 (*DestroyCertificateManagerFunc)(ICertificateManager*);
+    typedef ICmsService*        (*CreateCmsServiceFunc)();
+    typedef void                 (*DestroyCmsServiceFunc)(ICmsService*);
+    typedef ITimestampService*  (*CreateTimestampServiceFunc)();
+    typedef void                 (*DestroyTimestampServiceFunc)(ITimestampService*);
 
 public:
     virtual ~CCryptoApiDllLoader();
@@ -59,6 +68,13 @@ public:
     IPgpEngineWrapper* GetPgpEngineWrapperObject();                                          // Instance
     void               DestroyPgpEngineWrapperObject(IPgpEngineWrapper* pPgpEngineWrapper);  // Same reasoning as DestroyCryptoApiObject above.
 
+    ICertificateManager* GetCertificateManagerObject();                                                  // Instance
+    void                 DestroyCertificateManagerObject(ICertificateManager* pCertificateManager);      // Same reasoning as DestroyCryptoApiObject above.
+    ICmsService*         GetCmsServiceObject();                                                          // Instance
+    void                 DestroyCmsServiceObject(ICmsService* pCmsService);                              // Same reasoning as DestroyCryptoApiObject above.
+    ITimestampService*   GetTimestampServiceObject();                                                    // Instance
+    void                 DestroyTimestampServiceObject(ITimestampService* pTimestampService);            // Same reasoning as DestroyCryptoApiObject above.
+
     void*             GetProcAddress(const char* functionName);                             // Resolves functionName's address in the DLL loaded by LoadLibrary() above; returns nullptr if
                                                                                             // LoadLibrary() has not succeeded yet, or the DLL has no export by that exact name.
 protected:
@@ -74,6 +90,12 @@ private:
     DestroyPgpEngineFunc DestroyPgpEngine;
     CreatePgpEngineWrapperFunc CreatePgpEngineWrapper;
     DestroyPgpEngineWrapperFunc DestroyPgpEngineWrapper;
+    CreateCertificateManagerFunc CreateCertificateManager;
+    DestroyCertificateManagerFunc DestroyCertificateManager;
+    CreateCmsServiceFunc CreateCmsService;
+    DestroyCmsServiceFunc DestroyCmsService;
+    CreateTimestampServiceFunc CreateTimestampService;
+    DestroyTimestampServiceFunc DestroyTimestampService;
     bool isLoaded;
     bool isUnloaded;
 };
