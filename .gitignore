@@ -141,3 +141,22 @@ Win64/
 # modules) is not, so it needs its own line here. See 3rdParty/PYTHON_EMBED.md for exactly how to
 # regenerate 3rdParty/scripts/python312/bin and .../libs/python312.lib from scratch.
 3rdParty/scripts/python312/bin/*.pyd
+
+# libssh2 vendor tree (3rdParty/libssh21111): same policy as above. Only include/ (public headers)
+# and src/ (the actual library sources, hand-added to an MSVC project the same way as every other
+# vendored C library here) are needed to build. docs/example/tests/vms/os400/m4/cmake are the
+# upstream repo's own doc/sample/test-suite/other-platform/autotools-CMake build scaffolding, none
+# of which this project's hand-crafted .vcxproj setup uses. The autotools/CMake build-generation
+# files sitting inside src/ itself (right next to the .c/.h files that are actually vendored) are
+# trimmed too, same as openssl402's configdata.pm/makefile above.
+3rdParty/libssh21111/docs/
+3rdParty/libssh21111/example/
+3rdParty/libssh21111/tests/
+3rdParty/libssh21111/vms/
+3rdParty/libssh21111/os400/
+3rdParty/libssh21111/m4/
+3rdParty/libssh21111/cmake/
+3rdParty/libssh21111/src/Makefile.am
+3rdParty/libssh21111/src/Makefile.in
+3rdParty/libssh21111/src/Makefile.inc
+3rdParty/libssh21111/src/CMakeLists.txt
