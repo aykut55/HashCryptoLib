@@ -1623,6 +1623,59 @@ int main()
 
         cryptoApiTester.RunPgpWrapperMultiRecipientEncryptStringArmoredTest();
 #endif
+
+#if 1
+        // Native Certificate/CMS/Timestamp test parity with AppBuilder/Main.cpp -- LibRunner had
+        // gained script demos for these classes (see project_certificate_script_demos_and_retry_fix_done
+        // memory) but never the native CCryptoApiTester tests themselves, a gap the 2026-09-26
+        // ranked-list work's own general parity principle flagged. Same 23 calls, same order, as
+        // AppBuilder/Main.cpp's own block.
+        cryptoApiTester.RunCertificateSelfSignedTest();
+
+        cryptoApiTester.RunCertificateDerPemRoundtripTest();
+
+        cryptoApiTester.RunCertificatePfxImportExportTest();
+
+        cryptoApiTester.RunCertificateCsrGenerationTest();
+
+        cryptoApiTester.RunCertificateCsrDerPemRoundtripTest();
+
+        cryptoApiTester.RunCertificateIssueFromRequestTest();
+
+        cryptoApiTester.RunCertificateChainValidTest();
+
+        cryptoApiTester.RunCertificateChainUntrustedRootTest();
+
+        cryptoApiTester.RunCertificateChainExpiredTest();
+
+        cryptoApiTester.RunCertificateChainRevokedTest();
+
+        cryptoApiTester.RunCertificateCrlCheckGoodTest();
+
+        cryptoApiTester.RunCertificateCrlCheckRevokedTest();
+
+        cryptoApiTester.RunCertificateCrlCheckStaleTest();
+
+        cryptoApiTester.RunCertificateCrlCheckWrongIssuerRejectionTest();
+
+        cryptoApiTester.RunCertificateStoreMemoryFindTest();
+
+        cryptoApiTester.RunCertificateStoreFindByFilterTest();
+
+        cryptoApiTester.RunCmsSignVerifyDetachedTest();
+
+        cryptoApiTester.RunCmsTamperedDataRejectionTest();
+
+        cryptoApiTester.RunCmsUntrustedSignerRejectionTest();
+
+        cryptoApiTester.RunCmsSigningCertificateV2AttributeTest();
+
+        cryptoApiTester.RunTimestampRequestResponseRoundtripTest();
+
+        cryptoApiTester.RunTimestampVerifyTest();
+
+        cryptoApiTester.RunTimestampTamperedDigestRejectionTest();
+#endif
     }
     catch (...)
     {
