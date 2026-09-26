@@ -3,6 +3,9 @@
 #include "../ScriptCryptoApiDll.h"
 #include "../ScriptPgpEngineDll.h"
 #include "../ScriptPgpEngineWrapperDll.h"
+#include "../ScriptCertificateManagerDll.h"
+#include "../ScriptCmsServiceDll.h"
+#include "../ScriptTimestampServiceDll.h"
 #include "../ScriptProgressCallback.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
@@ -13,10 +16,16 @@
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
+#include "../ScriptCertificateManager.h"
+#include "../ScriptCmsService.h"
+#include "../ScriptTimestampService.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#include "Certificates/CertificateManager.h"
+#include "Certificates/CmsService.h"
+#include "Certificates/TimestampService.h"
 #endif
 
 #include "Definitions/Definitions.h"
@@ -252,6 +261,45 @@ void CLuaScriptEngineLuaBridgeLegacy::registerBindings(void)
             .addConstructor<void (*)()>()
             .addFunction("IsGnuPgAvailable", &CScriptPgpEngineWrapper::IsGnuPgAvailable)
         .endClass();
+
+    // None of CScriptCertificateManager/CScriptCmsService/CScriptTimestampService have overloaded
+    // methods or enum-typed parameters (see CScriptCertificateManager.h's own header comment for
+    // why algorithm/mode parameters are plain int), so LuaBridge 2.10's single-signature
+    // addConstructor/addFunction limitation (see this file's own header comment) does not force a
+    // reduced surface here the way CScriptPgpEngine/CScriptPgpEngineWrapper's overloads did above --
+    // every method registers directly, no static_cast disambiguation needed.
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptCertificateManager>("CertificateManager")
+            .addConstructor<void (*)()>()
+            .addFunction("GetCertificateInfoText", &CScriptCertificateManager::GetCertificateInfoText)
+            .addFunction("ConvertCertificateDerToPem", &CScriptCertificateManager::ConvertCertificateDerToPem)
+            .addFunction("ConvertCertificatePemToDer", &CScriptCertificateManager::ConvertCertificatePemToDer)
+            .addFunction("CreateSelfSignedCertificate", &CScriptCertificateManager::CreateSelfSignedCertificate)
+            .addFunction("CreateCertificateRequest", &CScriptCertificateManager::CreateCertificateRequest)
+            .addFunction("GetLastPrivateKeyPem", &CScriptCertificateManager::GetLastPrivateKeyPem)
+            .addFunction("IssueCertificateFromRequest", &CScriptCertificateManager::IssueCertificateFromRequest)
+            .addFunction("AddIntermediateCertificateForChainValidation", &CScriptCertificateManager::AddIntermediateCertificateForChainValidation)
+            .addFunction("ClearIntermediateCertificatesForChainValidation", &CScriptCertificateManager::ClearIntermediateCertificatesForChainValidation)
+            .addFunction("ValidateChain", &CScriptCertificateManager::ValidateChain)
+            .addFunction("GetLastRevocationStatus", &CScriptCertificateManager::GetLastRevocationStatus)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptCmsService>("CmsService")
+            .addConstructor<void (*)()>()
+            .addFunction("SignDetached", &CScriptCmsService::SignDetached)
+            .addFunction("VerifyDetached", &CScriptCmsService::VerifyDetached)
+            .addFunction("ExtractSignerCertificate", &CScriptCmsService::ExtractSignerCertificate)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptTimestampService>("TimestampService")
+            .addConstructor<void (*)()>()
+            .addFunction("CreateTimestampRequest", &CScriptTimestampService::CreateTimestampRequest)
+            .addFunction("RequestTimestampFromTsa", &CScriptTimestampService::RequestTimestampFromTsa)
+            .addFunction("VerifyTimestampResponse", &CScriptTimestampService::VerifyTimestampResponse)
+            .addFunction("GetTimestampInfoText", &CScriptTimestampService::GetTimestampInfoText)
+        .endClass();
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -286,6 +334,26 @@ void CLuaScriptEngineLuaBridgeLegacy::registerBindings(void)
             .addFunction("ImportPeerPublicKey", &CScriptPgpEngineWrapperDll::ImportPeerPublicKey)
             .addFunction("EncryptStringArmored", &CScriptPgpEngineWrapperDll::EncryptStringArmored)
             .addFunction("DecryptStringArmored", &CScriptPgpEngineWrapperDll::DecryptStringArmored)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptCertificateManagerDll>("CertificateManagerDll")
+            .addFunction("CreateSelfSignedCertificate", &CScriptCertificateManagerDll::CreateSelfSignedCertificate)
+            .addFunction("GetLastPrivateKeyPem", &CScriptCertificateManagerDll::GetLastPrivateKeyPem)
+            .addFunction("GetCertificateInfoText", &CScriptCertificateManagerDll::GetCertificateInfoText)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptCmsServiceDll>("CmsServiceDll")
+            .addFunction("SignDetached", &CScriptCmsServiceDll::SignDetached)
+            .addFunction("VerifyDetached", &CScriptCmsServiceDll::VerifyDetached)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptTimestampServiceDll>("TimestampServiceDll")
+            .addFunction("CreateTimestampRequest", &CScriptTimestampServiceDll::CreateTimestampRequest)
+            .addFunction("RequestTimestampFromTsa", &CScriptTimestampServiceDll::RequestTimestampFromTsa)
+            .addFunction("GetTimestampInfoText", &CScriptTimestampServiceDll::GetTimestampInfoText)
         .endClass();
 }
 // -----------------------------------------------------------------------------
@@ -324,6 +392,48 @@ void CLuaScriptEngineLuaBridgeLegacy::SetDllPgpEngineWrapper(CScriptPgpEngineWra
     {
         luabridge::push(luaState_, wrapper);
         lua_setglobal(luaState_, "pgpEngineWrapper");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineLuaBridgeLegacy::SetDllCertificateManager(CScriptCertificateManagerDll* manager)
+{
+    try
+    {
+        luabridge::push(luaState_, manager);
+        lua_setglobal(luaState_, "certificateManager");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineLuaBridgeLegacy::SetDllCmsService(CScriptCmsServiceDll* service)
+{
+    try
+    {
+        luabridge::push(luaState_, service);
+        lua_setglobal(luaState_, "cmsService");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineLuaBridgeLegacy::SetDllTimestampService(CScriptTimestampServiceDll* service)
+{
+    try
+    {
+        luabridge::push(luaState_, service);
+        lua_setglobal(luaState_, "timestampService");
     }
     catch (...)
     {

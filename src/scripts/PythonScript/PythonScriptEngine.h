@@ -9,6 +9,9 @@ namespace CryptoApiNS
 class CScriptCryptoApiDll;
 class CScriptPgpEngineDll;
 class CScriptPgpEngineWrapperDll;
+class CScriptCertificateManagerDll;
+class CScriptCmsServiceDll;
+class CScriptTimestampServiceDll;
 
 // Fourth scripting binding library over the same CScriptCryptoApi/CScriptPgpEngine/
 // CScriptPgpEngineWrapper facade layer the Lua/ChaiScript engines use -- see registerBindings() in
@@ -66,6 +69,9 @@ public:
     void SetDllCryptoApi(CScriptCryptoApiDll* api);
     void SetDllPgpEngine(CScriptPgpEngineDll* engine);
     void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
+    void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
+    void SetDllCmsService(CScriptCmsServiceDll* service);
+    void SetDllTimestampService(CScriptTimestampServiceDll* service);
 
 protected:
 

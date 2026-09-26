@@ -39,6 +39,13 @@ public:
     // own comment (ScriptCryptoApi.h) for the underlying mechanism.
     int RunLuaScriptProgressCallbackTest(void);
 
+    // Self-signed certificate generation (CertificateManager) + detached CMS sign/verify
+    // (CmsService) + RFC 3161 request creation (TimestampService, no network call -- see this
+    // method's own .cpp comment for why), all from one Lua script via sol2 -- see
+    // CScriptCertificateManager/CScriptCmsService/CScriptTimestampService's own header comments
+    // for why algorithm/mode parameters are plain ints here rather than named enum constants.
+    int RunLuaScriptCertificateTest(void);
+
     int RunLuaBridgeScriptHashTest(void);
     int RunLuaBridgeScriptEncryptDecryptTest(void);
     int RunLuaBridgeScriptAsymmetricTest(void);
@@ -51,6 +58,10 @@ public:
     int RunLuaBridgeScriptPgpWrapperAvailabilityTest(void);
 
     int RunLuaBridgeScriptProgressCallbackTest(void);
+
+    // LuaBridge3 mirror of RunLuaScriptCertificateTest -- manual string.byte table building
+    // instead of ToBytes(), same reasoning as every other RunLuaBridgeScript*Test.
+    int RunLuaBridgeScriptCertificateTest(void);
 
     int RunLuaBridgeLegacyScriptHashTest(void);
     int RunLuaBridgeLegacyScriptEncryptDecryptTest(void);
@@ -65,6 +76,13 @@ public:
 
     int RunLuaBridgeLegacyScriptProgressCallbackTest(void);
 
+    // LuaBridge 2.10 mirror of RunLuaScriptCertificateTest -- none of CertificateManager/
+    // CmsService/TimestampService's methods are overloaded, so unlike CScriptPgpEngine/
+    // CScriptPgpEngineWrapper this needed no reduced surface (see
+    // LuaScriptEngineLuaBridgeLegacy.cpp's own comment on the CertificateManager/CmsService/
+    // TimestampService registration block).
+    int RunLuaBridgeLegacyScriptCertificateTest(void);
+
     int RunChaiScriptHashTest(void);
     int RunChaiScriptEncryptDecryptTest(void);
     int RunChaiScriptAsymmetricTest(void);
@@ -78,6 +96,9 @@ public:
 
     int RunChaiScriptProgressCallbackTest(void);
 
+    // ChaiScript mirror of RunLuaScriptCertificateTest.
+    int RunChaiScriptCertificateTest(void);
+
     int RunPythonScriptHashTest(void);
     int RunPythonScriptEncryptDecryptTest(void);
     int RunPythonScriptAsymmetricTest(void);
@@ -90,6 +111,9 @@ public:
     int RunPythonScriptPgpWrapperAvailabilityTest(void);
 
     int RunPythonScriptProgressCallbackTest(void);
+
+    // pybind11 mirror of RunLuaScriptCertificateTest.
+    int RunPythonScriptCertificateTest(void);
 
 protected:
 

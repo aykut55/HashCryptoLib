@@ -11,6 +11,9 @@ namespace CryptoApiNS
 class CScriptCryptoApiDll;
 class CScriptPgpEngineDll;
 class CScriptPgpEngineWrapperDll;
+class CScriptCertificateManagerDll;
+class CScriptCmsServiceDll;
+class CScriptTimestampServiceDll;
 
 // Owns one sol2 Lua state and exposes CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper
 // (plus their algorithm enums) to it -- see registerBindings() in the .cpp for the exact binding
@@ -54,6 +57,9 @@ public:
     void SetDllCryptoApi(CScriptCryptoApiDll* api);
     void SetDllPgpEngine(CScriptPgpEngineDll* engine);
     void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
+    void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
+    void SetDllCmsService(CScriptCmsServiceDll* service);
+    void SetDllTimestampService(CScriptTimestampServiceDll* service);
 
 protected:
 

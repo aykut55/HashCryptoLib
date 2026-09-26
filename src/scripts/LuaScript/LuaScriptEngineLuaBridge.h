@@ -14,6 +14,9 @@ namespace CryptoApiNS
 class CScriptCryptoApiDll;
 class CScriptPgpEngineDll;
 class CScriptPgpEngineWrapperDll;
+class CScriptCertificateManagerDll;
+class CScriptCmsServiceDll;
+class CScriptTimestampServiceDll;
 
 // LuaBridge3 counterpart to CLuaScriptEngine -- exposes the exact same script-facing surface
 // (CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper usertypes, the same 14 algorithm
@@ -52,6 +55,9 @@ public:
     void SetDllCryptoApi(CScriptCryptoApiDll* api);
     void SetDllPgpEngine(CScriptPgpEngineDll* engine);
     void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
+    void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
+    void SetDllCmsService(CScriptCmsServiceDll* service);
+    void SetDllTimestampService(CScriptTimestampServiceDll* service);
 
 protected:
 

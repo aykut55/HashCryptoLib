@@ -73,6 +73,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ForceSynchronousPDBWrites>true</ForceSynchronousPDBWrites>
     </ClCompile>
   </ItemDefinitionGroup>
   <!-- Renames the project-named ($(TargetName).lib) build output to the product-named

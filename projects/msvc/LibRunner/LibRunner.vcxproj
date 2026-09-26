@@ -70,9 +70,16 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <!-- Keep Visual Studio Run/F5 consistent with direct execution from the build output folder,
+       where LibRunner.exe and its copied runtime dependencies are located. -->
+  <PropertyGroup>
+    <LocalDebuggerCommand>$(TargetPath)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ForceSynchronousPDBWrites>true</ForceSynchronousPDBWrites>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <!-- LibRunner only needs src for CryptoApi.h/CryptoApiTester.h's declarations; the actual
            CCryptoApi/CPgpEngine/CPgpEngineWrapper implementation comes from linking
@@ -268,9 +275,15 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApi.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngine.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManager.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCmsService.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampService.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCmsServiceDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h" />
@@ -288,9 +301,15 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApi.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngine.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapper.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManager.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCmsService.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampService.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCmsServiceDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.cpp" />
     <!-- sol2's usertype/overload registration is template-heavy; /bigobj avoids hitting the COFF
          section-count limit, same precedent as AppBuilder.vcxproj/DllRunner.vcxproj's own entry. -->
     <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">

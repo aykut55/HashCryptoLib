@@ -14,6 +14,9 @@ namespace CryptoApiNS
 class CScriptCryptoApiDll;
 class CScriptPgpEngineDll;
 class CScriptPgpEngineWrapperDll;
+class CScriptCertificateManagerDll;
+class CScriptCmsServiceDll;
+class CScriptTimestampServiceDll;
 
 // Classic LuaBridge (2.10, github.com/vinniefalco/LuaBridge) counterpart to
 // CLuaScriptEngineLuaBridge (LuaBridge3) -- same purpose (compare a third, older binding library
@@ -60,6 +63,9 @@ public:
     void SetDllCryptoApi(CScriptCryptoApiDll* api);
     void SetDllPgpEngine(CScriptPgpEngineDll* engine);
     void SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper);
+    void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
+    void SetDllCmsService(CScriptCmsServiceDll* service);
+    void SetDllTimestampService(CScriptTimestampServiceDll* service);
 
 protected:
 

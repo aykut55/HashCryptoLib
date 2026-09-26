@@ -2202,4 +2202,247 @@ int CScriptEngineTester::RunPythonScriptProgressCallbackTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CScriptEngineTester::RunLuaScriptCertificateTest(void)
+{
+    try
+    {
+        CLuaScriptEngineSol luaEngine;
+        // keyAlgorithm=0 (RSA_2048), digestAlgorithm=0 (SHA256), keyUsageFlags=1
+        // (DIGITAL_SIGNATURE) -- see CScriptCertificateManager.h's own header comment for why
+        // these are plain ints rather than named enum constants. No network call here (unlike
+        // RunTimestampRequestResponseRoundtripTest in CryptoApiTester.cpp) -- this test only
+        // exercises request CREATION, the real TSA round trip is already covered natively.
+        const char* script =
+            "local cert = CertificateManager.new()\n"
+            "local certDer = cert:CreateSelfSignedCertificate(\"scripttest-lua.example.com\", \"\", 0, 30, 1, 0, 0)\n"
+            "local info = cert:GetCertificateInfoText(certDer)\n"
+            "local certOk = (#certDer > 0) and (#info > 0)\n"
+            "local cms = CmsService.new()\n"
+            "local privateKeyPem = cert:GetLastPrivateKeyPem()\n"
+            "local data = ToBytes(\"CMS test data from Lua\")\n"
+            "local cmsDer = cms:SignDetached(data, certDer, privateKeyPem, 0)\n"
+            // sol2's std::vector<unsigned char> binding is a real userdata (see ToBytes' own
+            // registration comment in LuaScriptEngineSol.cpp), not something a plain Lua table
+            // auto-converts to the way LuaBridge3/LuaBridge 2.10's Stack<std::vector<T>>
+            // specialization does -- ToBytes("") builds a genuine empty vector instead.
+            "local verifyResult = cms:VerifyDetached(data, cmsDer, ToBytes(\"\"))\n"
+            "local cmsOk = (verifyResult == 0)\n"
+            "local ts = TimestampService.new()\n"
+            "local digest = ToBytes(\"0123456789012345678901234567890a\")\n"
+            "local requestDer = ts:CreateTimestampRequest(digest, 0)\n"
+            "local tsOk = (#requestDer > 0)\n"
+            "ok = certOk and cmsOk and tsOk\n";
+
+        luaEngine.RunString(script);
+        if (!luaEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunLuaScriptCertificateTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaScriptCertificateTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunLuaScriptCertificateTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunLuaScriptCertificateTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunLuaBridgeScriptCertificateTest(void)
+{
+    try
+    {
+        CLuaScriptEngineLuaBridge luaEngine;
+        const char* script =
+            "local cert = CertificateManager()\n"
+            "local certDer = cert:CreateSelfSignedCertificate(\"scripttest-luabridge.example.com\", \"\", 0, 30, 1, 0, 0)\n"
+            "local info = cert:GetCertificateInfoText(certDer)\n"
+            "local certOk = (#certDer > 0) and (#info > 0)\n"
+            "local cms = CmsService()\n"
+            "local privateKeyPem = cert:GetLastPrivateKeyPem()\n"
+            "local message = \"CMS test data from LuaBridge3\"\n"
+            "local data = {}\n"
+            "for i = 1, #message do data[i] = string.byte(message, i) end\n"
+            "local cmsDer = cms:SignDetached(data, certDer, privateKeyPem, 0)\n"
+            "local verifyResult = cms:VerifyDetached(data, cmsDer, {})\n"
+            "local cmsOk = (verifyResult == 0)\n"
+            "local ts = TimestampService()\n"
+            "local digestMsg = \"0123456789012345678901234567890a\"\n"
+            "local digest = {}\n"
+            "for i = 1, #digestMsg do digest[i] = string.byte(digestMsg, i) end\n"
+            "local requestDer = ts:CreateTimestampRequest(digest, 0)\n"
+            "local tsOk = (#requestDer > 0)\n"
+            "ok = certOk and cmsOk and tsOk\n";
+
+        luaEngine.RunString(script);
+        if (!luaEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunLuaBridgeScriptCertificateTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaBridgeScriptCertificateTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunLuaBridgeScriptCertificateTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunLuaBridgeScriptCertificateTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunLuaBridgeLegacyScriptCertificateTest(void)
+{
+    try
+    {
+        CLuaScriptEngineLuaBridgeLegacy luaEngine;
+        const char* script =
+            "local cert = CertificateManager()\n"
+            "local certDer = cert:CreateSelfSignedCertificate(\"scripttest-luabridgelegacy.example.com\", \"\", 0, 30, 1, 0, 0)\n"
+            "local info = cert:GetCertificateInfoText(certDer)\n"
+            "local certOk = (#certDer > 0) and (#info > 0)\n"
+            "local cms = CmsService()\n"
+            "local privateKeyPem = cert:GetLastPrivateKeyPem()\n"
+            "local message = \"CMS test data from LuaBridge 2.10\"\n"
+            "local data = {}\n"
+            "for i = 1, #message do data[i] = string.byte(message, i) end\n"
+            "local cmsDer = cms:SignDetached(data, certDer, privateKeyPem, 0)\n"
+            "local verifyResult = cms:VerifyDetached(data, cmsDer, {})\n"
+            "local cmsOk = (verifyResult == 0)\n"
+            "local ts = TimestampService()\n"
+            "local digestMsg = \"0123456789012345678901234567890a\"\n"
+            "local digest = {}\n"
+            "for i = 1, #digestMsg do digest[i] = string.byte(digestMsg, i) end\n"
+            "local requestDer = ts:CreateTimestampRequest(digest, 0)\n"
+            "local tsOk = (#requestDer > 0)\n"
+            "ok = certOk and cmsOk and tsOk\n";
+
+        luaEngine.RunString(script);
+        if (!luaEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunLuaBridgeLegacyScriptCertificateTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaBridgeLegacyScriptCertificateTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunLuaBridgeLegacyScriptCertificateTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunLuaBridgeLegacyScriptCertificateTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunChaiScriptCertificateTest(void)
+{
+    try
+    {
+        CChaiScriptEngine chaiEngine;
+        const char* script =
+            "var cert = CertificateManager();\n"
+            "var certDer = cert.CreateSelfSignedCertificate(\"scripttest-chai.example.com\", \"\", 0, 30, 1, 0, 0);\n"
+            "var info = cert.GetCertificateInfoText(certDer);\n"
+            "var certOk = (certDer.size() > 0) && (info.size() > 0);\n"
+            "var cms = CmsService();\n"
+            "var privateKeyPem = cert.GetLastPrivateKeyPem();\n"
+            "var data = ToBytes(\"CMS test data from ChaiScript\");\n"
+            "var emptyBytes = ToBytes(\"\");\n"
+            "var cmsDer = cms.SignDetached(data, certDer, privateKeyPem, 0);\n"
+            "var verifyResult = cms.VerifyDetached(data, cmsDer, emptyBytes);\n"
+            "var cmsOk = (verifyResult == 0);\n"
+            "var ts = TimestampService();\n"
+            "var digest = ToBytes(\"0123456789012345678901234567890a\");\n"
+            "var requestDer = ts.CreateTimestampRequest(digest, 0);\n"
+            "var tsOk = (requestDer.size() > 0);\n"
+            "global ok = certOk && cmsOk && tsOk;\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptCertificateTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptCertificateTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptCertificateTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptCertificateTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptCertificateTest(void)
+{
+    try
+    {
+        CPythonScriptEngine pythonEngine;
+        const char* script =
+            "cert = CertificateManager()\n"
+            "certDer = cert.CreateSelfSignedCertificate(\"scripttest-python.example.com\", \"\", 0, 30, 1, 0, 0)\n"
+            "info = cert.GetCertificateInfoText(certDer)\n"
+            "certOk = (len(certDer) > 0) and (len(info) > 0)\n"
+            "cms = CmsService()\n"
+            "privateKeyPem = cert.GetLastPrivateKeyPem()\n"
+            "data = ToBytes(\"CMS test data from Python\")\n"
+            "cmsDer = cms.SignDetached(data, certDer, privateKeyPem, 0)\n"
+            "verifyResult = cms.VerifyDetached(data, cmsDer, [])\n"
+            "cmsOk = (verifyResult == 0)\n"
+            "ts = TimestampService()\n"
+            "digest = ToBytes(\"0123456789012345678901234567890a\")\n"
+            "requestDer = ts.CreateTimestampRequest(digest, 0)\n"
+            "tsOk = (len(requestDer) > 0)\n"
+            "ok = certOk and cmsOk and tsOk\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptCertificateTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptCertificateTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptCertificateTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptCertificateTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

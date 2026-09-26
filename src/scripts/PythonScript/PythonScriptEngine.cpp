@@ -104,6 +104,9 @@ namespace py = pybind11;
 #include "../ScriptCryptoApiDll.h"
 #include "../ScriptPgpEngineDll.h"
 #include "../ScriptPgpEngineWrapperDll.h"
+#include "../ScriptCertificateManagerDll.h"
+#include "../ScriptCmsServiceDll.h"
+#include "../ScriptTimestampServiceDll.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -113,10 +116,16 @@ namespace py = pybind11;
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
+#include "../ScriptCertificateManager.h"
+#include "../ScriptCmsService.h"
+#include "../ScriptTimestampService.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#include "Certificates/CertificateManager.h"
+#include "Certificates/CmsService.h"
+#include "Certificates/TimestampService.h"
 #endif
 
 #include <atomic>
@@ -490,6 +499,43 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
             .def("ListSigningKeyIds", &CScriptPgpEngineWrapper::ListSigningKeyIds)
             .def("ListSignatures", &CScriptPgpEngineWrapper::ListSignatures)
             ;
+
+        // CertificateKeyAlgorithm/CertificateDigestAlgorithm/RevocationMode/RevocationNetworkMode/
+        // CertificateTrustResult/RevocationStatus/CmsVerificationResult/TimestampVerificationResult
+        // are passed/returned as plain ints here (see CScriptCertificateManager.h's own header
+        // comment) rather than getting their own py::enum_ -- a deliberate, documented departure
+        // from this file's own usual "every enum gets py::enum_+export_values()" convention, made
+        // for the same disproportionate-registration-cost reasoning as every other engine's
+        // binding for these three classes.
+        py::class_<CScriptCertificateManager>(m, "CertificateManager")
+            .def(py::init<>())
+            .def("GetCertificateInfoText", &CScriptCertificateManager::GetCertificateInfoText)
+            .def("ConvertCertificateDerToPem", &CScriptCertificateManager::ConvertCertificateDerToPem)
+            .def("ConvertCertificatePemToDer", &CScriptCertificateManager::ConvertCertificatePemToDer)
+            .def("CreateSelfSignedCertificate", &CScriptCertificateManager::CreateSelfSignedCertificate)
+            .def("CreateCertificateRequest", &CScriptCertificateManager::CreateCertificateRequest)
+            .def("GetLastPrivateKeyPem", &CScriptCertificateManager::GetLastPrivateKeyPem)
+            .def("IssueCertificateFromRequest", &CScriptCertificateManager::IssueCertificateFromRequest)
+            .def("AddIntermediateCertificateForChainValidation", &CScriptCertificateManager::AddIntermediateCertificateForChainValidation)
+            .def("ClearIntermediateCertificatesForChainValidation", &CScriptCertificateManager::ClearIntermediateCertificatesForChainValidation)
+            .def("ValidateChain", &CScriptCertificateManager::ValidateChain)
+            .def("GetLastRevocationStatus", &CScriptCertificateManager::GetLastRevocationStatus)
+            ;
+
+        py::class_<CScriptCmsService>(m, "CmsService")
+            .def(py::init<>())
+            .def("SignDetached", &CScriptCmsService::SignDetached)
+            .def("VerifyDetached", &CScriptCmsService::VerifyDetached)
+            .def("ExtractSignerCertificate", &CScriptCmsService::ExtractSignerCertificate)
+            ;
+
+        py::class_<CScriptTimestampService>(m, "TimestampService")
+            .def(py::init<>())
+            .def("CreateTimestampRequest", &CScriptTimestampService::CreateTimestampRequest)
+            .def("RequestTimestampFromTsa", &CScriptTimestampService::RequestTimestampFromTsa)
+            .def("VerifyTimestampResponse", &CScriptTimestampService::VerifyTimestampResponse)
+            .def("GetTimestampInfoText", &CScriptTimestampService::GetTimestampInfoText)
+            ;
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -521,6 +567,23 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
         .def("ImportPeerPublicKey", &CScriptPgpEngineWrapperDll::ImportPeerPublicKey)
         .def("EncryptStringArmored", &CScriptPgpEngineWrapperDll::EncryptStringArmored)
         .def("DecryptStringArmored", &CScriptPgpEngineWrapperDll::DecryptStringArmored)
+        ;
+
+    py::class_<CScriptCertificateManagerDll>(m, "CertificateManagerDll")
+        .def("CreateSelfSignedCertificate", &CScriptCertificateManagerDll::CreateSelfSignedCertificate)
+        .def("GetLastPrivateKeyPem", &CScriptCertificateManagerDll::GetLastPrivateKeyPem)
+        .def("GetCertificateInfoText", &CScriptCertificateManagerDll::GetCertificateInfoText)
+        ;
+
+    py::class_<CScriptCmsServiceDll>(m, "CmsServiceDll")
+        .def("SignDetached", &CScriptCmsServiceDll::SignDetached)
+        .def("VerifyDetached", &CScriptCmsServiceDll::VerifyDetached)
+        ;
+
+    py::class_<CScriptTimestampServiceDll>(m, "TimestampServiceDll")
+        .def("CreateTimestampRequest", &CScriptTimestampServiceDll::CreateTimestampRequest)
+        .def("RequestTimestampFromTsa", &CScriptTimestampServiceDll::RequestTimestampFromTsa)
+        .def("GetTimestampInfoText", &CScriptTimestampServiceDll::GetTimestampInfoText)
         ;
 } // this closes the PYBIND11_EMBEDDED_MODULE function body opened at "PYBIND11_EMBEDDED_MODULE(
   // cryptoapi_native, m)\n{" above -- namespace CryptoApiNS itself, opened at the top of this
@@ -699,6 +762,45 @@ void CPythonScriptEngine::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wra
 }
 // -----------------------------------------------------------------------------
 
+void CPythonScriptEngine::SetDllCertificateManager(CScriptCertificateManagerDll* manager)
+{
+    try
+    {
+        py::globals()["certificateManager"] = py::cast(manager, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllCmsService(CScriptCmsServiceDll* service)
+{
+    try
+    {
+        py::globals()["cmsService"] = py::cast(service, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllTimestampService(CScriptTimestampServiceDll* service)
+{
+    try
+    {
+        py::globals()["timestampService"] = py::cast(service, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS
 
 #else // !CRYPTOAPI_PYTHON_AVAILABLE
@@ -707,6 +809,9 @@ void CPythonScriptEngine::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wra
 #include "../ScriptCryptoApiDll.h"
 #include "../ScriptPgpEngineDll.h"
 #include "../ScriptPgpEngineWrapperDll.h"
+#include "../ScriptCertificateManagerDll.h"
+#include "../ScriptCmsServiceDll.h"
+#include "../ScriptTimestampServiceDll.h"
 
 namespace CryptoApiNS
 {
@@ -776,6 +881,24 @@ void CPythonScriptEngine::SetDllPgpEngine(CScriptPgpEngineDll* engine)
 void CPythonScriptEngine::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapper)
 {
     (void)wrapper;
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllCertificateManager(CScriptCertificateManagerDll* manager)
+{
+    (void)manager;
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllCmsService(CScriptCmsServiceDll* service)
+{
+    (void)service;
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllTimestampService(CScriptTimestampServiceDll* service)
+{
+    (void)service;
 }
 // -----------------------------------------------------------------------------
 

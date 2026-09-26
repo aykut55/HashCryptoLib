@@ -51,6 +51,15 @@
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptCmsServiceDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">
       <Filter>src\Scripts\LuaScript</Filter>
     </ClCompile>
@@ -81,6 +90,15 @@
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptCmsServiceDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.h">
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h">

@@ -1,3 +1,5 @@
+#define CRYPTOPP_ENABLE_NAMESPACE_WEAK 1
+
 #include "CryptoPPProvider.h"
 
 #include "cryptopp890/aes.h"
@@ -1177,7 +1179,7 @@ bool CCryptoPPProvider::SelectAlgorithm(const HashAlgorithm algorithm)
         std::unique_ptr<CryptoPP::HashTransformation> hashFunction;
         switch (algorithm)
         {
-            case HASH_MD5:        hashFunction.reset(new CryptoPP::MD5());        break;
+            case HASH_MD5:        hashFunction.reset(new CryptoPP::Weak::MD5());  break;
             case HASH_SHA1:       hashFunction.reset(new CryptoPP::SHA1());       break;
             case HASH_SHA224:     hashFunction.reset(new CryptoPP::SHA224());     break;
             case HASH_SHA256:     hashFunction.reset(new CryptoPP::SHA256());     break;

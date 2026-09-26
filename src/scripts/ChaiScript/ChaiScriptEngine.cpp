@@ -39,6 +39,9 @@
 #include "../ScriptCryptoApiDll.h"
 #include "../ScriptPgpEngineDll.h"
 #include "../ScriptPgpEngineWrapperDll.h"
+#include "../ScriptCertificateManagerDll.h"
+#include "../ScriptCmsServiceDll.h"
+#include "../ScriptTimestampServiceDll.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -48,10 +51,16 @@
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
+#include "../ScriptCertificateManager.h"
+#include "../ScriptCmsService.h"
+#include "../ScriptTimestampService.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#include "Certificates/CertificateManager.h"
+#include "Certificates/CmsService.h"
+#include "Certificates/TimestampService.h"
 #endif
 
 #include <chaiscript/dispatchkit/bootstrap_stl.hpp>
@@ -417,6 +426,39 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapper::ListEncryptionKeyIds), "ListEncryptionKeyIds");
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapper::ListSigningKeyIds), "ListSigningKeyIds");
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapper::ListSignatures), "ListSignatures");
+
+    // CertificateKeyAlgorithm/CertificateDigestAlgorithm/RevocationMode/RevocationNetworkMode/
+    // CertificateTrustResult/RevocationStatus/CmsVerificationResult/TimestampVerificationResult
+    // are passed/returned as plain ints here (see CScriptCertificateManager.h's own header
+    // comment); ChaiScript needs no enum registration of any kind regardless (see this file's own
+    // header comment), so this is purely inherited from the facade layer, not a ChaiScript-specific
+    // simplification.
+    chai_.add(chaiscript::user_type<CScriptCertificateManager>(), "CertificateManager");
+    chai_.add(chaiscript::constructor<CScriptCertificateManager()>(), "CertificateManager");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::GetCertificateInfoText), "GetCertificateInfoText");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::ConvertCertificateDerToPem), "ConvertCertificateDerToPem");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::ConvertCertificatePemToDer), "ConvertCertificatePemToDer");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::CreateSelfSignedCertificate), "CreateSelfSignedCertificate");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::CreateCertificateRequest), "CreateCertificateRequest");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::GetLastPrivateKeyPem), "GetLastPrivateKeyPem");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::IssueCertificateFromRequest), "IssueCertificateFromRequest");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::AddIntermediateCertificateForChainValidation), "AddIntermediateCertificateForChainValidation");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::ClearIntermediateCertificatesForChainValidation), "ClearIntermediateCertificatesForChainValidation");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::ValidateChain), "ValidateChain");
+    chai_.add(chaiscript::fun(&CScriptCertificateManager::GetLastRevocationStatus), "GetLastRevocationStatus");
+
+    chai_.add(chaiscript::user_type<CScriptCmsService>(), "CmsService");
+    chai_.add(chaiscript::constructor<CScriptCmsService()>(), "CmsService");
+    chai_.add(chaiscript::fun(&CScriptCmsService::SignDetached), "SignDetached");
+    chai_.add(chaiscript::fun(&CScriptCmsService::VerifyDetached), "VerifyDetached");
+    chai_.add(chaiscript::fun(&CScriptCmsService::ExtractSignerCertificate), "ExtractSignerCertificate");
+
+    chai_.add(chaiscript::user_type<CScriptTimestampService>(), "TimestampService");
+    chai_.add(chaiscript::constructor<CScriptTimestampService()>(), "TimestampService");
+    chai_.add(chaiscript::fun(&CScriptTimestampService::CreateTimestampRequest), "CreateTimestampRequest");
+    chai_.add(chaiscript::fun(&CScriptTimestampService::RequestTimestampFromTsa), "RequestTimestampFromTsa");
+    chai_.add(chaiscript::fun(&CScriptTimestampService::VerifyTimestampResponse), "VerifyTimestampResponse");
+    chai_.add(chaiscript::fun(&CScriptTimestampService::GetTimestampInfoText), "GetTimestampInfoText");
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -445,6 +487,20 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::ImportPeerPublicKey), "ImportPeerPublicKey");
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::EncryptStringArmored), "EncryptStringArmored");
     chai_.add(chaiscript::fun(&CScriptPgpEngineWrapperDll::DecryptStringArmored), "DecryptStringArmored");
+
+    chai_.add(chaiscript::user_type<CScriptCertificateManagerDll>(), "CertificateManagerDll");
+    chai_.add(chaiscript::fun(&CScriptCertificateManagerDll::CreateSelfSignedCertificate), "CreateSelfSignedCertificate");
+    chai_.add(chaiscript::fun(&CScriptCertificateManagerDll::GetLastPrivateKeyPem), "GetLastPrivateKeyPem");
+    chai_.add(chaiscript::fun(&CScriptCertificateManagerDll::GetCertificateInfoText), "GetCertificateInfoText");
+
+    chai_.add(chaiscript::user_type<CScriptCmsServiceDll>(), "CmsServiceDll");
+    chai_.add(chaiscript::fun(&CScriptCmsServiceDll::SignDetached), "SignDetached");
+    chai_.add(chaiscript::fun(&CScriptCmsServiceDll::VerifyDetached), "VerifyDetached");
+
+    chai_.add(chaiscript::user_type<CScriptTimestampServiceDll>(), "TimestampServiceDll");
+    chai_.add(chaiscript::fun(&CScriptTimestampServiceDll::CreateTimestampRequest), "CreateTimestampRequest");
+    chai_.add(chaiscript::fun(&CScriptTimestampServiceDll::RequestTimestampFromTsa), "RequestTimestampFromTsa");
+    chai_.add(chaiscript::fun(&CScriptTimestampServiceDll::GetTimestampInfoText), "GetTimestampInfoText");
 }
 // -----------------------------------------------------------------------------
 
@@ -479,6 +535,45 @@ void CChaiScriptEngine::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wrapp
     try
     {
         chai_.add_global(chaiscript::var(wrapper), "pgpEngineWrapper");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CChaiScriptEngine::SetDllCertificateManager(CScriptCertificateManagerDll* manager)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(manager), "certificateManager");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CChaiScriptEngine::SetDllCmsService(CScriptCmsServiceDll* service)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(service), "cmsService");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CChaiScriptEngine::SetDllTimestampService(CScriptTimestampServiceDll* service)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(service), "timestampService");
     }
     catch (...)
     {

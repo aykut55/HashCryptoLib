@@ -426,6 +426,8 @@ int runTestsViaLuaScriptEngineSol()
 
     scriptEngineTester.RunLuaScriptProgressCallbackTest();
 
+    scriptEngineTester.RunLuaScriptCertificateTest();
+
     return 0;
 }
 
@@ -454,6 +456,8 @@ int runTestsViaLuaScriptEngineLuaBridge()
     scriptEngineTester.RunLuaBridgeScriptPgpWrapperAvailabilityTest();
 
     scriptEngineTester.RunLuaBridgeScriptProgressCallbackTest();
+
+    scriptEngineTester.RunLuaBridgeScriptCertificateTest();
 
     return 0;
 }
@@ -484,6 +488,8 @@ int runTestsViaLuaScriptEngineLuaBridgeLegacy()
 
     scriptEngineTester.RunLuaBridgeLegacyScriptProgressCallbackTest();
 
+    scriptEngineTester.RunLuaBridgeLegacyScriptCertificateTest();
+
     return 0;
 }
 
@@ -513,6 +519,8 @@ int runTestsViaChaiScriptEngine()
 
     scriptEngineTester.RunChaiScriptProgressCallbackTest();
 
+    scriptEngineTester.RunChaiScriptCertificateTest();
+
     return 0;
 }
 
@@ -541,6 +549,8 @@ int runTestsViaPythonScriptEngine()
     scriptEngineTester.RunPythonScriptPgpWrapperAvailabilityTest();
 
     scriptEngineTester.RunPythonScriptProgressCallbackTest();
+
+    scriptEngineTester.RunPythonScriptCertificateTest();
 
     return 0;
 }

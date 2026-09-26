@@ -3,6 +3,9 @@
 #include "../ScriptCryptoApiDll.h"
 #include "../ScriptPgpEngineDll.h"
 #include "../ScriptPgpEngineWrapperDll.h"
+#include "../ScriptCertificateManagerDll.h"
+#include "../ScriptCmsServiceDll.h"
+#include "../ScriptTimestampServiceDll.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -14,10 +17,16 @@
 #include "../ScriptCryptoApi.h"
 #include "../ScriptPgpEngine.h"
 #include "../ScriptPgpEngineWrapper.h"
+#include "../ScriptCertificateManager.h"
+#include "../ScriptCmsService.h"
+#include "../ScriptTimestampService.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#include "Certificates/CertificateManager.h"
+#include "Certificates/CmsService.h"
+#include "Certificates/TimestampService.h"
 #endif
 
 #include "Definitions/Definitions.h"
@@ -429,6 +438,41 @@ void CLuaScriptEngineSol::registerBindings(void)
         "ListSigningKeyIds", &CScriptPgpEngineWrapper::ListSigningKeyIds,
         "ListSignatures", &CScriptPgpEngineWrapper::ListSignatures
     );
+
+    // CertificateKeyAlgorithm/CertificateDigestAlgorithm/RevocationMode/RevocationNetworkMode/
+    // CertificateTrustResult/RevocationStatus/CmsVerificationResult/TimestampVerificationResult
+    // values are passed/returned as plain ints here (see CScriptCertificateManager.h's own header
+    // comment for why) -- no new_enum registration needed for them to work; scripts pass/compare
+    // literal integers, documented in each method's own header comment.
+    luaState_.new_usertype<CScriptCertificateManager>("CertificateManager",
+        sol::constructors<CScriptCertificateManager()>(),
+        "GetCertificateInfoText", &CScriptCertificateManager::GetCertificateInfoText,
+        "ConvertCertificateDerToPem", &CScriptCertificateManager::ConvertCertificateDerToPem,
+        "ConvertCertificatePemToDer", &CScriptCertificateManager::ConvertCertificatePemToDer,
+        "CreateSelfSignedCertificate", &CScriptCertificateManager::CreateSelfSignedCertificate,
+        "CreateCertificateRequest", &CScriptCertificateManager::CreateCertificateRequest,
+        "GetLastPrivateKeyPem", &CScriptCertificateManager::GetLastPrivateKeyPem,
+        "IssueCertificateFromRequest", &CScriptCertificateManager::IssueCertificateFromRequest,
+        "AddIntermediateCertificateForChainValidation", &CScriptCertificateManager::AddIntermediateCertificateForChainValidation,
+        "ClearIntermediateCertificatesForChainValidation", &CScriptCertificateManager::ClearIntermediateCertificatesForChainValidation,
+        "ValidateChain", &CScriptCertificateManager::ValidateChain,
+        "GetLastRevocationStatus", &CScriptCertificateManager::GetLastRevocationStatus
+    );
+
+    luaState_.new_usertype<CScriptCmsService>("CmsService",
+        sol::constructors<CScriptCmsService()>(),
+        "SignDetached", &CScriptCmsService::SignDetached,
+        "VerifyDetached", &CScriptCmsService::VerifyDetached,
+        "ExtractSignerCertificate", &CScriptCmsService::ExtractSignerCertificate
+    );
+
+    luaState_.new_usertype<CScriptTimestampService>("TimestampService",
+        sol::constructors<CScriptTimestampService()>(),
+        "CreateTimestampRequest", &CScriptTimestampService::CreateTimestampRequest,
+        "RequestTimestampFromTsa", &CScriptTimestampService::RequestTimestampFromTsa,
+        "VerifyTimestampResponse", &CScriptTimestampService::VerifyTimestampResponse,
+        "GetTimestampInfoText", &CScriptTimestampService::GetTimestampInfoText
+    );
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -462,6 +506,26 @@ void CLuaScriptEngineSol::registerBindings(void)
         "ImportPeerPublicKey", &CScriptPgpEngineWrapperDll::ImportPeerPublicKey,
         "EncryptStringArmored", &CScriptPgpEngineWrapperDll::EncryptStringArmored,
         "DecryptStringArmored", &CScriptPgpEngineWrapperDll::DecryptStringArmored
+    );
+
+    luaState_.new_usertype<CScriptCertificateManagerDll>("CertificateManagerDll",
+        sol::no_constructor,
+        "CreateSelfSignedCertificate", &CScriptCertificateManagerDll::CreateSelfSignedCertificate,
+        "GetLastPrivateKeyPem", &CScriptCertificateManagerDll::GetLastPrivateKeyPem,
+        "GetCertificateInfoText", &CScriptCertificateManagerDll::GetCertificateInfoText
+    );
+
+    luaState_.new_usertype<CScriptCmsServiceDll>("CmsServiceDll",
+        sol::no_constructor,
+        "SignDetached", &CScriptCmsServiceDll::SignDetached,
+        "VerifyDetached", &CScriptCmsServiceDll::VerifyDetached
+    );
+
+    luaState_.new_usertype<CScriptTimestampServiceDll>("TimestampServiceDll",
+        sol::no_constructor,
+        "CreateTimestampRequest", &CScriptTimestampServiceDll::CreateTimestampRequest,
+        "RequestTimestampFromTsa", &CScriptTimestampServiceDll::RequestTimestampFromTsa,
+        "GetTimestampInfoText", &CScriptTimestampServiceDll::GetTimestampInfoText
     );
 }
 // -----------------------------------------------------------------------------
@@ -497,6 +561,45 @@ void CLuaScriptEngineSol::SetDllPgpEngineWrapper(CScriptPgpEngineWrapperDll* wra
     try
     {
         luaState_["pgpEngineWrapper"] = wrapper;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllCertificateManager(CScriptCertificateManagerDll* manager)
+{
+    try
+    {
+        luaState_["certificateManager"] = manager;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllCmsService(CScriptCmsServiceDll* service)
+{
+    try
+    {
+        luaState_["cmsService"] = service;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllTimestampService(CScriptTimestampServiceDll* service)
+{
+    try
+    {
+        luaState_["timestampService"] = service;
     }
     catch (...)
     {
