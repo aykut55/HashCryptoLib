@@ -102,6 +102,11 @@
            CCryptoApi-owning facades) and register only the lightweight *Dll ones. -->
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+    <!-- shell32.lib for CommandLineToArgvW (AppRunner CLI harness plan's -action dispatch, real
+         Unicode argv parsing), not linked by default in a bare console app project. -->
+    <Link>
+      <AdditionalDependencies>shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <!-- Lua (3rdParty\scripts\lua547, built by Lua547.vcxproj) and sol2 (3rdParty\scripts\sol330,
        header-only): the Lua scripting engine's binding library. Same dedicated-block precedent
@@ -204,6 +209,8 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\src\DllLoader\CryptoApiDllLoader.h" />
+    <ClInclude Include="..\..\..\src\Cli\CommandLineParser.h" />
+    <ClInclude Include="..\..\..\src\Utils\Utils.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptException.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h" />
@@ -219,6 +226,8 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\DllLoader\CryptoApiDllLoader.cpp" />
+    <ClCompile Include="..\..\..\src\Cli\CommandLineParser.cpp" />
+    <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp" />

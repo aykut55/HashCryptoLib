@@ -19,6 +19,9 @@
     <Filter Include="src\Interfaces">
       <UniqueIdentifier>{2b3c4d5e-6f70-4819-9314-2b3c4d5e6f81}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Cli">
+      <UniqueIdentifier>{2A6B4E0D-1F3C-4A9E-9D7B-5E8C6F1A3B04}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Scripts">
       <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e91}</UniqueIdentifier>
     </Filter>
@@ -35,6 +38,9 @@
   <ItemGroup>
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Cli\CommandLineParser.cpp">
+      <Filter>src\Cli</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp">
       <Filter>src\Scripts</Filter>
@@ -92,6 +98,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\..\src\Cli\CommandLineParser.h">
+      <Filter>src\Cli</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h">
       <Filter>src\Interfaces</Filter>
     </ClInclude>

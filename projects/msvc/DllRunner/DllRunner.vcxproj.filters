@@ -19,6 +19,12 @@
     <Filter Include="src\DllLoader">
       <UniqueIdentifier>{8b2c5b6a-9d3e-4a2f-9b7e-5c1a2d3e4f60}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Cli">
+      <UniqueIdentifier>{2A6B4E0D-1F3C-4A9E-9D7B-5E8C6F1A3B03}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Utils">
+      <UniqueIdentifier>{6F4AB120-A99D-4B03-9157-3CC920F76719}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Scripts">
       <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e71}</UniqueIdentifier>
     </Filter>
@@ -38,6 +44,12 @@
     </ClCompile>
     <ClCompile Include="..\..\..\src\DllLoader\CryptoApiDllLoader.cpp">
       <Filter>src\DllLoader</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Cli\CommandLineParser.cpp">
+      <Filter>src\Cli</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
+      <Filter>src\Utils</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ScriptException.cpp">
       <Filter>src\Scripts</Filter>
@@ -79,6 +91,12 @@
   <ItemGroup>
     <ClInclude Include="..\..\..\src\DllLoader\CryptoApiDllLoader.h">
       <Filter>src\DllLoader</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Cli\CommandLineParser.h">
+      <Filter>src\Cli</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Utils\Utils.h">
+      <Filter>src\Utils</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptException.h">
       <Filter>src\Scripts</Filter>

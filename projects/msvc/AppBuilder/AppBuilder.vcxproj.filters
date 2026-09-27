@@ -19,6 +19,9 @@
     <Filter Include="src\Utils">
       <UniqueIdentifier>{6F4AB120-A99D-4B03-9157-3CC920F76718}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Cli">
+      <UniqueIdentifier>{2A6B4E0D-1F3C-4A9E-9D7B-5E8C6F1A3B02}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Definitions">
       <UniqueIdentifier>{A23B142A-6FC1-4F73-994E-D4DE13151B50}</UniqueIdentifier>
     </Filter>
@@ -71,6 +74,9 @@
     </ClCompile>
     <ClCompile Include="..\..\..\src\Utils\SecureBuffer.cpp">
       <Filter>src\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Cli\CommandLineParser.cpp">
+      <Filter>src\Cli</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp">
       <Filter>src</Filter>
@@ -250,6 +256,9 @@
     </ClInclude>
     <ClInclude Include="..\..\..\src\Utils\SecureBuffer.h">
       <Filter>src\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Cli\CommandLineParser.h">
+      <Filter>src\Cli</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Definitions\Definitions.h">
       <Filter>src\Definitions</Filter>

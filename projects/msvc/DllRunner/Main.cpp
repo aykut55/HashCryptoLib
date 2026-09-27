@@ -32,7 +32,11 @@
 #undef DecryptFile
 #endif
 
+#include <shellapi.h>
+
 #include "DllLoader/CryptoApiDllLoader.h"
+#include "Cli/CommandLineParser.h"
+#include "Utils/Utils.h"
 
 #include "Scripts/ScriptCryptoApiDll.h"
 #include "Scripts/ScriptPgpEngineDll.h"
@@ -45,8 +49,239 @@
 #include "Scripts/LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
 #include "Scripts/PythonScript/PythonScriptEngine.h"
 
+// Real Unicode command-line args (excludes argv[0]), converted to UTF-8 -- same reasoning as
+// AppBuilder/Main.cpp's own identical helper (see the AppRunner CLI harness plan).
+std::vector<std::string> getUtf8CommandLineArgs()
+{
+    std::vector<std::string> result;
+    int argc = 0;
+    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argvW == nullptr)
+    {
+        return result;
+    }
+
+    for (int i = 1; i < argc; ++i)
+    {
+        const int utf8Size = WideCharToMultiByte(CP_UTF8, 0, argvW[i], -1, nullptr, 0, nullptr, nullptr);
+        if (utf8Size <= 0)
+        {
+            continue;
+        }
+        std::vector<char> buffer(static_cast<std::size_t>(utf8Size));
+        WideCharToMultiByte(CP_UTF8, 0, argvW[i], -1, buffer.data(), utf8Size, nullptr, nullptr);
+        result.emplace_back(buffer.data());
+    }
+
+    LocalFree(argvW);
+    return result;
+}
+// -----------------------------------------------------------------------------
+
+// Phase 2 of the AppRunner CLI harness plan: DllRunner gets the IDENTICAL action set AppBuilder's
+// Main.cpp implements (see its own copy of these 4 functions for the calling-convention precedent),
+// but dispatching through the DLL-hosted ICryptoApi*/IPgpEngine* obtained via CCryptoApiDllLoader
+// instead of the in-process CCryptoApi/CPgpEngine classes -- proves the same CLI surface works
+// identically across both consumption modes.
+int runCliActionHash(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ICryptoApi* pCryptoApi)
+{
+    const std::string input = parser.GetString("input", "");
+
+    unsigned char digest[64];
+    int digestSize = 0;
+    const int status = pCryptoApi->ComputeHashString( input.c_str(), static_cast<int>(input.size()),
+                                                      sizeof(digest), digest, &digestSize, nullptr, nullptr);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ComputeHashString failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    char hexOut[160];
+    int hexOutSize = 0;
+    CryptoApiNS::CUtils::HexEncode(digest, digestSize, false, sizeof(hexOut), hexOut, &hexOutSize);
+    std::cout << std::string(hexOut, static_cast<std::size_t>(hexOutSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionEncryptString(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ICryptoApi* pCryptoApi)
+{
+    const std::string password = parser.GetString("password", "");
+    const std::string input = parser.GetString("input", "");
+
+    unsigned char cipherBuffer[8192];
+    int cipherSize = 0;
+    const int status = pCryptoApi->EncryptString( password.c_str(), static_cast<int>(password.size()),
+                                                  input.c_str(), static_cast<int>(input.size()),
+                                                  sizeof(cipherBuffer), cipherBuffer, &cipherSize, nullptr, nullptr);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "EncryptString failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    char base64Out[16384];
+    int base64OutSize = 0;
+    CryptoApiNS::CUtils::Base64Encode(cipherBuffer, cipherSize, sizeof(base64Out), base64Out, &base64OutSize);
+    std::cout << std::string(base64Out, static_cast<std::size_t>(base64OutSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionDecryptString(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ICryptoApi* pCryptoApi)
+{
+    const std::string password = parser.GetString("password", "");
+    const std::string input = parser.GetString("input", "");
+
+    unsigned char cipherBuffer[8192];
+    int cipherSize = 0;
+    if (CryptoApiNS::CUtils::Base64Decode( input.c_str(), static_cast<int>(input.size()),
+                                          sizeof(cipherBuffer), cipherBuffer, &cipherSize) != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "Base64Decode of -input failed" << std::endl;
+        return 1;
+    }
+
+    char plainBuffer[8192];
+    int plainSize = 0;
+    const int status = pCryptoApi->DecryptString( password.c_str(), static_cast<int>(password.size()),
+                                                  cipherBuffer, cipherSize,
+                                                  sizeof(plainBuffer), plainBuffer, &plainSize, nullptr, nullptr);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "DecryptString failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    std::cout << std::string(plainBuffer, static_cast<std::size_t>(plainSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpRoundtrip(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngine* pPgpEngine)
+{
+    const std::string userId = parser.GetString("userid", "CLI Test <cli-test@example.com>");
+    const std::string password = parser.GetString("password", "");
+    const std::string message = parser.GetString("message", "");
+
+    int status = pPgpEngine->GenerateKeyPair( userId.c_str(), static_cast<int>(userId.size()),
+                                              password.c_str(), static_cast<int>(password.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "GenerateKeyPair failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    char pubKeyArmored[16384];
+    int pubKeySize = 0;
+    status = pPgpEngine->ExportPublicKeyArmored(sizeof(pubKeyArmored), pubKeyArmored, &pubKeySize);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ExportPublicKeyArmored failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    status = pPgpEngine->ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(pubKeyArmored), pubKeySize);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ImportPeerPublicKey failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    char encryptedArmored[16384];
+    int encryptedSize = 0;
+    status = pPgpEngine->EncryptStringArmored( message.c_str(), static_cast<int>(message.size()),
+                                               sizeof(encryptedArmored), encryptedArmored, &encryptedSize);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "EncryptStringArmored failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    unsigned char decryptedBuffer[16384];
+    int decryptedSize = 0;
+    status = pPgpEngine->DecryptStringArmored( password.c_str(), static_cast<int>(password.size()),
+                                              encryptedArmored, encryptedSize,
+                                              sizeof(decryptedBuffer), decryptedBuffer, &decryptedSize);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "DecryptStringArmored failed, status=" << status << std::endl;
+        return 1;
+    }
+
+    const std::string decryptedText(reinterpret_cast<const char*>(decryptedBuffer), static_cast<std::size_t>(decryptedSize));
+    std::cout << decryptedText << std::endl;
+    return (decryptedText == message) ? 0 : 5;
+}
+// -----------------------------------------------------------------------------
+
+// Loads CryptoAPI.dll just long enough to dispatch one CLI action, then unloads -- entirely
+// separate from the huge script-engine/test-suite flow below, gated purely on argc (see main()).
+int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CCryptoApiDllLoader dllLoader;
+    dllLoader.SetFileName("CryptoApi.dll");
+    if (!dllLoader.LoadLibrary() || !dllLoader.IsLoaded())
+    {
+        std::cerr << "Failed to load CryptoApi.dll" << std::endl;
+        return 3;
+    }
+
+    const std::string action = parser.GetString("action", "");
+    int result = 2;
+
+    if (action == "version")
+    {
+        CryptoApiNS::ICryptoApi* pCryptoApi = dllLoader.GetCryptoApiObject();
+        if (pCryptoApi != nullptr)
+        {
+            std::cout << pCryptoApi->GetVersion() << std::endl;
+            dllLoader.DestroyCryptoApiObject(pCryptoApi);
+            result = 0;
+        }
+    }
+    else if (action == "hash" || action == "encrypt-string" || action == "decrypt-string")
+    {
+        CryptoApiNS::ICryptoApi* pCryptoApi = dllLoader.GetCryptoApiObject();
+        if (pCryptoApi != nullptr)
+        {
+            if (action == "hash") { result = runCliActionHash(parser, pCryptoApi); }
+            else if (action == "encrypt-string") { result = runCliActionEncryptString(parser, pCryptoApi); }
+            else { result = runCliActionDecryptString(parser, pCryptoApi); }
+            dllLoader.DestroyCryptoApiObject(pCryptoApi);
+        }
+    }
+    else if (action == "pgp-roundtrip")
+    {
+        CryptoApiNS::IPgpEngine* pPgpEngine = dllLoader.GetPgpEngineObject();
+        if (pPgpEngine != nullptr)
+        {
+            result = runCliActionPgpRoundtrip(parser, pPgpEngine);
+            dllLoader.DestroyPgpEngineObject(pPgpEngine);
+        }
+    }
+    else
+    {
+        std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
+                     "decrypt-string, pgp-roundtrip" << std::endl;
+    }
+
+    dllLoader.UnloadLibrary();
+    return result;
+}
+// -----------------------------------------------------------------------------
+
 int main()
 {
+    const std::vector<std::string> cliArgs = getUtf8CommandLineArgs();
+    if (!cliArgs.empty())
+    {
+        CryptoApiNS::CCommandLineParser parser;
+        parser.Parse(cliArgs);
+        return runCliMode(parser);
+    }
+
     std::string dllFileName = "CryptoApi.dll";
 
     CryptoApiNS::CCryptoApiDllLoader* pCryptoApiDllLoader = nullptr;

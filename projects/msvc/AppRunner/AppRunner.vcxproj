@@ -81,6 +81,11 @@
       <ForceSynchronousPDBWrites>true</ForceSynchronousPDBWrites>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
+    <!-- shell32.lib for CommandLineToArgvW (real Unicode argv parsing), not linked by default in
+         a bare console app project. -->
+    <Link>
+      <AdditionalDependencies>shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
