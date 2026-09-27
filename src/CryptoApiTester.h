@@ -420,6 +420,18 @@ public:
     // DecryptStringArmored fails closed (INVALID_DATA) instead of returning corrupted plaintext.
     int RunPgpArmorTest(void) override;
 
+    // Two independent identities (Alice/Bob). Alice EncryptAndSignStringArmored's a message to Bob
+    // (real gpg's own default combined "--sign --encrypt" wire format -- One-Pass-Signature +
+    // Literal Data + Signature, all inside the SAME compressed+encrypted container); Bob
+    // DecryptAndVerifyStringArmored's it and confirms both the recovered plaintext and the embedded
+    // signature's validity. Also confirms: (1) a plain EncryptStringArmored-only message (no
+    // embedded signature) is correctly REJECTED by DecryptAndVerifyStringArmored (INVALID_DATA,
+    // since that method requires a signature to be present), and (2) the existing plain
+    // DecryptStringArmored still succeeds transparently on the COMBINED message (ignoring its
+    // embedded signature) -- proving the parseAndDecryptMessage change that added One-Pass-Signature
+    // tolerance is purely additive and did not regress the pre-existing decrypt path.
+    int RunPgpEncryptAndSignTest(void) override;
+
     // End-to-end scenario test with four independent identities (Bob, Alice, Carol, Dave), each
     // generating its own PGP key pair (GenerateKeyPair) and exporting its public key
     // (ExportPublicKeyArmored). The test document is a real file on disk, written then read back

@@ -14178,6 +14178,138 @@ int CCryptoApiTester::RunPgpArmorTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpEncryptAndSignTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        const char* aliceUserId = "Alice <alice@example.com>";
+        const char* alicePassword = "alice-password-1";
+        const char* bobUserId = "Bob <bob@example.com>";
+        const char* bobPassword = "bob-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        int aliceKeySize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &aliceKeySize);
+        std::vector<char> alicePublicKey(static_cast<std::size_t>(aliceKeySize));
+        int aliceActualKeySize = 0;
+        alice.ExportPublicKeyArmored(aliceKeySize, &alicePublicKey[0], &aliceActualKeySize);
+
+        int bobKeySize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobKeySize);
+        std::vector<char> bobPublicKey(static_cast<std::size_t>(bobKeySize));
+        int bobActualKeySize = 0;
+        bob.ExportPublicKeyArmored(bobKeySize, &bobPublicKey[0], &bobActualKeySize);
+
+        // Alice needs Bob's public key imported to encrypt TO Bob.
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPublicKey[0]), bobActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+        // Bob needs Alice's public key imported to verify Alice's embedded signature.
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePublicKey[0]), aliceActualKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+
+        const char* message = "Encrypt+sign combined message payload.";
+        int armoredSize = 0;
+        status = alice.EncryptAndSignStringArmored( alicePassword, static_cast<int>(std::strlen(alicePassword)),
+                                                    message, static_cast<int>(std::strlen(message)), 0, nullptr, &armoredSize);
+        if (status != BUFFER_TOO_SMALL || armoredSize <= 0)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED EncryptAndSignStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<char> armored(static_cast<std::size_t>(armoredSize));
+        int actualArmoredSize = 0;
+        status = alice.EncryptAndSignStringArmored( alicePassword, static_cast<int>(std::strlen(alicePassword)),
+                                                    message, static_cast<int>(std::strlen(message)), armoredSize, &armored[0], &actualArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED EncryptAndSignStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        int decodedSize = 0;
+        bool isSignatureValid = false;
+        status = bob.DecryptAndVerifyStringArmored( bobPassword, static_cast<int>(std::strlen(bobPassword)),
+                                                    &armored[0], actualArmoredSize, 0, nullptr, &decodedSize, &isSignatureValid);
+        if (status != BUFFER_TOO_SMALL || decodedSize != static_cast<int>(std::strlen(message)))
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED DecryptAndVerifyStringArmored capacity query status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> decoded(static_cast<std::size_t>(decodedSize));
+        int actualDecodedSize = 0;
+        status = bob.DecryptAndVerifyStringArmored( bobPassword, static_cast<int>(std::strlen(bobPassword)),
+                                                    &armored[0], actualArmoredSize, decodedSize, &decoded[0], &actualDecodedSize, &isSignatureValid);
+        if (status != NO_ERROR || std::string(decoded.begin(), decoded.end()) != message || !isSignatureValid)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED DecryptAndVerifyStringArmored status=" << status << " isSignatureValid=" << isSignatureValid << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Negative check: a message encrypted WITHOUT the sign step (plain EncryptStringArmored)
+        // must be rejected by DecryptAndVerifyStringArmored (no embedded signature present).
+        int plainArmoredSize = 0;
+        alice.EncryptStringArmored(message, static_cast<int>(std::strlen(message)), 0, nullptr, &plainArmoredSize);
+        std::vector<char> plainArmored(static_cast<std::size_t>(plainArmoredSize));
+        int actualPlainArmoredSize = 0;
+        alice.EncryptStringArmored(message, static_cast<int>(std::strlen(message)), plainArmoredSize, &plainArmored[0], &actualPlainArmoredSize);
+        int unusedSize = 0;
+        bool unusedValid = false;
+        status = bob.DecryptAndVerifyStringArmored( bobPassword, static_cast<int>(std::strlen(bobPassword)),
+                                                    &plainArmored[0], actualPlainArmoredSize, 0, nullptr, &unusedSize, &unusedValid);
+        if (status != INVALID_DATA)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED plain-encrypted message should have been rejected by DecryptAndVerify, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // DecryptStringArmored (plain, no verify) must still succeed transparently on the COMBINED
+        // sign+encrypt message -- purely additive compatibility, no regression on the old method.
+        int plainDecodedSize = 0;
+        bob.DecryptStringArmored(bobPassword, static_cast<int>(std::strlen(bobPassword)), &armored[0], actualArmoredSize, 0, nullptr, &plainDecodedSize);
+        std::vector<unsigned char> plainDecoded(static_cast<std::size_t>(plainDecodedSize));
+        int actualPlainDecodedSize = 0;
+        status = bob.DecryptStringArmored( bobPassword, static_cast<int>(std::strlen(bobPassword)),
+                                          &armored[0], actualArmoredSize, plainDecodedSize, &plainDecoded[0], &actualPlainDecodedSize);
+        if (status != NO_ERROR || std::string(plainDecoded.begin(), plainDecoded.end()) != message)
+        {
+            std::cout << "RunPgpEncryptAndSignTest: FAILED plain DecryptStringArmored on combined message status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpEncryptAndSignTest: PASSED combined sign+encrypt(" << actualArmoredSize
+                   << " bytes) verified, plain-encrypted-only message correctly rejected by DecryptAndVerify, "
+                      "plain DecryptStringArmored still works on the combined message" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunPgpAliceBobTest(void)
 {
     try

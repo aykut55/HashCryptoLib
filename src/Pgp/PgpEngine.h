@@ -178,6 +178,22 @@ public:
     int EncryptStringArmored( const char* inputString, const int inputStringSize,
                              const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
+    // ============================================================================================
+    // Combined sign+encrypt / decrypt+verify -- real gpg's own default "--sign --encrypt" wire
+    // format (One-Pass-Signature + Literal Data + Signature, all inside the SAME compressed+
+    // encrypted container), NOT the same as calling Encrypt*/Sign* separately (two independent
+    // messages). Requires both GenerateKeyPair() (signing) and ImportPeerPublicKey() (encryption
+    // recipient) to have succeeded first, same combined preconditions as the two methods below.
+    // ============================================================================================
+
+    int EncryptAndSignBuffer( const char* password, const int passwordSize,
+                             const unsigned char* inputBuffer, const int inputBufferSize,
+                             const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
+
+    int EncryptAndSignStringArmored( const char* password, const int passwordSize,
+                                    const char* inputString, const int inputStringSize,
+                                    const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
+
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
     // with. Decompresses ZIP/ZLIB/uncompressed literal bodies (whichever the sender used).
     int DecryptBuffer( const char* password, const int passwordSize,
@@ -188,6 +204,18 @@ public:
     int DecryptStringArmored( const char* password, const int passwordSize,
                             const char* inputString, const int inputStringSize,
                             const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
+
+    // Counterpart to EncryptAndSignBuffer/EncryptAndSignStringArmored above -- decrypts AND
+    // requires/verifies an embedded (one-pass) signature; INVALID_DATA if none is present.
+    int DecryptAndVerifyBuffer( const char* password, const int passwordSize,
+                               const unsigned char* inputBuffer, const int inputBufferSize,
+                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                               bool* isSignatureValid) override;
+
+    int DecryptAndVerifyStringArmored( const char* password, const int passwordSize,
+                                      const char* inputString, const int inputStringSize,
+                                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                                      bool* isSignatureValid) override;
 
     // ============================================================================================
     // Sign (with this instance's own master key) / Verify (against the imported peer's master

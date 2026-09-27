@@ -960,6 +960,14 @@ struct CPgpEngineWrapper::Impl
                       const unsigned char* inputBuffer, const int inputBufferSize,
                       const char* tempSuffix, std::vector<unsigned char>& outPlain);
 
+    // Combined "gpg --sign --encrypt" in ONE invocation (real gpg's own default sign+encrypt wire
+    // format: a One-Pass-Signature packet, then Literal Data, then Signature, all inside the SAME
+    // compressed+encrypted container) -- NOT two separate calls to encryptCommon/signCommon, which
+    // would produce two independent messages instead of gpg's actual combined shape.
+    int encryptAndSignCommon( const unsigned char* inputBuffer, const int inputBufferSize,
+                             const std::vector<std::string>& recipientIds, const bool armor,
+                             const char* password, const int passwordSize, std::vector<unsigned char>& outBytes);
+
     int signCommon( const char* password, const int passwordSize,
                    const unsigned char* inputBuffer, const int inputBufferSize,
                    std::vector<unsigned char>& outSignature);
@@ -972,6 +980,14 @@ struct CPgpEngineWrapper::Impl
                         std::string& outArmored);
 
     int verifyClearSignedCommon(const char* clearSignedString, const int clearSignedStringSize, bool* isValid);
+
+    // Counterpart to encryptAndSignCommon above -- decrypts AND requires/verifies an embedded
+    // (one-pass) signature via "gpg --decrypt --status-fd 1", reading GOODSIG/BADSIG status lines.
+    // Returns INVALID_DATA if the decrypted content carries no signature at all (a plain
+    // encrypted-only message is a structural mismatch for this method -- use decryptCommon instead).
+    int decryptAndVerifyCommon( const char* password, const int passwordSize,
+                               const unsigned char* inputBuffer, const int inputBufferSize,
+                               const char* tempSuffix, std::vector<unsigned char>& outPlain, bool* isSignatureValid);
 
     int importPeerPublicKeyCommon(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize, std::string& newKeyIdOut);
 
@@ -1359,6 +1375,99 @@ int CPgpEngineWrapper::Impl::encryptCommon( const unsigned char* inputBuffer, co
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngineWrapper::Impl::encryptAndSignCommon( const unsigned char* inputBuffer, const int inputBufferSize,
+                                                  const std::vector<std::string>& recipientIds, const bool armor,
+                                                  const char* password, const int passwordSize, std::vector<unsigned char>& outBytes)
+{
+    try
+    {
+        if (!ownKeyGenerated)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (recipientIds.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (password == nullptr || passwordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string inPath = makeTempPath(".in");
+        const std::string outPath = makeTempPath(armor ? ".asc" : ".gpg");
+        if (!writeAllBytesToFile(inPath, inputBuffer, static_cast<std::size_t>(inputBufferSize)))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--trust-model");
+        args.push_back("always");
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        args.push_back("--local-user");
+        args.push_back(ownKeyId);
+        if (!cipherPreferenceOverride.empty())
+        {
+            args.push_back("--personal-cipher-preferences");
+            args.push_back(cipherPreferenceOverride);
+        }
+        for (std::size_t i = 0; i < recipientIds.size(); ++i)
+        {
+            args.push_back("-r");
+            args.push_back(recipientIds[i]);
+        }
+        if (armor)
+        {
+            args.push_back("--armor");
+        }
+        args.push_back("--output");
+        args.push_back(outPath);
+        args.push_back("--sign");
+        args.push_back("--encrypt");
+        args.push_back(inPath);
+
+        std::string stdinData(password, static_cast<std::size_t>(passwordSize));
+        stdinData.push_back('\n');
+
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        std::remove(inPath.c_str());
+        if (!result.started || result.exitCode != 0)
+        {
+            std::remove(outPath.c_str());
+            return UNEXPECTED_ERROR;
+        }
+
+        const bool readOk = readAllBytesFromFile(outPath, outBytes);
+        std::remove(outPath.c_str());
+        if (!readOk)
+        {
+            return FILE_IO_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngineWrapper::Impl::encryptSymmetricCommon( const char* passphrase, const int passphraseSize,
                                                     const unsigned char* inputBuffer, const int inputBufferSize,
                                                     const bool armor, std::vector<unsigned char>& outBytes)
@@ -1539,6 +1648,82 @@ int CPgpEngineWrapper::Impl::decryptCommon( const char* password, const int pass
         {
             return FILE_IO_ERROR;
         }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::decryptAndVerifyCommon( const char* password, const int passwordSize,
+                                                     const unsigned char* inputBuffer, const int inputBufferSize,
+                                                     const char* tempSuffix, std::vector<unsigned char>& outPlain, bool* isSignatureValid)
+{
+    try
+    {
+        if (peerKeyIds.empty() || password == nullptr || passwordSize <= 0 || inputBuffer == nullptr || inputBufferSize <= 0 || isSignatureValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string inPath = makeTempPath(tempSuffix);
+        const std::string outPath = makeTempPath(".out");
+        if (!writeAllBytesToFile(inPath, inputBuffer, static_cast<std::size_t>(inputBufferSize)))
+        {
+            return FILE_IO_ERROR;
+        }
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        args.push_back("--status-fd");
+        args.push_back("1");
+        args.push_back("--output");
+        args.push_back(outPath);
+        args.push_back("--decrypt");
+        args.push_back(inPath);
+
+        std::string stdinData(password, static_cast<std::size_t>(passwordSize));
+        stdinData.push_back('\n');
+
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        std::remove(inPath.c_str());
+        if (!result.started || result.exitCode != 0)
+        {
+            std::remove(outPath.c_str());
+            return INVALID_DATA;
+        }
+
+        const bool readOk = readAllBytesFromFile(outPath, outPlain);
+        std::remove(outPath.c_str());
+        if (!readOk)
+        {
+            return FILE_IO_ERROR;
+        }
+
+        // "[GNUPG:] GOODSIG"/"[GNUPG:] BADSIG" status lines (captured on stdout via --status-fd 1
+        // above) only appear when the decrypted content actually carried an embedded (one-pass)
+        // signature -- their absence means this was a plain encrypted-only message, a structural
+        // mismatch for this "and verify" method (use decryptCommon/DecryptBuffer instead).
+        const bool sawGoodSig = result.output.find("[GNUPG:] GOODSIG") != std::string::npos;
+        const bool sawBadSig = result.output.find("[GNUPG:] BADSIG") != std::string::npos;
+        if (!sawGoodSig && !sawBadSig)
+        {
+            return INVALID_DATA;
+        }
+        *isSignatureValid = sawGoodSig && !sawBadSig;
         return NO_ERROR;
     }
     catch (...)
@@ -3073,6 +3258,87 @@ int CPgpEngineWrapper::EncryptStringArmoredMultiRecipient( const char* inputStri
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngineWrapper::EncryptAndSignBuffer( const char* password, const int passwordSize,
+                                            const unsigned char* inputBuffer, const int inputBufferSize,
+                                            const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (impl_->peerKeyIds.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<std::string> recipients(1, impl_->peerKeyIds.back());
+        std::vector<unsigned char> cipherBytes;
+        const int status = impl_->encryptAndSignCommon(inputBuffer, inputBufferSize, recipients, false, password, passwordSize, cipherBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(cipherBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(cipherBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!cipherBytes.empty())
+        {
+            std::memcpy(outputBuffer, cipherBytes.data(), cipherBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(cipherBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::EncryptAndSignStringArmored( const char* password, const int passwordSize,
+                                                   const char* inputString, const int inputStringSize,
+                                                   const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (impl_->peerKeyIds.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<std::string> recipients(1, impl_->peerKeyIds.back());
+        std::vector<unsigned char> armoredBytes;
+        const int status = impl_->encryptAndSignCommon( reinterpret_cast<const unsigned char*>(inputString), inputStringSize,
+                                                        recipients, true, password, passwordSize, armoredBytes);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armoredBytes.size()))
+        {
+            *outputBufferSize = static_cast<int>(armoredBytes.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!armoredBytes.empty())
+        {
+            std::memcpy(outputBuffer, armoredBytes.data(), armoredBytes.size());
+        }
+        *outputBufferSize = static_cast<int>(armoredBytes.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngineWrapper::DecryptBuffer( const char* password, const int passwordSize,
                                      const unsigned char* inputBuffer, const int inputBufferSize,
                                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
@@ -3120,6 +3386,80 @@ int CPgpEngineWrapper::DecryptStringArmored( const char* password, const int pas
         }
         std::vector<unsigned char> plaintext;
         const int status = impl_->decryptCommon(password, passwordSize, reinterpret_cast<const unsigned char*>(inputString), inputStringSize, ".asc", plaintext);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(plaintext.size()))
+        {
+            *outputBufferSize = static_cast<int>(plaintext.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!plaintext.empty())
+        {
+            std::memcpy(outputBuffer, plaintext.data(), plaintext.size());
+        }
+        *outputBufferSize = static_cast<int>(plaintext.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::DecryptAndVerifyBuffer( const char* password, const int passwordSize,
+                                              const unsigned char* inputBuffer, const int inputBufferSize,
+                                              const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                                              bool* isSignatureValid)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr || isSignatureValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<unsigned char> plaintext;
+        const int status = impl_->decryptAndVerifyCommon(password, passwordSize, inputBuffer, inputBufferSize, ".gpg", plaintext, isSignatureValid);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(plaintext.size()))
+        {
+            *outputBufferSize = static_cast<int>(plaintext.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!plaintext.empty())
+        {
+            std::memcpy(outputBuffer, plaintext.data(), plaintext.size());
+        }
+        *outputBufferSize = static_cast<int>(plaintext.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::DecryptAndVerifyStringArmored( const char* password, const int passwordSize,
+                                                      const char* inputString, const int inputStringSize,
+                                                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                                                      bool* isSignatureValid)
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr || isSignatureValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        std::vector<unsigned char> plaintext;
+        const int status = impl_->decryptAndVerifyCommon( password, passwordSize,
+                                                          reinterpret_cast<const unsigned char*>(inputString), inputStringSize,
+                                                          ".asc", plaintext, isSignatureValid);
         if (status != NO_ERROR)
         {
             return status;

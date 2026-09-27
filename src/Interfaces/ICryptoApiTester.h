@@ -220,6 +220,11 @@ public:
 
     virtual int RunPgpArmorTest(void) = 0;
 
+    // Combined sign+encrypt/decrypt+verify (EncryptAndSignStringArmored/DecryptAndVerifyStringArmored)
+    // -- real gpg's own default "--sign --encrypt" wire format, NOT the same as RunPgpSignVerifyTest
+    // + RunPgpEncryptDecryptTest run separately.
+    virtual int RunPgpEncryptAndSignTest(void) = 0;
+
     virtual int RunPgpAliceBobTest(void) = 0;
 
     virtual int RunPgpFileEncryptDecryptTest(void) = 0;

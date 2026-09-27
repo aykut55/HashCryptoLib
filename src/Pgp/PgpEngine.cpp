@@ -1944,6 +1944,37 @@ bool verifyEd25519SignaturePacket(const unsigned char publicKey[32], const std::
 }
 // -----------------------------------------------------------------------------
 
+// RFC 4880 5.4 One-Pass Signature Packet (tag 4) -- announces, BEFORE the Literal Data packet that
+// follows it, that a Signature packet of this shape will come AFTER that data (so a streaming
+// verifier can start hashing without buffering the whole message first). Body layout: version(1)=3,
+// signatureType(1), hashAlgorithm(1), publicKeyAlgorithm(1), keyId(8), isLast(1) -- isLast=1 for the
+// (only) signer in a single-signer message, matching real gpg's own "last=1" output for the same
+// case (confirmed via `gpg --list-packets` against a real combined sign+encrypt message while
+// building this). hashAlgorithm/publicKeyAlgorithm here MUST match what buildSignaturePacket/
+// buildEd25519SignaturePacket actually used for the Signature packet that follows (8/SHA-256 for
+// RSA, 10/SHA-512 for EdDSA, per those functions) -- a mismatch would make real gpg reject the
+// message even though our own parser doesn't care.
+std::vector<unsigned char> buildOnePassSignaturePacket( const unsigned char signatureType, const unsigned char hashAlgorithm,
+                                                       const unsigned char publicKeyAlgorithm, const unsigned char keyId[8], const bool isLast)
+{
+    try
+    {
+        std::vector<unsigned char> body;
+        body.push_back(3);
+        body.push_back(signatureType);
+        body.push_back(hashAlgorithm);
+        body.push_back(publicKeyAlgorithm);
+        body.insert(body.end(), keyId, keyId + 8);
+        body.push_back(isLast ? 1 : 0);
+        return writePacket(PGP_TAG_ONE_PASS_SIG, body);
+    }
+    catch (...)
+    {
+        return std::vector<unsigned char>();
+    }
+}
+// -----------------------------------------------------------------------------
+
 // ================================================================================================
 // RFC 4880 section 7 clear-sign canonicalization: trailing whitespace (space/tab) and any line-
 // ending CR are stripped before hashing/dash-escaping; every line (including the last) is hashed
@@ -2179,6 +2210,136 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
 }
 // -----------------------------------------------------------------------------
 
+// Sibling of buildEncryptedMessageMultiRecipient above, producing real gpg's own default combined
+// "--sign --encrypt" wire format: instead of compressing just the Literal Data packet, this
+// compresses a One-Pass-Signature packet, then the Literal Data packet, then a Signature packet
+// (in that order) -- the signature ends up INSIDE the same compressed+encrypted container as the
+// data, exactly matching a real `gpg --list-packets` capture of a real gpg sign+encrypt message
+// (PKESK -> [SEIP] -> Compressed -> One-Pass-Sig -> Literal Data -> Signature). Does NOT replace
+// buildEncryptedMessageMultiRecipient -- that function and everything built on it (EncryptBuffer/
+// EncryptStringArmored) is unchanged; this is purely an additional code path.
+//
+// signingKeyAlgorithm selects which of rsaSigningKey/ed25519SigningKey is actually used (the other
+// is ignored) -- same dual-parameter convention buildSignaturePacket/buildEd25519SignaturePacket's
+// callers already use elsewhere in this file (e.g. GenerateKeyPair's own RSA-vs-EdDSA branch).
+bool buildEncryptedSignedMessageMultiRecipient( const std::vector<PgpEncryptionRecipient>& recipients,
+                                                const PgpKeyAlgorithm signingKeyAlgorithm,
+                                                const CryptoPP::RSA::PrivateKey& rsaSigningKey,
+                                                const unsigned char ed25519SigningKey[32],
+                                                const unsigned char signingKeyId[8],
+                                                const unsigned char* plaintext, const std::size_t plaintextSize,
+                                                std::vector<unsigned char>& out)
+{
+    try
+    {
+        if (recipients.empty())
+        {
+            return false;
+        }
+        CryptoPP::AutoSeededRandomPool rng;
+
+        const std::vector<unsigned char> documentData(plaintext, plaintext + plaintextSize);
+
+        const unsigned char sigHashAlgorithm = (signingKeyAlgorithm == PGP_KEY_ALGORITHM_RSA) ? 8 : 10;
+        const unsigned char sigPubkeyAlgorithm = (signingKeyAlgorithm == PGP_KEY_ALGORITHM_RSA) ? 1 : PGP_ALGO_EDDSA;
+        const std::vector<unsigned char> onePassSigPacket =
+            buildOnePassSignaturePacket(0x00, sigHashAlgorithm, sigPubkeyAlgorithm, signingKeyId, true);
+        if (onePassSigPacket.empty())
+        {
+            return false;
+        }
+
+        std::vector<unsigned char> literalBody;
+        literalBody.push_back('b');
+        literalBody.push_back(0);
+        appendBigEndian32(literalBody, 0);
+        if (plaintextSize > 0)
+        {
+            literalBody.insert(literalBody.end(), plaintext, plaintext + plaintextSize);
+        }
+        const std::vector<unsigned char> literalPacket = writePacket(PGP_TAG_LITERAL_DATA, literalBody);
+
+        const std::vector<unsigned char> sigPacket = (signingKeyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            buildSignaturePacket(rsaSigningKey, 0x00, documentData, std::vector<unsigned char>(), signingKeyId) :
+            buildEd25519SignaturePacket(ed25519SigningKey, 0x00, documentData, std::vector<unsigned char>(), signingKeyId);
+        if (sigPacket.empty())
+        {
+            return false;
+        }
+
+        std::vector<unsigned char> innerContent;
+        appendAll(innerContent, onePassSigPacket);
+        appendAll(innerContent, literalPacket);
+        appendAll(innerContent, sigPacket);
+
+        std::string deflated;
+        {
+            CryptoPP::Deflator deflator(new CryptoPP::StringSink(deflated));
+            deflator.Put(innerContent.data(), innerContent.size());
+            deflator.MessageEnd();
+        }
+        std::vector<unsigned char> compressedBody;
+        compressedBody.push_back(1);
+        compressedBody.insert(compressedBody.end(), deflated.begin(), deflated.end());
+        const std::vector<unsigned char> compressedPacket = writePacket(PGP_TAG_COMPRESSED_DATA, compressedBody);
+
+        unsigned char sessionKey[32];
+        rng.GenerateBlock(sessionKey, 32);
+
+        unsigned char prefix[18];
+        rng.GenerateBlock(prefix, 16);
+        prefix[16] = prefix[14];
+        prefix[17] = prefix[15];
+
+        std::vector<unsigned char> plainForCfb;
+        plainForCfb.insert(plainForCfb.end(), prefix, prefix + 18);
+        appendAll(plainForCfb, compressedPacket);
+
+        unsigned char mdcHash[20];
+        {
+            std::vector<unsigned char> mdcPreimage = plainForCfb;
+            mdcPreimage.push_back(0xD3);
+            mdcPreimage.push_back(0x14);
+            CryptoPP::SHA1().CalculateDigest(mdcHash, mdcPreimage.data(), mdcPreimage.size());
+        }
+        plainForCfb.push_back(0xD3);
+        plainForCfb.push_back(0x14);
+        plainForCfb.insert(plainForCfb.end(), mdcHash, mdcHash + 20);
+
+        std::vector<unsigned char> cfbCiphertext(plainForCfb.size());
+        {
+            unsigned char zeroIv[16];
+            std::memset(zeroIv, 0, 16);
+            CryptoPP::CFB_Mode<CryptoPP::AES>::Encryption enc;
+            enc.SetKeyWithIV(sessionKey, 32, zeroIv, 16);
+            enc.ProcessData(cfbCiphertext.data(), plainForCfb.data(), plainForCfb.size());
+        }
+
+        std::vector<unsigned char> seipBody;
+        seipBody.push_back(1);
+        appendAll(seipBody, cfbCiphertext);
+        const std::vector<unsigned char> seipPacket = writePacket(PGP_TAG_SEIP, seipBody);
+
+        out.clear();
+        for (std::size_t i = 0; i < recipients.size(); ++i)
+        {
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[i], sessionKey, 32);
+            if (pkeskPacket.empty())
+            {
+                return false;
+            }
+            appendAll(out, pkeskPacket);
+        }
+        appendAll(out, seipPacket);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 // Forward declaration -- defined much further below (alongside the rest of the hand-written BZip2
 // decoder); parseAndDecryptMessage's buffer-path Compressed Data dispatch needs it here.
 bool bzip2DecompressBuffer(const std::vector<unsigned char>& input, std::vector<unsigned char>& output);
@@ -2189,7 +2350,17 @@ bool bzip2DecompressBuffer(const std::vector<unsigned char>& input, std::vector<
 // keeps scanning to the start of the following SEIP packet regardless of which one matched -- a
 // real multi-recipient message may carry PKESKs for OTHER recipients before or after ours, all of
 // which must be skipped, not just the first.
-bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::RSA::PrivateKey& ownRsaSubkey, const unsigned char ownX25519PrivateKey[32], const unsigned char ownSubkeyFingerprint[20], const unsigned char ownSubkeyKeyId[8], const std::vector<unsigned char>& inputMessage, std::vector<unsigned char>& outPlaintext)
+// outSignaturePacket == nullptr (every pre-existing caller): a leading One-Pass-Signature packet
+// (real gpg's own default combined "--sign --encrypt" shape, or our own
+// buildEncryptedSignedMessageMultiRecipient output) is silently skipped, and any Signature packet
+// after the Literal Data is simply ignored -- DecryptBuffer/DecryptStringArmored keep working on
+// combined messages exactly as they always did on plain ones, purely additive compatibility.
+// outSignaturePacket != nullptr (DecryptAndVerifyBuffer/DecryptAndVerifyStringArmored only):
+// additionally REQUIRES a Signature packet to immediately follow the Literal Data and captures its
+// full bytes (header+body, ready for verifySignaturePacket/verifyEd25519SignaturePacket) -- returns
+// false if none is present, since a plain encrypted-only message is a structural mismatch for
+// those two methods.
+bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::RSA::PrivateKey& ownRsaSubkey, const unsigned char ownX25519PrivateKey[32], const unsigned char ownSubkeyFingerprint[20], const unsigned char ownSubkeyKeyId[8], const std::vector<unsigned char>& inputMessage, std::vector<unsigned char>& outPlaintext, std::vector<unsigned char>* outSignaturePacket = nullptr)
 {
     try
     {
@@ -2461,12 +2632,37 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
             std::size_t lp = 0;
             unsigned char lt = 0;
             std::size_t ll = 0;
-            if (!readPacketHeader(decompressedPacket, lp, lt, ll) || lt != PGP_TAG_LITERAL_DATA || lp + ll > decompressedPacket.size())
+            if (!readPacketHeader(decompressedPacket, lp, lt, ll))
+            {
+                return false;
+            }
+            if (lt == PGP_TAG_ONE_PASS_SIG)
+            {
+                lp = lp + ll;
+                if (!readPacketHeader(decompressedPacket, lp, lt, ll))
+                {
+                    return false;
+                }
+            }
+            if (lt != PGP_TAG_LITERAL_DATA || lp + ll > decompressedPacket.size())
             {
                 return false;
             }
             literalBody = &decompressedPacket[lp];
             literalBodyLength = ll;
+
+            if (outSignaturePacket != nullptr)
+            {
+                const std::size_t sigPacketStart = lp + ll;
+                std::size_t sigPos = sigPacketStart;
+                unsigned char sigTag = 0;
+                std::size_t sigLen = 0;
+                if (!readPacketHeader(decompressedPacket, sigPos, sigTag, sigLen) || sigTag != PGP_TAG_SIGNATURE || sigPos + sigLen > decompressedPacket.size())
+                {
+                    return false;
+                }
+                outSignaturePacket->assign(decompressedPacket.begin() + sigPacketStart, decompressedPacket.begin() + sigPos + sigLen);
+            }
         }
         else if (innerTag == PGP_TAG_LITERAL_DATA)
         {
@@ -6126,6 +6322,134 @@ int CPgpEngine::EncryptStringArmored(const char* inputString, const int inputStr
 }
 // -----------------------------------------------------------------------------
 
+// Combined sign+encrypt -- real gpg's own default "--sign --encrypt" wire format (One-Pass-
+// Signature + Literal Data + Signature, all inside the SAME compressed+encrypted container), NOT
+// the same as calling EncryptBuffer/SignBuffer separately (which would produce two independent
+// messages). Requires both this instance's own identity (for signing, same precondition SignBuffer
+// has) AND an imported peer key (for encryption, same precondition EncryptBuffer has).
+int CPgpEngine::EncryptAndSignBuffer(const char* password, const int passwordSize, const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || !impl_->peerKeyImported || password == nullptr || passwordSize <= 0 ||
+            outputBufferSize == nullptr || inputBufferSize < 0 || (inputBufferSize > 0 && inputBuffer == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::vector<PgpEncryptionRecipient> recipients;
+        {
+            PgpEncryptionRecipient primary;
+            primary.algorithm = impl_->peerSubkeyAlgorithm;
+            if (impl_->peerSubkeyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                primary.rsaPublicKey = impl_->peerSubkeyPublicKey;
+                std::memcpy(primary.rsaKeyId, impl_->peerSubkeyKeyId, 8);
+            }
+            else
+            {
+                std::memcpy(primary.x25519PublicKey, impl_->peerX25519PublicKey, 32);
+                std::memcpy(primary.x25519KeyId, impl_->peerSubkeyKeyId, 8);
+                std::memcpy(primary.x25519Fingerprint, impl_->peerSubkeyFingerprint, 20);
+            }
+            recipients.push_back(primary);
+        }
+        for (std::size_t i = 0; i < impl_->additionalRecipients.size(); ++i)
+        {
+            recipients.push_back(impl_->additionalRecipients[i]);
+        }
+
+        std::vector<unsigned char> message;
+        if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey,
+                                                        impl_->ownMasterKeyId, inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // Same independent-random-build capacity-query caveat as EncryptBuffer above.
+        const std::size_t capacityMargin = recipients.size() * 2;
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(message.size()))
+        {
+            *outputBufferSize = static_cast<int>(message.size() + (outputBuffer == nullptr ? capacityMargin : 0));
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, message.data(), message.size());
+        *outputBufferSize = static_cast<int>(message.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::EncryptAndSignStringArmored(const char* password, const int passwordSize, const char* inputString, const int inputStringSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || !impl_->peerKeyImported || password == nullptr || passwordSize <= 0 ||
+            outputBufferSize == nullptr || inputStringSize < 0 || (inputStringSize > 0 && inputString == nullptr))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        std::vector<PgpEncryptionRecipient> recipients;
+        {
+            PgpEncryptionRecipient primary;
+            primary.algorithm = impl_->peerSubkeyAlgorithm;
+            if (impl_->peerSubkeyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                primary.rsaPublicKey = impl_->peerSubkeyPublicKey;
+                std::memcpy(primary.rsaKeyId, impl_->peerSubkeyKeyId, 8);
+            }
+            else
+            {
+                std::memcpy(primary.x25519PublicKey, impl_->peerX25519PublicKey, 32);
+                std::memcpy(primary.x25519KeyId, impl_->peerSubkeyKeyId, 8);
+                std::memcpy(primary.x25519Fingerprint, impl_->peerSubkeyFingerprint, 20);
+            }
+            recipients.push_back(primary);
+        }
+        for (std::size_t i = 0; i < impl_->additionalRecipients.size(); ++i)
+        {
+            recipients.push_back(impl_->additionalRecipients[i]);
+        }
+
+        const unsigned char* inputBytes = reinterpret_cast<const unsigned char*>(inputString);
+        std::vector<unsigned char> message;
+        if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey,
+                                                        impl_->ownMasterKeyId, inputBytes, static_cast<std::size_t>(inputStringSize), message))
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string armored = armorEncode("PGP MESSAGE", message);
+        const std::size_t capacityMargin = recipients.size() * 4;
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armored.size()))
+        {
+            *outputBufferSize = static_cast<int>(armored.size() + (outputBuffer == nullptr ? capacityMargin : 0));
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, armored.data(), armored.size());
+        *outputBufferSize = static_cast<int>(armored.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngine::DecryptBuffer(const char* password, const int passwordSize, const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
 {
     try
@@ -6202,6 +6526,120 @@ int CPgpEngine::DecryptStringArmored(const char* password, const int passwordSiz
             std::memcpy(outputBuffer, plaintext.data(), plaintext.size());
         }
         *outputBufferSize = static_cast<int>(plaintext.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Counterpart to EncryptAndSignBuffer -- decrypts AND requires/verifies the embedded (one-pass)
+// signature against the imported peer's master key. INVALID_DATA if the decrypted content carries
+// no signature at all (use DecryptBuffer for a plain encrypted-only message instead).
+int CPgpEngine::DecryptAndVerifyBuffer(const char* password, const int passwordSize, const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize, bool* isSignatureValid)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || !impl_->peerKeyImported || password == nullptr || passwordSize <= 0 ||
+            inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr || isSignatureValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::vector<unsigned char> message(inputBuffer, inputBuffer + inputBufferSize);
+        std::vector<unsigned char> plaintext;
+        std::vector<unsigned char> sigPacketBytes;
+        if (!parseAndDecryptMessage( impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint,
+                                    impl_->ownSubkeyKeyId, message, plaintext, &sigPacketBytes))
+        {
+            return INVALID_DATA;
+        }
+
+        bool verified = false;
+        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(impl_->peerMasterPublicKey, plaintext, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, plaintext, sigPacketBytes, &verified);
+        if (!technicalOk)
+        {
+            return INVALID_DATA;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(plaintext.size()))
+        {
+            *outputBufferSize = static_cast<int>(plaintext.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!plaintext.empty())
+        {
+            std::memcpy(outputBuffer, plaintext.data(), plaintext.size());
+        }
+        *outputBufferSize = static_cast<int>(plaintext.size());
+        *isSignatureValid = verified;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::DecryptAndVerifyStringArmored(const char* password, const int passwordSize, const char* inputString, const int inputStringSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize, bool* isSignatureValid)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || !impl_->peerKeyImported || password == nullptr || passwordSize <= 0 ||
+            inputString == nullptr || inputStringSize <= 0 || outputBufferSize == nullptr || isSignatureValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::string armored(inputString, static_cast<std::size_t>(inputStringSize));
+        std::string blockType;
+        std::vector<unsigned char> message;
+        if (!armorDecode(armored, blockType, message))
+        {
+            return INVALID_DATA;
+        }
+
+        std::vector<unsigned char> plaintext;
+        std::vector<unsigned char> sigPacketBytes;
+        if (!parseAndDecryptMessage( impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint,
+                                    impl_->ownSubkeyKeyId, message, plaintext, &sigPacketBytes))
+        {
+            return INVALID_DATA;
+        }
+
+        bool verified = false;
+        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(impl_->peerMasterPublicKey, plaintext, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, plaintext, sigPacketBytes, &verified);
+        if (!technicalOk)
+        {
+            return INVALID_DATA;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(plaintext.size()))
+        {
+            *outputBufferSize = static_cast<int>(plaintext.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!plaintext.empty())
+        {
+            std::memcpy(outputBuffer, plaintext.data(), plaintext.size());
+        }
+        *outputBufferSize = static_cast<int>(plaintext.size());
+        *isSignatureValid = verified;
         return NO_ERROR;
     }
     catch (...)

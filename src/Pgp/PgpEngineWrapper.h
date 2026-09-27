@@ -360,6 +360,32 @@ public:
                             const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
+    // Combined sign+encrypt / decrypt+verify -- delegates to a SINGLE "gpg --sign --encrypt" /
+    // "gpg --decrypt --status-fd 1" invocation each, producing/consuming real gpg's own default
+    // sign+encrypt wire format (signature embedded INSIDE the encrypted+compressed layer), as
+    // opposed to calling Encrypt*/Sign* separately (two independent messages). See
+    // IPgpEngineWrapper.h's own doc comments for the exact preconditions/semantics.
+    // ============================================================================================
+
+    int EncryptAndSignBuffer( const char* password, const int passwordSize,
+                             const unsigned char* inputBuffer, const int inputBufferSize,
+                             const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) override;
+
+    int EncryptAndSignStringArmored( const char* password, const int passwordSize,
+                                    const char* inputString, const int inputStringSize,
+                                    const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
+
+    int DecryptAndVerifyBuffer( const char* password, const int passwordSize,
+                               const unsigned char* inputBuffer, const int inputBufferSize,
+                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                               bool* isSignatureValid) override;
+
+    int DecryptAndVerifyStringArmored( const char* password, const int passwordSize,
+                                      const char* inputString, const int inputStringSize,
+                                      const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                                      bool* isSignatureValid) override;
+
+    // ============================================================================================
     // Sign (with this instance's own key) / Verify (against an imported peer's key) -- delegates to
     // "gpg --detach-sign" / "gpg --verify" through temporary files.
     // ============================================================================================

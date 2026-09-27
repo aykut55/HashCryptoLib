@@ -400,6 +400,49 @@ int runCliActionPgpEncrypt(const CryptoApiNS::CCommandLineParser& parser, Crypto
 }
 // -----------------------------------------------------------------------------
 
+int runCliActionPgpSignEncrypt(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
+{
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, pWrapper, keyHome))
+    {
+        return 6;
+    }
+    if (pWrapper->LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    char armoredPub[16384];
+    int armoredPubSize = 0;
+    if (pWrapper->ExportPublicKeyArmored(sizeof(armoredPub), armoredPub, &armoredPubSize) != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ExportPublicKeyArmored failed" << std::endl;
+        return 1;
+    }
+    if (pWrapper->ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(armoredPub), armoredPubSize) != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ImportPeerPublicKey(self) failed" << std::endl;
+        return 1;
+    }
+
+    const std::string password = parser.GetString("password", "");
+    const std::string input = parser.GetString("input", "");
+    char encrypted[16384];
+    int encryptedSize = 0;
+    const int status = pWrapper->EncryptAndSignStringArmored( password.c_str(), static_cast<int>(password.size()),
+                                                              input.c_str(), static_cast<int>(input.size()),
+                                                              sizeof(encrypted), encrypted, &encryptedSize);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "EncryptAndSignStringArmored failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << std::string(encrypted, static_cast<std::size_t>(encryptedSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
 int runCliActionPgpDecrypt(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
 {
     std::string keyHome;
@@ -427,6 +470,51 @@ int runCliActionPgpDecrypt(const CryptoApiNS::CCommandLineParser& parser, Crypto
     }
     std::cout << std::string(reinterpret_cast<const char*>(plainBuffer), static_cast<std::size_t>(plainSize)) << std::endl;
     return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpDecryptVerify(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
+{
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, pWrapper, keyHome))
+    {
+        return 6;
+    }
+    if (pWrapper->LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    char armoredPub[16384];
+    int armoredPubSize = 0;
+    if (pWrapper->ExportPublicKeyArmored(sizeof(armoredPub), armoredPub, &armoredPubSize) != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ExportPublicKeyArmored failed" << std::endl;
+        return 1;
+    }
+    if (pWrapper->ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(armoredPub), armoredPubSize) != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ImportPeerPublicKey(self) failed" << std::endl;
+        return 1;
+    }
+
+    const std::string password = parser.GetString("password", "");
+    const std::string input = parser.GetString("input", "");
+    unsigned char plainBuffer[16384];
+    int plainSize = 0;
+    bool isSignatureValid = false;
+    const int status = pWrapper->DecryptAndVerifyStringArmored( password.c_str(), static_cast<int>(password.size()),
+                                                                input.c_str(), static_cast<int>(input.size()),
+                                                                sizeof(plainBuffer), plainBuffer, &plainSize, &isSignatureValid);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "DecryptAndVerifyStringArmored failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << std::string(reinterpret_cast<const char*>(plainBuffer), static_cast<std::size_t>(plainSize)) << std::endl;
+    std::cerr << "signature: " << (isSignatureValid ? "VALID" : "INVALID") << std::endl;
+    return isSignatureValid ? 0 : 7;
 }
 // -----------------------------------------------------------------------------
 
@@ -535,6 +623,8 @@ int runCliActionListActions(void)
         "  pgp-decrypt             [-keyhome DIR] -password X -input ARMORED\n"
         "  pgp-sign                [-keyhome DIR] -password X -input TEXT\n"
         "  pgp-verify              [-keyhome DIR] -input ARMORED\n"
+        "  pgp-sign-encrypt        [-keyhome DIR] [-cipher NAME] -password X -input TEXT   (tek gpg cagrisinda birlesik sign+encrypt)\n"
+        "  pgp-decrypt-verify      [-keyhome DIR] -password X -input ARMORED                (gomulu imzayi ister/dogrular; imzasizsa hata)\n"
         "\n"
         "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n"
         "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n";
@@ -598,7 +688,8 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
     }
     else if (action == "pgp-check" || action == "pgp-gen-key" || action == "pgp-list-keys" ||
              action == "pgp-export-key" || action == "pgp-fingerprint" || action == "pgp-encrypt" ||
-             action == "pgp-decrypt" || action == "pgp-sign" || action == "pgp-verify")
+             action == "pgp-decrypt" || action == "pgp-sign" || action == "pgp-verify" ||
+             action == "pgp-sign-encrypt" || action == "pgp-decrypt-verify")
     {
         CryptoApiNS::IPgpEngineWrapper* pWrapper = dllLoader.GetPgpEngineWrapperObject();
         if (pWrapper != nullptr)
@@ -611,7 +702,9 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
             else if (action == "pgp-encrypt") { result = runCliActionPgpEncrypt(parser, pWrapper); }
             else if (action == "pgp-decrypt") { result = runCliActionPgpDecrypt(parser, pWrapper); }
             else if (action == "pgp-sign") { result = runCliActionPgpSign(parser, pWrapper); }
-            else { result = runCliActionPgpVerify(parser, pWrapper); }
+            else if (action == "pgp-verify") { result = runCliActionPgpVerify(parser, pWrapper); }
+            else if (action == "pgp-sign-encrypt") { result = runCliActionPgpSignEncrypt(parser, pWrapper); }
+            else { result = runCliActionPgpDecryptVerify(parser, pWrapper); }
             dllLoader.DestroyPgpEngineWrapperObject(pWrapper);
         }
     }
@@ -620,7 +713,8 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
         std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
                      "decrypt-string, pgp-roundtrip, pgp-check, pgp-gen-key, pgp-list-keys, "
                      "pgp-export-key, pgp-fingerprint, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
-                     "run-tests, list-actions (run -action list-actions for full usage)" << std::endl;
+                     "pgp-sign-encrypt, pgp-decrypt-verify, run-tests, list-actions (run -action "
+                     "list-actions for full usage)" << std::endl;
     }
 
     dllLoader.UnloadLibrary();
@@ -701,6 +795,8 @@ int runAllTests()
                         pCryptoApiTester->RunPgpClearSignTest();
 
                         pCryptoApiTester->RunPgpArmorTest();
+
+                        pCryptoApiTester->RunPgpEncryptAndSignTest();
 
                         pCryptoApiTester->RunPgpAliceBobTest();
 

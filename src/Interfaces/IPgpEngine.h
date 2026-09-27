@@ -106,6 +106,18 @@ public:
     virtual int EncryptStringArmored( const char* inputString, const int inputStringSize,
                                      const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
 
+    // Combined sign+encrypt -- real gpg's own default "--sign --encrypt" wire format (One-Pass-
+    // Signature + Literal Data + Signature, all inside the SAME compressed+encrypted container),
+    // NOT the same as calling EncryptBuffer/SignBuffer separately (two independent messages).
+    // Requires both an own identity (signing) and an imported peer key (encryption recipient).
+    virtual int EncryptAndSignBuffer( const char* password, const int passwordSize,
+                                     const unsigned char* inputBuffer, const int inputBufferSize,
+                                     const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
+
+    virtual int EncryptAndSignStringArmored( const char* password, const int passwordSize,
+                                            const char* inputString, const int inputStringSize,
+                                            const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
+
     virtual int DecryptBuffer( const char* password, const int passwordSize,
                               const unsigned char* inputBuffer, const int inputBufferSize,
                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
@@ -113,6 +125,21 @@ public:
     virtual int DecryptStringArmored( const char* password, const int passwordSize,
                                     const char* inputString, const int inputStringSize,
                                     const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
+
+    // Counterpart to EncryptAndSignBuffer/EncryptAndSignStringArmored above -- decrypts AND
+    // requires/verifies an embedded (one-pass) signature. Returns INVALID_DATA if the decrypted
+    // content carries no signature at all (a plain encrypted-only message is a structural mismatch
+    // for this method -- use DecryptBuffer/DecryptStringArmored instead). isSignatureValid is only
+    // meaningful when the return value is NO_ERROR.
+    virtual int DecryptAndVerifyBuffer( const char* password, const int passwordSize,
+                                       const unsigned char* inputBuffer, const int inputBufferSize,
+                                       const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                                       bool* isSignatureValid) = 0;
+
+    virtual int DecryptAndVerifyStringArmored( const char* password, const int passwordSize,
+                                              const char* inputString, const int inputStringSize,
+                                              const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize,
+                                              bool* isSignatureValid) = 0;
 
     virtual int SignBuffer( const char* password, const int passwordSize,
                            const unsigned char* inputBuffer, const int inputBufferSize,
