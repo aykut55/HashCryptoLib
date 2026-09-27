@@ -296,16 +296,131 @@ std::string getSiblingExePath(const char* targetExeName)
 }
 // -----------------------------------------------------------------------------
 
+// Strips a single trailing \r\n or \n (runChildProcess's captured output always has one, since every
+// -action prints via std::endl) -- needed before feeding one example's output as the next example's
+// -input.
+std::string stripTrailingNewline(const std::string& text)
+{
+    std::string result = text;
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+    {
+        result.pop_back();
+    }
+    return result;
+}
+// -----------------------------------------------------------------------------
+
+void printExampleHeader(const std::string& exeName, const std::vector<std::string>& displayArgs)
+{
+    std::cout << "--- " << exeName;
+    for (std::size_t i = 0; i < displayArgs.size(); ++i)
+    {
+        std::cout << " " << displayArgs[i];
+    }
+    std::cout << " ---" << std::endl;
+}
+// -----------------------------------------------------------------------------
+
+// Runs targetExeName with displayArgs (both shown in the header and actually passed to the child),
+// prints the child's output, and returns it (trimmed) so callers can chain one example's output into
+// the next example's -input, the same way a human would copy/paste between two separate invocations.
+std::string runExample(const char* targetExeName, const std::vector<std::string>& displayArgs)
+{
+    printExampleHeader(targetExeName, displayArgs);
+
+    const std::string exePath = getSiblingExePath(targetExeName);
+    std::vector<std::string> childArgv;
+    childArgv.push_back(exePath);
+    for (std::size_t i = 0; i < displayArgs.size(); ++i)
+    {
+        childArgv.push_back(displayArgs[i]);
+    }
+
+    const ChildProcessResult result = runChildProcess(childArgv);
+    if (!result.started)
+    {
+        std::cerr << "  (failed to start " << targetExeName << ")" << std::endl;
+        return std::string();
+    }
+
+    std::cout << result.output;
+    std::cout << "  (exit code: " << result.exitCode << ")" << std::endl << std::endl;
+    return stripTrailingNewline(result.output);
+}
+// -----------------------------------------------------------------------------
+
+void printSectionHeader(const std::string& title)
+{
+    std::cout << std::endl << "## " << title << std::endl;
+}
+// -----------------------------------------------------------------------------
+
+// Triggered by `AppRunner.exe -examples`: runs a wide variety of real CLI usage scenarios, grouped by
+// what they demonstrate, chaining real output between calls wherever that proves something (a
+// two-separate-invocations round trip, cross-target format compatibility) rather than just describing
+// it. Every example actually spawns the target exe via runExample -- nothing here is simulated.
+void runUsageExamples()
+{
+    std::cout << "=== AppRunner kullanim ornekleri ===" << std::endl;
+
+    printSectionHeader("1) version -- her 3 hedefte de calisiyor");
+    runExample("AppBuilder.exe", { "-action", "version" });
+    runExample("DllRunner.exe", { "-action", "version" });
+    runExample("LibRunner.exe", { "-action", "version" });
+
+    printSectionHeader("2) hash -- farkli girdi turleri (bos, ASCII, Turkce/UTF-8)");
+    runExample("AppBuilder.exe", { "-action", "hash", "-input", "" });
+    runExample("AppBuilder.exe", { "-action", "hash", "-input", "hello world" });
+    runExample("AppBuilder.exe", { "-action", "hash", "-input", "Merhaba dunya, sifreleme calisiyor!" });
+
+    printSectionHeader("3) encrypt-string / decrypt-string -- AYNI hedefte, iki ayri invocation arasi round-trip");
+    const std::string cipherText = runExample( "AppBuilder.exe",
+                                               { "-action", "encrypt-string", "-password", "s3cr3t", "-input", "hello world" });
+    runExample("AppBuilder.exe", { "-action", "decrypt-string", "-password", "s3cr3t", "-input", cipherText });
+
+    printSectionHeader("4) encrypt-string / decrypt-string -- FARKLI hedefler arasi (sifreleme formati uyumlulugu kaniti: DllRunner ile sifrele, LibRunner ile coz)");
+    const std::string cipherTextCrossTarget = runExample( "DllRunner.exe",
+                                                          { "-action", "encrypt-string", "-password", "cross-target", "-input", "farkli hedeflerde sifreleniyor" });
+    runExample("LibRunner.exe", { "-action", "decrypt-string", "-password", "cross-target", "-input", cipherTextCrossTarget });
+
+    printSectionHeader("5) decrypt-string -- YANLIS parola (hata beklenen senaryo)");
+    runExample("AppBuilder.exe", { "-action", "decrypt-string", "-password", "yanlis-parola", "-input", cipherText });
+
+    printSectionHeader("6) pgp-roundtrip -- varsayilan userid, ozel userid + Turkce mesaj, her 3 hedef");
+    runExample("AppBuilder.exe", { "-action", "pgp-roundtrip", "-password", "s3cr3t", "-message", "merhaba" });
+    runExample( "AppBuilder.exe",
+               { "-action", "pgp-roundtrip", "-userid", "Ayse Yilmaz <ayse@example.com>", "-password", "farkli-parola",
+                "-message", "Turkce karakterler: sicak cay iciyorum" });
+    runExample("DllRunner.exe", { "-action", "pgp-roundtrip", "-password", "s3cr3t", "-message", "DLL uzerinden PGP" });
+    runExample("LibRunner.exe", { "-action", "pgp-roundtrip", "-password", "s3cr3t", "-message", "static lib uzerinden PGP" });
+
+    printSectionHeader("7) hata durumlari -- bilinmeyen/eksik -action (exit code != 0 bekleniyor)");
+    runExample("AppBuilder.exe", { "-action", "bogus-action" });
+    runExample("AppBuilder.exe", { "-userid", "bu bir action degil" });
+
+    std::cout << "=== tamamlandi ===" << std::endl;
+}
+// -----------------------------------------------------------------------------
+
 } // anonymous namespace
 
 int main()
 {
     const std::vector<std::string> args = getUtf8CommandLineArgs();
 
+    // -examples runs the whole usage-example sequence and exits -- takes no other arguments.
+    for (std::size_t i = 0; i < args.size(); ++i)
+    {
+        if (args[i] == "-examples" || args[i] == "--examples")
+        {
+            runUsageExamples();
+            return 0;
+        }
+    }
+
     // -target selects which sibling exe to spawn -- consumed here, never forwarded to the child.
-    // Only "appbuilder" has a real CLI action set so far (Phase 1); "dllrunner"/"librunner" are
-    // accepted already so the harness doesn't need to change again once those gain CLI dispatch in
-    // a later phase, but until then they just ignore whatever args get forwarded to them.
+    // AppBuilder/DllRunner/LibRunner all have the identical CLI action set now (version/hash/
+    // encrypt-string/decrypt-string/pgp-roundtrip).
     std::string targetName = "appbuilder";
     std::vector<std::string> forwardedArgs;
     for (std::size_t i = 0; i < args.size(); ++i)
