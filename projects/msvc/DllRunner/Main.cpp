@@ -216,10 +216,23 @@ int runCliActionPgpRoundtrip(const CryptoApiNS::CCommandLineParser& parser, Cryp
 }
 // -----------------------------------------------------------------------------
 
+// Defined at the bottom of this file (it's the exact sequence main() always ran unconditionally
+// before the CLI existed -- DLL load, native ICryptoApiTester suite, all 5 script engines' own
+// demo/test suites). Forward-declared here so runCliMode's "run-tests" action can reach it without
+// reordering that huge block.
+int runAllTests();
+// -----------------------------------------------------------------------------
+
 // Loads CryptoAPI.dll just long enough to dispatch one CLI action, then unloads -- entirely
 // separate from the huge script-engine/test-suite flow below, gated purely on argc (see main()).
 int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
 {
+    const std::string action = parser.GetString("action", "");
+    if (action == "run-tests")
+    {
+        return runAllTests();
+    }
+
     CryptoApiNS::CCryptoApiDllLoader dllLoader;
     dllLoader.SetFileName("CryptoApi.dll");
     if (!dllLoader.LoadLibrary() || !dllLoader.IsLoaded())
@@ -228,7 +241,6 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
         return 3;
     }
 
-    const std::string action = parser.GetString("action", "");
     int result = 2;
 
     if (action == "version")
@@ -264,7 +276,7 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
     else
     {
         std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
-                     "decrypt-string, pgp-roundtrip" << std::endl;
+                     "decrypt-string, pgp-roundtrip, run-tests" << std::endl;
     }
 
     dllLoader.UnloadLibrary();
@@ -272,16 +284,8 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
 }
 // -----------------------------------------------------------------------------
 
-int main()
+int runAllTests()
 {
-    const std::vector<std::string> cliArgs = getUtf8CommandLineArgs();
-    if (!cliArgs.empty())
-    {
-        CryptoApiNS::CCommandLineParser parser;
-        parser.Parse(cliArgs);
-        return runCliMode(parser);
-    }
-
     std::string dllFileName = "CryptoApi.dll";
 
     CryptoApiNS::CCryptoApiDllLoader* pCryptoApiDllLoader = nullptr;
@@ -1764,4 +1768,18 @@ int main()
     }
 
     return 0;
+}
+// -----------------------------------------------------------------------------
+
+int main()
+{
+    const std::vector<std::string> cliArgs = getUtf8CommandLineArgs();
+    if (!cliArgs.empty())
+    {
+        CryptoApiNS::CCommandLineParser parser;
+        parser.Parse(cliArgs);
+        return runCliMode(parser);
+    }
+
+    return runAllTests();
 }

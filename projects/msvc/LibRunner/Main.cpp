@@ -223,6 +223,11 @@ int runCliActionPgpRoundtrip(const CryptoApiNS::CCommandLineParser& parser)
 }
 // -----------------------------------------------------------------------------
 
+// Defined below (it's the exact sequence main() always ran unconditionally before the CLI existed).
+// Forward-declared here so runCliAction's "run-tests" action can reach it.
+int runAllTests();
+// -----------------------------------------------------------------------------
+
 int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
 {
     const std::string action = parser.GetString("action", "");
@@ -247,23 +252,23 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
     {
         return runCliActionPgpRoundtrip(parser);
     }
+    if (action == "run-tests")
+    {
+        return runAllTests();
+    }
 
     std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
-                 "decrypt-string, pgp-roundtrip" << std::endl;
+                 "decrypt-string, pgp-roundtrip, run-tests" << std::endl;
     return 2;
 }
 // -----------------------------------------------------------------------------
 
-int main()
+// The exact sequence main() always ran unconditionally before the CLI existed (native
+// CCryptoApiTester suite + all 5 script engines' own demo/test suites) -- extracted here, unchanged,
+// so it can be triggered explicitly via `-action run-tests` as well as by the original no-args
+// fallback in main().
+int runAllTests()
 {
-    const std::vector<std::string> cliArgs = getUtf8CommandLineArgs();
-    if (!cliArgs.empty())
-    {
-        CryptoApiNS::CCommandLineParser parser;
-        parser.Parse(cliArgs);
-        return runCliAction(parser);
-    }
-
     try
     {
         std::cout << "Hello World!\n";
@@ -1900,4 +1905,18 @@ int main()
     }
 
     return 0;
+}
+// -----------------------------------------------------------------------------
+
+int main()
+{
+    const std::vector<std::string> cliArgs = getUtf8CommandLineArgs();
+    if (!cliArgs.empty())
+    {
+        CryptoApiNS::CCommandLineParser parser;
+        parser.Parse(cliArgs);
+        return runCliAction(parser);
+    }
+
+    return runAllTests();
 }

@@ -779,50 +779,11 @@ int runCliActionPgpRoundtrip(const CryptoApiNS::CCommandLineParser& parser)
 }
 // -----------------------------------------------------------------------------
 
-// Phase 1 of the AppRunner CLI plan proved the argv-forwarding plumbing works end-to-end (AppRunner
-// spawns this exe with the same args, this dispatches, AppRunner echoes the result); Phase 2 grows
-// the action set above this dispatcher.
-int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
+// The exact sequence main() always ran unconditionally before the CLI existed (CCryptoApiTester's
+// full suite + all 5 script engines' own demo/test suites) -- extracted here, unchanged, so it can be
+// triggered explicitly via `-action run-tests` as well as by the original no-args fallback in main().
+int runAllTests()
 {
-    const std::string action = parser.GetString("action", "");
-    if (action == "version")
-    {
-        std::cout << CryptoApiNS::CUtils::FormatBuildDate() << std::endl;
-        return 0;
-    }
-    if (action == "hash")
-    {
-        return runCliActionHash(parser);
-    }
-    if (action == "encrypt-string")
-    {
-        return runCliActionEncryptString(parser);
-    }
-    if (action == "decrypt-string")
-    {
-        return runCliActionDecryptString(parser);
-    }
-    if (action == "pgp-roundtrip")
-    {
-        return runCliActionPgpRoundtrip(parser);
-    }
-
-    std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
-                 "decrypt-string, pgp-roundtrip" << std::endl;
-    return 2;
-}
-// -----------------------------------------------------------------------------
-
-int main()
-{
-    const std::vector<std::string> cliArgs = getUtf8CommandLineArgs();
-    if (!cliArgs.empty())
-    {
-        CryptoApiNS::CCommandLineParser parser;
-        parser.Parse(cliArgs);
-        return runCliAction(parser);
-    }
-
     std::cout << std::endl;
 
     std::cout << "runTestsViaCryptoApiTester()...." << std::endl;
@@ -875,8 +836,8 @@ int main()
 
     std::cout << std::endl;
 
-    std::cout << "runTestsViaPythonScriptEngine()...." << std::endl; 
-    
+    std::cout << "runTestsViaPythonScriptEngine()...." << std::endl;
+
     std::cout << std::endl;
 
     runTestsViaPythonScriptEngine();
@@ -886,4 +847,56 @@ int main()
     std::cout << std::endl;
 
     return 0;
+}
+// -----------------------------------------------------------------------------
+
+// Phase 1 of the AppRunner CLI plan proved the argv-forwarding plumbing works end-to-end (AppRunner
+// spawns this exe with the same args, this dispatches, AppRunner echoes the result); Phase 2 grows
+// the action set above this dispatcher.
+int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
+{
+    const std::string action = parser.GetString("action", "");
+    if (action == "version")
+    {
+        std::cout << CryptoApiNS::CUtils::FormatBuildDate() << std::endl;
+        return 0;
+    }
+    if (action == "hash")
+    {
+        return runCliActionHash(parser);
+    }
+    if (action == "encrypt-string")
+    {
+        return runCliActionEncryptString(parser);
+    }
+    if (action == "decrypt-string")
+    {
+        return runCliActionDecryptString(parser);
+    }
+    if (action == "pgp-roundtrip")
+    {
+        return runCliActionPgpRoundtrip(parser);
+    }
+    if (action == "run-tests")
+    {
+        return runAllTests();
+    }
+
+    std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
+                 "decrypt-string, pgp-roundtrip, run-tests" << std::endl;
+    return 2;
+}
+// -----------------------------------------------------------------------------
+
+int main()
+{
+    const std::vector<std::string> cliArgs = getUtf8CommandLineArgs();
+    if (!cliArgs.empty())
+    {
+        CryptoApiNS::CCommandLineParser parser;
+        parser.Parse(cliArgs);
+        return runCliAction(parser);
+    }
+
+    return runAllTests();
 }
