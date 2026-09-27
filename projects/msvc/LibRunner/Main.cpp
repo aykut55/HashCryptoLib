@@ -488,6 +488,40 @@ int runCliActionPgpVerify(const CryptoApiNS::CCommandLineParser& parser)
 int runAllTests();
 // -----------------------------------------------------------------------------
 
+// gpg.exe-style self-documentation ("gpg --dump-options"/"gpg --help") -- unlike the error path
+// below (which only lists bare action NAMES), this also shows each action's expected arguments, so
+// it doubles as this CLI's own usage reference.
+int runCliActionListActions(void)
+{
+    std::cout <<
+        "Desteklenen -action degerleri:\n"
+        "\n"
+        "Genel:\n"
+        "  version                                        (arg yok)\n"
+        "  list-actions                                    (arg yok, bu liste)\n"
+        "  run-tests                                       (arg yok -- tam test suite'i kosturur)\n"
+        "  hash                    -input TEXT\n"
+        "  encrypt-string          -password X -input TEXT\n"
+        "  decrypt-string          -password X -input BASE64\n"
+        "\n"
+        "PGP (CPgpEngine, static-lib, tek process icinde bundled demo):\n"
+        "  pgp-roundtrip           [-userid ID] -password X -message TEXT\n"
+        "\n"
+        "PGP (CPgpEngineWrapper, static-lib, gpg.exe benzeri, kalici -keyhome ile ayri invocation'lar arasi):\n"
+        "  pgp-check               [-keyhome DIR]\n"
+        "  pgp-gen-key             [-keyhome DIR] [-userid ID] -password X\n"
+        "  pgp-list-keys           [-keyhome DIR]\n"
+        "  pgp-export-key          [-keyhome DIR]\n"
+        "  pgp-encrypt             [-keyhome DIR] -password X -input TEXT\n"
+        "  pgp-decrypt             [-keyhome DIR] -password X -input ARMORED\n"
+        "  pgp-sign                [-keyhome DIR] -password X -input TEXT\n"
+        "  pgp-verify              [-keyhome DIR] -input ARMORED\n"
+        "\n"
+        "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n";
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
 int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
 {
     const std::string action = parser.GetString("action", "");
@@ -548,10 +582,15 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
     {
         return runAllTests();
     }
+    if (action == "list-actions")
+    {
+        return runCliActionListActions();
+    }
 
     std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
                  "decrypt-string, pgp-roundtrip, pgp-check, pgp-gen-key, pgp-list-keys, "
-                 "pgp-export-key, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, run-tests" << std::endl;
+                 "pgp-export-key, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, run-tests, "
+                 "list-actions (run -action list-actions for full usage)" << std::endl;
     return 2;
 }
 // -----------------------------------------------------------------------------
