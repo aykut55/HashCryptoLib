@@ -23,6 +23,7 @@
 #include "openssl/evp.h"
 #include "openssl/pem.h"
 #include "openssl/x509.h"
+#include "openssl/x509v3.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -275,6 +276,109 @@ std::vector<unsigned char> BuildTestCrlDer( const unsigned char* caCertDer, cons
     EVP_PKEY_free(caKey);
     X509_free(caCert);
     return result;
+}
+// -----------------------------------------------------------------------------
+
+// See RunCertificateChainCrypt32CdpFetchRevokedTest's own comment for why this exists: exercising
+// Crypt32's OWN CDP-fetch machinery (as opposed to CheckCertificateAgainstCrl's direct-buffer CRL
+// check) needs a URL scheme Crypt32's URL retrieval actually supports -- file:// was tried first and
+// confirmed unsupported (CryptRetrieveObjectByUrl/certutil -URLCache both return
+// ERROR_NOT_SUPPORTED for it on this OS), so a real (loopback-only) HTTP server is used instead.
+// <Windows.h> is already included above without WIN32_LEAN_AND_MEAN, so this translation unit already
+// pulled in the classic winsock.h declarations (SOCKET, WSADATA, sockaddr_in, etc.) -- no additional
+// header needed, and ws2_32.lib is already an AdditionalDependencies entry in every project that
+// compiles this file (AppBuilder/DllBuilder/LibBuilder all link it already, for OpenSSL's own sake).
+//
+// Binds to an OS-assigned loopback port synchronously (so the CDP URL embedding the port can be
+// built before the caller signs its leaf certificate) and returns the bound port + listening socket.
+// Returns INVALID_SOCKET on any failure.
+SOCKET CreateEphemeralHttpListenSocket(unsigned short* outPort)
+{
+    *outPort = 0;
+
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        return INVALID_SOCKET;
+    }
+
+    SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listenSocket == INVALID_SOCKET)
+    {
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    sockaddr_in addr;
+    ZeroMemory(&addr, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_port = 0;
+    if (bind(listenSocket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 || listen(listenSocket, 1) != 0)
+    {
+        closesocket(listenSocket);
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    sockaddr_in boundAddr;
+    int boundAddrLen = sizeof(boundAddr);
+    if (getsockname(listenSocket, reinterpret_cast<sockaddr*>(&boundAddr), &boundAddrLen) != 0)
+    {
+        closesocket(listenSocket);
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    *outPort = ntohs(boundAddr.sin_port);
+    return listenSocket;
+}
+// -----------------------------------------------------------------------------
+
+// Accepts exactly one connection on listenSocket (bounded by a 5-second select() timeout, so a test
+// whose CDP URL is never actually fetched fails fast instead of hanging) and replies with a plain
+// HTTP/1.0 200 OK response whose body is fileBytes -- just enough for Crypt32's CDP-fetch client to
+// retrieve it. Runs on a background thread (std::async) so the caller can call ValidateChain (which
+// blocks synchronously while Crypt32 makes this exact request) at the same time. Does NOT call
+// WSACleanup or closesocket(listenSocket) -- the caller owns the listening socket's lifetime.
+std::future<bool> ServeSingleHttpResponseAsync(SOCKET listenSocket, const std::vector<unsigned char>& fileBytes)
+{
+    return std::async(std::launch::async, [listenSocket, fileBytes]() -> bool
+    {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(listenSocket, &readSet);
+        timeval timeout;
+        timeout.tv_sec = 5;
+        timeout.tv_usec = 0;
+        if (select(0, &readSet, nullptr, nullptr, &timeout) <= 0)
+        {
+            return false;
+        }
+
+        SOCKET clientSocket = accept(listenSocket, nullptr, nullptr);
+        if (clientSocket == INVALID_SOCKET)
+        {
+            return false;
+        }
+
+        char requestBuffer[4096];
+        recv(clientSocket, requestBuffer, sizeof(requestBuffer), 0);
+
+        std::ostringstream responseStream;
+        responseStream << "HTTP/1.0 200 OK\r\n"
+                       << "Content-Type: application/pkix-crl\r\n"
+                       << "Content-Length: " << fileBytes.size() << "\r\n"
+                       << "Connection: close\r\n\r\n";
+        const std::string header = responseStream.str();
+        send(clientSocket, header.c_str(), static_cast<int>(header.size()), 0);
+        if (!fileBytes.empty())
+        {
+            send(clientSocket, reinterpret_cast<const char*>(fileBytes.data()), static_cast<int>(fileBytes.size()), 0);
+        }
+        closesocket(clientSocket);
+        return true;
+    });
 }
 // -----------------------------------------------------------------------------
 
@@ -22966,6 +23070,247 @@ int CCryptoApiTester::RunCertificateCrlCheckWrongIssuerRejectionTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunCertificateChainCrypt32CdpFetchRevokedTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+
+        // CA/root -- self-signed, becomes ValidateChain's own trust anchor via
+        // AddIntermediateCertificateForChainValidation (ApplicationTrust mode, see ValidateChain's
+        // own header comment).
+        const char* caCn = "cryptoapi-test-crypt32-cdp-ca.example.com";
+        unsigned char caCertDer[8192];
+        int caCertSize = 0;
+        char caKeyPem[8192];
+        int caKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate( caCn, static_cast<int>(std::strlen(caCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 365,
+                                                              CERTIFICATE_KEY_USAGE_KEY_CERT_SIGN | CERTIFICATE_KEY_USAGE_CRL_SIGN, 0, CERTIFICATE_DIGEST_SHA256,
+                                                              sizeof(caCertDer), caCertDer, &caCertSize,
+                                                              sizeof(caKeyPem), caKeyPem, &caKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED CA CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const unsigned char* caCertP = caCertDer;
+        X509* caCert = d2i_X509(nullptr, &caCertP, caCertSize);
+        if (caCert == nullptr)
+        {
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED could not re-parse CA certificate" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        BIO* caKeyBio = BIO_new_mem_buf(caKeyPem, caKeySize);
+        EVP_PKEY* caKey = caKeyBio != nullptr ? PEM_read_bio_PrivateKey(caKeyBio, nullptr, nullptr, nullptr) : nullptr;
+        if (caKeyBio != nullptr)
+        {
+            BIO_free(caKeyBio);
+        }
+        if (caKey == nullptr)
+        {
+            X509_free(caCert);
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED could not parse CA private key" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Loopback HTTP listener bound to an OS-assigned port (unique per run, so there is no
+        // stale-cache-collision concern the way a fixed file:// path would have had) -- bound BEFORE
+        // the leaf is signed, since the CDP extension must be baked into the signed certificate.
+        unsigned short serverPort = 0;
+        SOCKET listenSocket = CreateEphemeralHttpListenSocket(&serverPort);
+        if (listenSocket == INVALID_SOCKET)
+        {
+            EVP_PKEY_free(caKey);
+            X509_free(caCert);
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED CreateEphemeralHttpListenSocket" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string cdpConfigValue = "URI:http://127.0.0.1:" + std::to_string(serverPort) + "/revoked.crl";
+
+        // Leaf key pair -- fresh RSA-2048 via raw OpenSSL (mirrors CreateSelfSignedCertificate's own
+        // ephemeral-key philosophy; done locally because the public API has no CDP-extension hook,
+        // same "test-fixture-only exception to this file's usual public-facade-only policy" as
+        // BuildTestCrlDer's own comment).
+        EVP_PKEY_CTX* leafKeyCtx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+        EVP_PKEY* leafKey = nullptr;
+        if (leafKeyCtx == nullptr || EVP_PKEY_keygen_init(leafKeyCtx) <= 0 ||
+            EVP_PKEY_CTX_set_rsa_keygen_bits(leafKeyCtx, 2048) <= 0 || EVP_PKEY_keygen(leafKeyCtx, &leafKey) <= 0)
+        {
+            if (leafKeyCtx != nullptr) EVP_PKEY_CTX_free(leafKeyCtx);
+            closesocket(listenSocket);
+            WSACleanup();
+            EVP_PKEY_free(caKey);
+            X509_free(caCert);
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED leaf key generation" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        EVP_PKEY_CTX_free(leafKeyCtx);
+
+        // Leaf certificate: CA-issued, with a CRL Distribution Points extension pointing at the
+        // http:// loopback URL above -- exercises Crypt32's OWN CDP-fetch machinery
+        // (CertGetCertificateChain actually retrieving and parsing this CRL over the network during
+        // chain building), unlike CheckCertificateAgainstCrl's OpenSSL-side check (see
+        // ccertificatemanager_crl_check_done memory) which takes a CRL buffer directly and never
+        // exercises Crypt32's URL retrieval.
+        X509* leafCert = X509_new();
+        if (leafCert == nullptr)
+        {
+            EVP_PKEY_free(leafKey);
+            closesocket(listenSocket);
+            WSACleanup();
+            EVP_PKEY_free(caKey);
+            X509_free(caCert);
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED X509_new(leaf)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        X509_set_version(leafCert, 2);
+        {
+            BIGNUM* serialBn = BN_new();
+            ASN1_INTEGER* serial = ASN1_INTEGER_new();
+            const bool serialOk = serialBn != nullptr && serial != nullptr && BN_rand(serialBn, 128, 0, 0) == 1 &&
+                BN_to_ASN1_INTEGER(serialBn, serial) != nullptr && X509_set_serialNumber(leafCert, serial) == 1;
+            if (serialBn != nullptr) BN_free(serialBn);
+            if (serial != nullptr) ASN1_INTEGER_free(serial);
+            if (!serialOk)
+            {
+                X509_free(leafCert);
+                EVP_PKEY_free(leafKey);
+                closesocket(listenSocket);
+                WSACleanup();
+                EVP_PKEY_free(caKey);
+                X509_free(caCert);
+                std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED leaf serial number" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+        X509_set_issuer_name(leafCert, X509_get_subject_name(caCert));
+        {
+            X509_NAME* leafName = X509_NAME_new();
+            const char* leafCn = "cryptoapi-test-crypt32-cdp-leaf.example.com";
+            const bool nameOk = leafName != nullptr &&
+                X509_NAME_add_entry_by_txt(leafName, "CN", MBSTRING_UTF8, reinterpret_cast<const unsigned char*>(leafCn), -1, -1, 0) == 1 &&
+                X509_set_subject_name(leafCert, leafName) == 1;
+            if (leafName != nullptr) X509_NAME_free(leafName);
+            if (!nameOk)
+            {
+                X509_free(leafCert);
+                EVP_PKEY_free(leafKey);
+                closesocket(listenSocket);
+                WSACleanup();
+                EVP_PKEY_free(caKey);
+                X509_free(caCert);
+                std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED leaf subject name" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+        X509_set_pubkey(leafCert, leafKey);
+        X509_gmtime_adj(X509_getm_notBefore(leafCert), 0);
+        X509_gmtime_adj(X509_getm_notAfter(leafCert), 30L * 24L * 60L * 60L);
+        {
+            X509V3_CTX ctx;
+            X509V3_set_ctx_nodb(&ctx);
+            X509V3_set_ctx(&ctx, caCert, leafCert, nullptr, nullptr, 0);
+            X509_EXTENSION* cdpExt = X509V3_EXT_nconf_nid(nullptr, &ctx, NID_crl_distribution_points, cdpConfigValue.c_str());
+            const bool extOk = cdpExt != nullptr && X509_add_ext(leafCert, cdpExt, -1) == 1;
+            if (cdpExt != nullptr) X509_EXTENSION_free(cdpExt);
+            if (!extOk)
+            {
+                X509_free(leafCert);
+                EVP_PKEY_free(leafKey);
+                closesocket(listenSocket);
+                WSACleanup();
+                EVP_PKEY_free(caKey);
+                X509_free(caCert);
+                std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED adding CRL Distribution Points extension" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+        if (X509_sign(leafCert, caKey, EVP_sha256()) <= 0)
+        {
+            X509_free(leafCert);
+            EVP_PKEY_free(leafKey);
+            closesocket(listenSocket);
+            WSACleanup();
+            EVP_PKEY_free(caKey);
+            X509_free(caCert);
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED X509_sign(leaf)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned char* leafDerPtr = nullptr;
+        const int leafDerLen = i2d_X509(leafCert, &leafDerPtr);
+        X509_free(leafCert);
+        EVP_PKEY_free(leafKey);
+        if (leafDerLen <= 0 || leafDerPtr == nullptr)
+        {
+            closesocket(listenSocket);
+            WSACleanup();
+            EVP_PKEY_free(caKey);
+            X509_free(caCert);
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED i2d_X509(leaf)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> leafCertDer(leafDerPtr, leafDerPtr + leafDerLen);
+        OPENSSL_free(leafDerPtr);
+
+        // Real CA-signed CRL revoking the leaf's own serial, reusing this file's existing
+        // BuildTestCrlDer helper (same one RunCertificateCrlCheck*Test above already use) -- served
+        // over the loopback HTTP listener above instead of written to disk.
+        const std::vector<unsigned char> crlDer = BuildTestCrlDer( caCertDer, caCertSize, caKeyPem, caKeySize,
+                                                                    leafCertDer.data(), static_cast<int>(leafCertDer.size()), 30);
+        EVP_PKEY_free(caKey);
+        X509_free(caCert);
+        if (crlDer.empty())
+        {
+            closesocket(listenSocket);
+            WSACleanup();
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED BuildTestCrlDer produced an empty CRL" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Starts accepting the (single) HTTP request Crypt32's CDP fetch will make, on a background
+        // thread, while ValidateChain below blocks synchronously making that exact request.
+        std::future<bool> serverFuture = ServeSingleHttpResponseAsync(listenSocket, crlDer);
+
+        // Real Crypt32 chain validation, ONLINE revocation mode so Crypt32 actually performs the CDP
+        // fetch against the http:// loopback URL above (CACHE_ONLY would skip the fetch entirely).
+        certManager.AddIntermediateCertificateForChainValidation(caCertDer, caCertSize);
+        int trustResult = -1;
+        int revocationStatus = -1;
+        status = certManager.ValidateChain( leafCertDer.data(), static_cast<int>(leafCertDer.size()),
+                                            REVOCATION_MODE_REQUIRED, REVOCATION_NETWORK_ONLINE, &trustResult, &revocationStatus);
+        certManager.ClearIntermediateCertificatesForChainValidation();
+
+        const bool serverServedRequest = serverFuture.valid() &&
+            serverFuture.wait_for(std::chrono::seconds(6)) == std::future_status::ready && serverFuture.get();
+        closesocket(listenSocket);
+        WSACleanup();
+
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED ValidateChain status=" << status << std::endl;
+            return status;
+        }
+        if (revocationStatus != REVOCATION_STATUS_REVOKED)
+        {
+            std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: FAILED trustResult=" << trustResult
+                       << " revocationStatus=" << revocationStatus << " (expected REVOCATION_STATUS_REVOKED="
+                       << REVOCATION_STATUS_REVOKED << ") serverServedRequest=" << serverServedRequest
+                       << " -- Crypt32 may not have fetched the http:// CDP" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCertificateChainCrypt32CdpFetchRevokedTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunCertificateStoreMemoryFindTest(void)
 {
     try
@@ -23470,6 +23815,226 @@ int CCryptoApiTester::RunCmsSigningCertificateV2AttributeTest(void)
         }
 
         std::cout << "RunCmsSigningCertificateV2AttributeTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunCmsVerifyDetachedSigningCertMismatchTest(void)
+{
+    try
+    {
+        CCertificateManager certManager;
+        const char* trueCn = "cryptoapi-test-cms-mismatch-true-identity.example.com";
+        unsigned char trueCertDer[8192];
+        int trueCertSize = 0;
+        char signerKeyPem[8192];
+        int signerKeySize = 0;
+        int status = certManager.CreateSelfSignedCertificate(trueCn, static_cast<int>(std::strlen(trueCn)), nullptr, 0, CERTIFICATE_KEY_RSA_2048, 30, 0, 0,
+                                                              CERTIFICATE_DIGEST_SHA256, sizeof(trueCertDer), trueCertDer, &trueCertSize,
+                                                              sizeof(signerKeyPem), signerKeyPem, &signerKeySize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED true-identity CreateSelfSignedCertificate status=" << status << std::endl;
+            return status;
+        }
+
+        const unsigned char* trueCertP = trueCertDer;
+        X509* trueCert = d2i_X509(nullptr, &trueCertP, trueCertSize);
+        if (trueCert == nullptr)
+        {
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED could not re-parse true-identity certificate" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        BIO* keyBio = BIO_new_mem_buf(signerKeyPem, signerKeySize);
+        EVP_PKEY* signerKey = keyBio != nullptr ? PEM_read_bio_PrivateKey(keyBio, nullptr, nullptr, nullptr) : nullptr;
+        if (keyBio != nullptr)
+        {
+            BIO_free(keyBio);
+        }
+        if (signerKey == nullptr)
+        {
+            X509_free(trueCert);
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED could not parse signer private key" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Substitute certificate: a DIFFERENT identity that reuses the SAME key pair as trueCert --
+        // the real-world condition RFC 5035's signing-certificate-v2 attribute defends against (the
+        // RSA signature only proves possession of the private key, not which certificate/identity
+        // the signer meant to be bound to, so a substitute certificate sharing the key pair still
+        // verifies cryptographically).
+        X509* substituteCert = X509_new();
+        if (substituteCert == nullptr)
+        {
+            EVP_PKEY_free(signerKey);
+            X509_free(trueCert);
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED X509_new" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        X509_set_version(substituteCert, 2);
+        ASN1_INTEGER_set(X509_get_serialNumber(substituteCert), 0x5CAFEF00);
+        X509_gmtime_adj(X509_getm_notBefore(substituteCert), 0);
+        X509_gmtime_adj(X509_getm_notAfter(substituteCert), 30L * 24L * 60L * 60L);
+        X509_set_pubkey(substituteCert, signerKey);
+        {
+            X509_NAME* substituteName = X509_NAME_new();
+            const bool nameOk = substituteName != nullptr &&
+                X509_NAME_add_entry_by_txt( substituteName, "CN", MBSTRING_UTF8,
+                                            reinterpret_cast<const unsigned char*>("cryptoapi-test-cms-mismatch-substitute-identity.example.com"), -1, -1, 0) == 1 &&
+                X509_set_subject_name(substituteCert, substituteName) == 1 &&
+                X509_set_issuer_name(substituteCert, substituteName) == 1;
+            if (substituteName != nullptr)
+            {
+                X509_NAME_free(substituteName);
+            }
+            if (!nameOk)
+            {
+                X509_free(substituteCert);
+                EVP_PKEY_free(signerKey);
+                X509_free(trueCert);
+                std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED building substitute X509_NAME" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+        if (X509_sign(substituteCert, signerKey, EVP_sha256()) <= 0)
+        {
+            X509_free(substituteCert);
+            EVP_PKEY_free(signerKey);
+            X509_free(trueCert);
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED X509_sign(substituteCert)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char data[] = { 'C', 'e', 'r', 't', ' ', 's', 'u', 'b', 's', 't', 'i', 't', 'u', 't', 'i', 'o', 'n', ' ', 't', 'e', 's', 't' };
+        BIO* dataBio = BIO_new_mem_buf(data, sizeof(data));
+        if (dataBio == nullptr)
+        {
+            X509_free(substituteCert);
+            EVP_PKEY_free(signerKey);
+            X509_free(trueCert);
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED BIO_new_mem_buf" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int signFlags = CMS_PARTIAL | CMS_DETACHED | CMS_BINARY;
+        CMS_ContentInfo* cms = CMS_sign(nullptr, nullptr, nullptr, dataBio, signFlags);
+        if (cms == nullptr)
+        {
+            BIO_free(dataBio);
+            X509_free(substituteCert);
+            EVP_PKEY_free(signerKey);
+            X509_free(trueCert);
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED CMS_sign" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // The tamper: embed/point SignerInfo at substituteCert (a different identity), NOT
+        // trueCert -- but the ESS signing-certificate-v2 attribute added below still names
+        // trueCert, and that attribute is itself covered by the RSA signature CMS_final computes
+        // with signerKey (the key pair both certificates share).
+        CMS_SignerInfo* signerInfo = CMS_add1_signer(cms, substituteCert, signerKey, EVP_sha256(), CMS_DETACHED | CMS_BINARY | CMS_NOSMIMECAP);
+        if (signerInfo == nullptr)
+        {
+            CMS_ContentInfo_free(cms);
+            BIO_free(dataBio);
+            X509_free(substituteCert);
+            EVP_PKEY_free(signerKey);
+            X509_free(trueCert);
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED CMS_add1_signer" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        {
+            ESS_SIGNING_CERT_V2* signingCertV2 = OSSL_ESS_signing_cert_v2_new_init(EVP_sha256(), trueCert, nullptr, 1);
+            if (signingCertV2 == nullptr)
+            {
+                CMS_ContentInfo_free(cms);
+                BIO_free(dataBio);
+                X509_free(substituteCert);
+                EVP_PKEY_free(signerKey);
+                X509_free(trueCert);
+                std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED OSSL_ESS_signing_cert_v2_new_init" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            unsigned char* essDerPtr = nullptr;
+            const int essDerLen = i2d_ESS_SIGNING_CERT_V2(signingCertV2, &essDerPtr);
+            ESS_SIGNING_CERT_V2_free(signingCertV2);
+            if (essDerLen <= 0 || essDerPtr == nullptr)
+            {
+                CMS_ContentInfo_free(cms);
+                BIO_free(dataBio);
+                X509_free(substituteCert);
+                EVP_PKEY_free(signerKey);
+                X509_free(trueCert);
+                std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED i2d_ESS_SIGNING_CERT_V2" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            const int addRc = CMS_signed_add1_attr_by_NID( signerInfo, NID_id_smime_aa_signingCertificateV2,
+                                                           V_ASN1_SEQUENCE, essDerPtr, essDerLen);
+            OPENSSL_free(essDerPtr);
+            if (addRc != 1)
+            {
+                CMS_ContentInfo_free(cms);
+                BIO_free(dataBio);
+                X509_free(substituteCert);
+                EVP_PKEY_free(signerKey);
+                X509_free(trueCert);
+                std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED CMS_signed_add1_attr_by_NID" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        if (CMS_final(cms, dataBio, nullptr, CMS_DETACHED | CMS_BINARY) != 1)
+        {
+            CMS_ContentInfo_free(cms);
+            BIO_free(dataBio);
+            X509_free(substituteCert);
+            EVP_PKEY_free(signerKey);
+            X509_free(trueCert);
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED CMS_final" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        unsigned char* derPtr = nullptr;
+        const int derLen = i2d_CMS_ContentInfo(cms, &derPtr);
+        CMS_ContentInfo_free(cms);
+        BIO_free(dataBio);
+        X509_free(substituteCert);
+        EVP_PKEY_free(signerKey);
+        X509_free(trueCert);
+        if (derLen <= 0 || derPtr == nullptr)
+        {
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED i2d_CMS_ContentInfo" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        std::vector<unsigned char> tamperedCmsDer(derPtr, derPtr + derLen);
+        OPENSSL_free(derPtr);
+
+        CCmsService cmsService;
+        int verificationResult = -1;
+        status = cmsService.VerifyDetached( data, sizeof(data), tamperedCmsDer.data(), static_cast<int>(tamperedCmsDer.size()),
+                                            nullptr, 0, &verificationResult);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED VerifyDetached status=" << status << std::endl;
+            return status;
+        }
+        if (verificationResult != CMS_VERIFICATION_SIGNING_CERT_MISMATCH)
+        {
+            std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: FAILED verificationResult=" << verificationResult
+                       << " (expected CMS_VERIFICATION_SIGNING_CERT_MISMATCH=" << CMS_VERIFICATION_SIGNING_CERT_MISMATCH << ")" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunCmsVerifyDetachedSigningCertMismatchTest: PASSED" << std::endl;
         return NO_ERROR;
     }
     catch (...)

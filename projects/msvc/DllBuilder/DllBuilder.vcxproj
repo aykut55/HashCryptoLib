@@ -211,6 +211,7 @@ call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
+    <ClInclude Include="..\..\..\src\Utils\SecureBuffer.h" />
     <ClInclude Include="..\..\..\src\Definitions\Definitions.h" />
     <ClInclude Include="..\..\..\src\Providers\RandomSource.h" />
     <ClInclude Include="..\..\..\src\Providers\KeyDerivation.h" />
@@ -254,6 +255,7 @@ call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
+    <ClCompile Include="..\..\..\src\Utils\SecureBuffer.cpp" />
     <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp" />
     <ClCompile Include="..\..\..\src\Providers\KeyDerivation.cpp" />
     <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp" />

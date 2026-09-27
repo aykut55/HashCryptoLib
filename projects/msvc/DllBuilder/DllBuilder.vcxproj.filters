@@ -57,6 +57,9 @@
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
       <Filter>src\Utils</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Utils\SecureBuffer.cpp">
+      <Filter>src\Utils</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApi.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -180,6 +183,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Utils\Utils.h">
+      <Filter>src\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Utils\SecureBuffer.h">
       <Filter>src\Utils</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Definitions\Definitions.h">

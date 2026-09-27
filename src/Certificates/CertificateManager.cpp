@@ -23,6 +23,8 @@
 #include "openssl/x509.h"
 #include "openssl/x509v3.h"
 
+#include "../Utils/SecureBuffer.h"
+
 #include <cstring>
 #include <ctime>
 #include <functional>
@@ -864,11 +866,11 @@ int CCertificateManager::ImportPfx( const unsigned char* pfxBuffer, const int pf
             return INVALID_DATA;
         }
 
-        const std::string passwordString(password != nullptr ? password : "", password != nullptr ? passwordSize : 0);
+        const CSecureBuffer securePassword(password != nullptr ? password : "", password != nullptr ? passwordSize : 0);
 
         EVP_PKEY* pkeyRaw = nullptr;
         X509* certRaw = nullptr;
-        if (PKCS12_parse(p12.get(), passwordString.c_str(), &pkeyRaw, &certRaw, nullptr) != 1)
+        if (PKCS12_parse(p12.get(), securePassword.Data(), &pkeyRaw, &certRaw, nullptr) != 1)
         {
             return INVALID_DATA;
         }
@@ -924,9 +926,9 @@ int CCertificateManager::ExportPfx( const unsigned char* certDerBuffer, const in
             return INVALID_DATA;
         }
 
-        const std::string passwordString(password != nullptr ? password : "", password != nullptr ? passwordSize : 0);
+        const CSecureBuffer securePassword(password != nullptr ? password : "", password != nullptr ? passwordSize : 0);
 
-        Pkcs12Ptr p12(PKCS12_create(passwordString.c_str(), "CryptoAPI", pkey.get(), cert.get(), nullptr, 0, 0, 0, 0, 0));
+        Pkcs12Ptr p12(PKCS12_create(securePassword.Data(), "CryptoAPI", pkey.get(), cert.get(), nullptr, 0, 0, 0, 0, 0));
         if (!p12)
         {
             return UNEXPECTED_ERROR;
@@ -1829,8 +1831,12 @@ int CCertificateManager::ImportPfxToStore( const unsigned char* pfxBuffer, const
         blob.pbData = const_cast<BYTE*>(pfxBuffer);
         blob.cbData = static_cast<DWORD>(pfxBufferSize);
 
-        const std::wstring widePassword = Utf8ToWide(password, passwordSize);
+        std::wstring widePassword = Utf8ToWide(password, passwordSize);
         HCERTSTORE tempStore = PFXImportCertStore(&blob, widePassword.c_str(), CRYPT_EXPORTABLE);
+        if (!widePassword.empty())
+        {
+            SecureZeroMemory(&widePassword[0], widePassword.size() * sizeof(wchar_t));
+        }
         if (tempStore == nullptr)
         {
             return INVALID_DATA;

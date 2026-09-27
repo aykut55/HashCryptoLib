@@ -362,6 +362,13 @@ public:
 
     virtual int RunCertificateCrlCheckWrongIssuerRejectionTest(void) = 0;
 
+    // Closes prompt2.md's "ValidateChain'in Crypt32 yolunu gercek revoked fixture'iyla test etmek"
+    // item: unlike the CRL-check tests above (which hand CheckCertificateAgainstCrl a CRL buffer
+    // directly), this builds a leaf certificate with a real CRL Distribution Points extension
+    // pointing at a file:// URL and lets Crypt32's own CertGetCertificateChain fetch and parse that
+    // CRL during chain building.
+    virtual int RunCertificateChainCrypt32CdpFetchRevokedTest(void) = 0;
+
     virtual int RunCertificateStoreMemoryFindTest(void) = 0;
 
     virtual int RunCertificateStoreFindByFilterTest(void) = 0;
@@ -373,6 +380,12 @@ public:
     virtual int RunCmsUntrustedSignerRejectionTest(void) = 0;
 
     virtual int RunCmsSigningCertificateV2AttributeTest(void) = 0;
+
+    // Closes prompt2.md's "CMS mismatch'i VerifyDetached uzerinden uctan uca test etmek" item:
+    // exercises CMS_VERIFICATION_SIGNING_CERT_MISMATCH through the real VerifyDetached call path
+    // (RunCmsSigningCertificateV2AttributeTest above only proves the underlying
+    // OSSL_ESS_check_signing_certs primitive works, never routes through VerifyDetached itself).
+    virtual int RunCmsVerifyDetachedSigningCertMismatchTest(void) = 0;
 
     virtual int RunTimestampRequestResponseRoundtripTest(void) = 0;
 

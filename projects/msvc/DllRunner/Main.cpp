@@ -90,6 +90,8 @@ int main()
 
                     if (pCryptoApiTester)
                     {
+                        pCryptoApiTester->Run();
+
                         pCryptoApiTester->RunEncryptDecryptFileTest();
 
                         pCryptoApiTester->RunEncryptDecryptStringTest();
@@ -97,6 +99,145 @@ int main()
                         pCryptoApiTester->RunEncryptDecryptBufferTest();
 
                         pCryptoApiTester->RunEncryptDecryptBytesTest();
+
+                        // Native ICryptoApiTester test parity with AppBuilder/LibRunner's own Main.cpp
+                        // (ranked-list item 4 -- see prompt2.md/[[project_runner_parity_audit_findings]]):
+                        // DllRunner previously only ever called the 4 basic EncryptDecrypt*Test methods
+                        // above through the DLL boundary, even though ICryptoApiTester already declares
+                        // every CCryptoApiTester test method as pure virtual (so CCryptoApiTester,
+                        // constructed inside CryptoAPI.dll via CreateCryptoApiTester(), already implements
+                        // all of them -- no new interface/header/cpp plumbing needed, purely additive
+                        // calls here). Same PGP block, GetPeerKeyId block, and Certificate/CMS/Timestamp
+                        // block LibRunner/Main.cpp enables (#if 1) as of its own native test parity pass.
+                        pCryptoApiTester->RunPgpKeyGenerationTest();
+
+                        pCryptoApiTester->RunPgpEncryptDecryptTest();
+
+                        pCryptoApiTester->RunPgpSignVerifyTest();
+
+                        pCryptoApiTester->RunPgpClearSignTest();
+
+                        pCryptoApiTester->RunPgpArmorTest();
+
+                        pCryptoApiTester->RunPgpAliceBobTest();
+
+                        pCryptoApiTester->RunPgpFileEncryptDecryptTest();
+
+                        pCryptoApiTester->RunPgpFileSignVerifyTest();
+
+                        pCryptoApiTester->RunPgpEccFileStreamingTest();
+
+                        pCryptoApiTester->RunPgpGnuPgInteropTest();
+
+                        pCryptoApiTester->RunPgpKeyExpirationTest();
+
+                        pCryptoApiTester->RunPgpGnuPgRevocationInteropTest();
+
+                        pCryptoApiTester->RunPgpMultiRecipientEncryptDecryptTest();
+
+                        pCryptoApiTester->RunPgpMixedRecipientEncryptDecryptTest();
+
+                        pCryptoApiTester->RunPgpMultiRecipientFileEncryptDecryptTest();
+
+                        pCryptoApiTester->RunPgpGnuPgMultiRecipientInteropTest();
+
+                        pCryptoApiTester->RunPgpGnuPgMixedAlgorithmRecipientInteropTest();
+
+                        pCryptoApiTester->RunPgpEd25519KeyGenerationTest();
+
+                        pCryptoApiTester->RunPgpEd25519EncryptDecryptTest();
+
+                        pCryptoApiTester->RunPgpEd25519SignVerifyTest();
+
+                        pCryptoApiTester->RunPgpEd25519ClearSignTest();
+
+                        pCryptoApiTester->RunPgpGnuPgEd25519InteropTest();
+
+                        pCryptoApiTester->RunPgpEd25519KeyExpirationTest();
+
+                        pCryptoApiTester->RunPgpGnuPgEd25519RevocationInteropTest();
+
+                        pCryptoApiTester->RunPgpEncryptFileCompressedZipTest();
+
+                        pCryptoApiTester->RunPgpEncryptFileCompressedZlibTest();
+
+                        pCryptoApiTester->RunPgpEncryptFileCompressedEmptyFileTest();
+
+                        pCryptoApiTester->RunPgpEncryptFileCompressedLargeFileTest();
+
+                        pCryptoApiTester->RunPgpEncryptFileCompressedCancellationTest();
+
+                        pCryptoApiTester->RunPgpEncryptFileCompressedCorruptionTest();
+
+                        pCryptoApiTester->RunPgpGnuPgBzip2InteropTest();
+
+                        pCryptoApiTester->RunPgpGnuPgBzip2DecryptBufferInteropTest();
+
+                        pCryptoApiTester->RunPgpGnuPgPartialBodyLengthInteropTest();
+
+                        pCryptoApiTester->RunPgpInspectionEncryptedMessageTest();
+
+                        pCryptoApiTester->RunPgpInspectionMultiRecipientTest();
+
+                        pCryptoApiTester->RunPgpInspectionSignatureTest();
+
+                        pCryptoApiTester->RunPgpGnuPgInspectionInteropTest();
+
+                        pCryptoApiTester->RunPgpGetPeerKeyIdTest();
+
+                        pCryptoApiTester->RunPgpWrapperGetPeerKeyIdTest();
+
+                        pCryptoApiTester->RunPgpWrapperMultiRecipientEncryptStringArmoredTest();
+
+                        pCryptoApiTester->RunCertificateSelfSignedTest();
+
+                        pCryptoApiTester->RunCertificateDerPemRoundtripTest();
+
+                        pCryptoApiTester->RunCertificatePfxImportExportTest();
+
+                        pCryptoApiTester->RunCertificateCsrGenerationTest();
+
+                        pCryptoApiTester->RunCertificateCsrDerPemRoundtripTest();
+
+                        pCryptoApiTester->RunCertificateIssueFromRequestTest();
+
+                        pCryptoApiTester->RunCertificateChainValidTest();
+
+                        pCryptoApiTester->RunCertificateChainUntrustedRootTest();
+
+                        pCryptoApiTester->RunCertificateChainExpiredTest();
+
+                        pCryptoApiTester->RunCertificateChainRevokedTest();
+
+                        pCryptoApiTester->RunCertificateCrlCheckGoodTest();
+
+                        pCryptoApiTester->RunCertificateCrlCheckRevokedTest();
+
+                        pCryptoApiTester->RunCertificateCrlCheckStaleTest();
+
+                        pCryptoApiTester->RunCertificateCrlCheckWrongIssuerRejectionTest();
+
+                        pCryptoApiTester->RunCertificateChainCrypt32CdpFetchRevokedTest();
+
+                        pCryptoApiTester->RunCertificateStoreMemoryFindTest();
+
+                        pCryptoApiTester->RunCertificateStoreFindByFilterTest();
+
+                        pCryptoApiTester->RunCmsSignVerifyDetachedTest();
+
+                        pCryptoApiTester->RunCmsTamperedDataRejectionTest();
+
+                        pCryptoApiTester->RunCmsUntrustedSignerRejectionTest();
+
+                        pCryptoApiTester->RunCmsSigningCertificateV2AttributeTest();
+
+                        pCryptoApiTester->RunCmsVerifyDetachedSigningCertMismatchTest();
+
+                        pCryptoApiTester->RunTimestampRequestResponseRoundtripTest();
+
+                        pCryptoApiTester->RunTimestampVerifyTest();
+
+                        pCryptoApiTester->RunTimestampTamperedDigestRejectionTest();
 
                         pCryptoApiDllLoader->DestroyCryptoApiTesterObject(pCryptoApiTester);
                     }

@@ -258,6 +258,7 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
+    <ClInclude Include="..\..\..\src\Utils\SecureBuffer.h" />
     <ClInclude Include="..\..\..\src\Definitions\Definitions.h" />
     <ClInclude Include="..\..\..\src\Providers\RandomSource.h" />
     <ClInclude Include="..\..\..\src\Providers\KeyDerivation.h" />
@@ -319,6 +320,7 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
+    <ClCompile Include="..\..\..\src\Utils\SecureBuffer.cpp" />
     <ClCompile Include="..\..\..\src\Providers\RandomSource.cpp" />
     <ClCompile Include="..\..\..\src\Providers\KeyDerivation.cpp" />
     <ClCompile Include="..\..\..\src\Providers\AeadCipher.cpp" />

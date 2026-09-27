@@ -1658,6 +1658,8 @@ int main()
 
         cryptoApiTester.RunCertificateCrlCheckWrongIssuerRejectionTest();
 
+        cryptoApiTester.RunCertificateChainCrypt32CdpFetchRevokedTest();
+
         cryptoApiTester.RunCertificateStoreMemoryFindTest();
 
         cryptoApiTester.RunCertificateStoreFindByFilterTest();
@@ -1669,6 +1671,8 @@ int main()
         cryptoApiTester.RunCmsUntrustedSignerRejectionTest();
 
         cryptoApiTester.RunCmsSigningCertificateV2AttributeTest();
+
+        cryptoApiTester.RunCmsVerifyDetachedSigningCertMismatchTest();
 
         cryptoApiTester.RunTimestampRequestResponseRoundtripTest();
 

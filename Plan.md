@@ -1000,6 +1000,32 @@ libssh2 ve onun crypto backend'i sürüm/toolchain bazında pinlenir. Classic C+
 
 Port forwarding eklenirse bind adresi/port, hedef izinleri ve bağlantı sayısı açık politikadır. SSH server eklenirse host key saklama, kullanıcı authentication/authorization, kanal türleri ve remote command çalıştırma sınırları ayrı tasarımdan geçer; libssh2 client API'sine server özelliği atfedilmez.
 
+### 27.7 libssh2 örnek programları (referans TODO, henüz taranmadı/işlenmedi)
+
+`3rdParty/libssh2-1.11.1` eklendi (henüz derlemeye/projeye bağlanmadı, henüz §27 implementasyonu başlamadı). [libssh2.org/examples](https://libssh2.org/examples/) sayfasındaki örnekler, §27.2-27.4'teki sınıf/API tasarımını somutlaştırırken referans alınacak — her biri kendi C API çağrı örüntüsünü gösteriyor, bu SDK'nın kendi soyutlamasına (`SshClient`/`SshChannel`/`SftpClient`) nasıl eşleneceği ayrı bir tasarım kararı:
+
+| Dosya | Ne gösteriyor | İlgili bölüm |
+| --- | --- | --- |
+| `ssh2.c` | Temel SSH bağlantısı ve authentication | §27.2, §27.3 |
+| `ssh2_agent.c` | SSH agent ile authentication | §27.3 |
+| `ssh2_agent_forwarding.c` | SSH agent forwarding | §27.3 (sonraki capability) |
+| `ssh2_exec.c` | Uzak komut çalıştırma (`execute`) | §27.4 |
+| `ssh2_echo.c` | Uzak komut + echo | §27.4 |
+| `subsystem_netconf.c` | NETCONF subsystem kanalı | §27.4 (özel subsystem örneği) |
+| `sftp.c` | Temel SFTP dosya aktarımı | §27.4 |
+| `sftp_nonblock.c` / `sftp_RW_nonblock.c` | Nonblocking SFTP read/write | §27.5 (WouldBlock/EAGAIN modeli) |
+| `sftp_write.c` / `sftp_write_nonblock.c` / `sftp_write_sliding.c` | SFTP yazma (sliding window dahil) | §27.4 |
+| `sftp_append.c` | SFTP dosyaya ekleme | §27.4 |
+| `sftp_mkdir.c` / `sftp_mkdir_nonblock.c` | SFTP dizin oluşturma | §27.4 |
+| `sftpdir.c` / `sftpdir_nonblock.c` | SFTP dizin listeleme | §27.4 |
+| `scp.c` / `scp_nonblock.c` | SCP dosya indirme | §27.4 (SCP, varsayılan değil) |
+| `scp_write.c` / `scp_write_nonblock.c` | SCP dosya yükleme | §27.4 |
+| `direct_tcpip.c` | Doğrudan TCP/IP tünelleme | §27.6 (port forwarding, sonraki capability) |
+| `tcpip-forward.c` | Ters TCP/IP port forwarding | §27.6 (port forwarding, sonraki capability) |
+| `x11.c` | X11 forwarding | §27.6 (kapsam dışına yakın, ayrı karar gerektirir) |
+
+Bu tablo sadece envanterdir; §27'nin kendisi henüz "hiç başlanmamış" durumda (bkz. Plan.md'nin en büyük/kullanıcı-onayı-gerektiren madde listesi) — kullanıcı onayı olmadan implementasyona başlanmayacak.
+
 Kabul testleri: bilinmeyen/değişmiş host key, doğru/yanlış credentials, çok turlu challenge, encrypted key, algoritma uyuşmazlığı, short I/O, rekey sırasında aktarım, stdout/stderr baskısı, exit status/signal, bağlantı kopması, iptal ve timeout. SFTP için boş/büyük dosya, Unicode/ad çakışması, path traversal, disk dolması, remote permission, rename capability ve kısmi batch sonucu test edilir. DLL/LIB Runner ve CLI aynı test sunucusunda aynı sonuç sözleşmesini doğrular; harici komut ve transfer testleri yalnız izole fixture hedeflerinde yürütülür.
 
 ## 28. Teknik kaynaklar

@@ -946,6 +946,13 @@ public:
     // fails, expects REVOCATION_STATUS_UNKNOWN.
     int RunCertificateCrlCheckWrongIssuerRejectionTest(void) override;
 
+    // Builds a leaf certificate whose CRL Distribution Points extension points at a file:// URL,
+    // writes a real CA-signed CRL revoking that leaf's serial to exactly that path, then calls
+    // ValidateChain(REVOCATION_MODE_REQUIRED, REVOCATION_NETWORK_ONLINE) so Windows Crypt32 itself
+    // (CertGetCertificateChain) fetches and parses the CRL -- exercising the CDP-fetch path the CRL
+    // checks above never touch. Expects REVOCATION_STATUS_REVOKED.
+    int RunCertificateChainCrypt32CdpFetchRevokedTest(void) override;
+
     // OpenStore(CERTIFICATE_STORE_MEMORY), AddCertificateToStore a self-signed certificate,
     // FindCertificateInStoreBySubject by its CN substring, confirm the returned DER matches;
     // CloseStore. Never touches the real machine's CurrentUser/LocalMachine stores.
@@ -983,11 +990,19 @@ public:
     // CCmsService::VerifyDetached's own new check relies on: confirms it reports a match against
     // the real signer certificate, and confirms it correctly REJECTS an unrelated second
     // certificate. Does not exercise CMS_VERIFICATION_SIGNING_CERT_MISMATCH end-to-end through
-    // VerifyDetached itself -- that would need tampering with the CMS structure's embedded
-    // certificate to swap in a different, same-key certificate after signing (a real-world
-    // substitution scenario, but not constructible through this SDK's own public API without
-    // reaching into CMS ASN.1 internals well beyond what OpenSSL exposes for that).
+    // VerifyDetached itself -- see RunCmsVerifyDetachedSigningCertMismatchTest below for that.
     int RunCmsSigningCertificateV2AttributeTest(void) override;
+
+    // Closes the gap the comment above used to describe as unreachable: builds a real CMS blob
+    // whose embedded certificate + SignerInfo both name a "substitute" certificate (a different
+    // identity sharing the true signer's key pair), while the RSA-signature-covered
+    // signing-certificate-v2 attribute still names the true signer's certificate -- exactly the
+    // certificate-substitution attack RFC 5035 defends against. Built directly via CMS_sign/
+    // CMS_add1_signer/CMS_final's own public OpenSSL API (choosing which certificate goes to which
+    // call), not by reaching into CMS ASN.1 internals -- the resulting DER bytes are indistinguishable
+    // from genuine post-signing tampering, and CCmsService::VerifyDetached is called on the real
+    // encoded blob like any other CMS input. Expects CMS_VERIFICATION_SIGNING_CERT_MISMATCH.
+    int RunCmsVerifyDetachedSigningCertMismatchTest(void) override;
 
     // CTimestampService::CreateTimestampRequest over a SHA-256 digest, RequestTimestampFromTsa
     // against a real public RFC 3161 TSA (network-dependent, same "hit the real external tool"
