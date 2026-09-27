@@ -83,6 +83,12 @@ public:
 
     bool IsGnuPgAvailable(void) const override;
 
+    // See IPgpEngineWrapper.h's own header comment for both of these -- lets a caller opt out of the
+    // default temp-and-auto-deleted --homedir in favor of a persistent one shared across separate
+    // process invocations (the AppRunner CLI harness's pgp-* actions use this).
+    int SetHomeDir(const char* homeDir, const int homeDirSize) override;
+    int LoadOwnIdentity(void) override;
+
     // ============================================================================================
     // Identity (own key pair) -- delegates to "gpg --batch --gen-key" with a generated parameter
     // file (RSA sign+certify master key, RSA encrypt-only subkey, exactly mirroring CPgpEngine's

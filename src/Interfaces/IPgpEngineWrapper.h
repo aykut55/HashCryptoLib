@@ -40,6 +40,22 @@ public:
 
     virtual bool IsGnuPgAvailable(void) const = 0;
 
+    // Switches this instance from its auto-generated temporary --homedir to a caller-supplied
+    // persistent one. Must be called before any other operation (GenerateKeyPair/LoadOwnIdentity/
+    // etc.) if used at all. Creates homeDir if it does not already exist. Unlike the default temp
+    // homedir, a caller-supplied one is NOT removed by the destructor -- it is meant to survive
+    // process exit so a LATER, separate process can reconnect to the same identity via
+    // LoadOwnIdentity below. Returns UNEXPECTED_ERROR if homeDir cannot be created/accessed.
+    virtual int SetHomeDir(const char* homeDir, const int homeDirSize) = 0;
+
+    // Scans the keyring under this instance's current --homedir for an existing secret key and, if
+    // exactly one is found, adopts it as this instance's own identity -- the same state
+    // GenerateKeyPair sets right after it succeeds. This is what lets a fresh process (a later,
+    // separate CLI invocation pointed at the same SetHomeDir directory) reconnect to an identity an
+    // earlier process generated, without regenerating it. Returns INVALID_DATA if zero or more than
+    // one secret key is present (ambiguous; only a single identity per homedir is supported).
+    virtual int LoadOwnIdentity(void) = 0;
+
     virtual int GenerateKeyPair( const char* userId, const int userIdSize,
                                 const char* password, const int passwordSize) = 0;
 

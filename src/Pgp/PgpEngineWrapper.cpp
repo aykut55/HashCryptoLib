@@ -415,6 +415,28 @@ std::string keyIdFromFingerprint(const std::string& fingerprint)
 }
 // -----------------------------------------------------------------------------
 
+// Counts how many "sec" colon records (primary secret keys, one per DISTINCT IDENTITY) appear when
+// the caller ran --list-secret-keys --with-colons --fingerprint -- used by LoadOwnIdentity to reject
+// an ambiguous homedir (zero or more than one identity) rather than silently picking one. Counting
+// "fpr" records instead would overcount: gpg emits one "fpr" line for the primary key AND one more
+// per subkey (e.g. the encryption subkey every identity here has), so a single identity already
+// produces two "fpr" lines.
+int countSecretIdentitiesInColonOutput(const std::string& colonOutput)
+{
+    int count = 0;
+    std::istringstream lineStream(colonOutput);
+    std::string line;
+    while (std::getline(lineStream, line))
+    {
+        if (line.rfind("sec:", 0) == 0)
+        {
+            ++count;
+        }
+    }
+    return count;
+}
+// -----------------------------------------------------------------------------
+
 // The colon-format "fpr" record (RFC-less, gpg's own --with-colons convention) is
 // "fpr:::::::::<fingerprint>:" -- field 10 (1-indexed), i.e. index 9 when split on ':'.
 bool findFirstFingerprintInColonOutput(const std::string& colonOutput, std::string& fingerprintOut)
@@ -900,6 +922,7 @@ struct CPgpEngineWrapper::Impl
     std::string gpgExePath;
     bool homeDirReady;
     std::string homeDir;
+    bool homeDirIsCallerOwned;
     int rsaKeyBits;
     int tempFileCounter;
 
@@ -956,10 +979,13 @@ struct CPgpEngineWrapper::Impl
                         std::string& outArmored);
 
     int listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing);
+
+    int setHomeDirInternal(const char* newHomeDir, const int newHomeDirSize);
+    int loadOwnIdentityInternal(void);
 };
 // -----------------------------------------------------------------------------
 
-CPgpEngineWrapper::Impl::Impl() : gpgFound(false), homeDirReady(false), rsaKeyBits(2048), tempFileCounter(0),
+CPgpEngineWrapper::Impl::Impl() : gpgFound(false), homeDirReady(false), homeDirIsCallerOwned(false), rsaKeyBits(2048), tempFileCounter(0),
                                    ownKeyGenerated(false), keyExpirationSeconds(0)
 {
     try
@@ -994,7 +1020,7 @@ CPgpEngineWrapper::Impl::~Impl()
 {
     try
     {
-        if (!homeDir.empty())
+        if (!homeDir.empty() && !homeDirIsCallerOwned)
         {
             std::error_code removalError;
             std::filesystem::remove_all(homeDir, removalError);
@@ -1024,6 +1050,113 @@ std::vector<std::string> CPgpEngineWrapper::Impl::baseArgs(void) const
     args.push_back("--batch");
     args.push_back("--yes");
     return args;
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::setHomeDirInternal(const char* newHomeDir, const int newHomeDirSize)
+{
+    try
+    {
+        if (newHomeDir == nullptr || newHomeDirSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        const std::string newHomeDirStr(newHomeDir, static_cast<std::size_t>(newHomeDirSize));
+
+        std::error_code creationError;
+        const bool ready = std::filesystem::create_directories(newHomeDirStr, creationError) || std::filesystem::exists(newHomeDirStr);
+        if (!ready)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // Clean up the constructor's auto-generated temp homedir (now abandoned, unused) -- but only
+        // if it really was the auto-generated one, never a previously-set caller-owned directory.
+        if (!homeDir.empty() && !homeDirIsCallerOwned && homeDir != newHomeDirStr)
+        {
+            std::error_code removalError;
+            std::filesystem::remove_all(homeDir, removalError);
+        }
+
+        homeDir = newHomeDirStr;
+        homeDirReady = true;
+        homeDirIsCallerOwned = true;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::loadOwnIdentityInternal(void)
+{
+    try
+    {
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::string> listArgs = baseArgs();
+        listArgs.push_back("--with-colons");
+        listArgs.push_back("--fingerprint");
+        listArgs.push_back("--list-secret-keys");
+        const GpgProcessResult listResult = runGpgProcess(listArgs, std::string());
+        if (!listResult.started)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // Only a single identity per homedir is supported -- ambiguous (zero or multiple secret
+        // keys) is rejected rather than silently guessing which one the caller meant.
+        if (countSecretIdentitiesInColonOutput(listResult.output) != 1)
+        {
+            return INVALID_DATA;
+        }
+
+        std::string fingerprint;
+        if (!findFirstFingerprintInColonOutput(listResult.output, fingerprint))
+        {
+            return UNEXPECTED_ERROR;
+        }
+        const std::string keyId = keyIdFromFingerprint(fingerprint);
+        if (keyId.size() != 16)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::string> exportPubArgs = baseArgs();
+        exportPubArgs.push_back("--armor");
+        exportPubArgs.push_back("--export");
+        exportPubArgs.push_back(keyId);
+        const GpgProcessResult exportPubResult = runGpgProcess(exportPubArgs, std::string());
+        if (!exportPubResult.started || exportPubResult.exitCode != 0 ||
+            exportPubResult.output.find("-----BEGIN PGP PUBLIC KEY BLOCK-----") == std::string::npos)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // ownSecretKeyArmored is deliberately left empty -- exporting it needs the passphrase, which
+        // LoadOwnIdentity does not take; ExportSecretKeyArmored is simply not usable after a
+        // LoadOwnIdentity (only after a real GenerateKeyPair in this same process), a documented
+        // limitation, not a silent bug.
+        ownKeyGenerated = true;
+        ownKeyId = keyId;
+        ownKeyFingerprint = fingerprint;
+        ownPublicKeyArmored = exportPubResult.output;
+        ownSecretKeyArmored.clear();
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
 }
 // -----------------------------------------------------------------------------
 
@@ -1676,9 +1809,9 @@ int CPgpEngineWrapper::Impl::importPeerPublicKeyCommon(const unsigned char* keyB
         args.push_back(path);
 
         const GpgProcessResult result = runGpgProcess(args, std::string());
-        std::remove(path.c_str());
         if (!result.started)
         {
+            std::remove(path.c_str());
             return UNEXPECTED_ERROR;
         }
 
@@ -1690,12 +1823,37 @@ int CPgpEngineWrapper::Impl::importPeerPublicKeyCommon(const unsigned char* keyB
             // exiting non-zero on unrelated trustdb bookkeeping -- an IMPORTED status line is
             // treated as the real verdict here regardless of exit code, same philosophy as
             // RevokeKeyArmored using "did the output file get written" as its own verdict.
+            std::remove(path.c_str());
             newKeyIdOut = keyId;
             return NO_ERROR;
         }
         if (result.exitCode != 0)
         {
+            std::remove(path.c_str());
             return UNEXPECTED_ERROR;
+        }
+
+        // No "IMPORTED" status line but exit code 0 -- gpg's own way of reporting a key that was
+        // ALREADY present, unchanged (e.g. importing your own public key back as a "peer", the
+        // self-encrypt/self-verify scenario). That is not a failure; read the key's own fingerprint
+        // directly from the file (gpg --show-keys works offline, independent of keyring/import
+        // state) rather than treating "nothing new imported" as an error.
+        std::vector<std::string> showArgs = baseArgs();
+        showArgs.push_back("--with-colons");
+        showArgs.push_back("--show-keys");
+        showArgs.push_back(path);
+        const GpgProcessResult showResult = runGpgProcess(showArgs, std::string());
+        std::remove(path.c_str());
+
+        std::string fingerprint;
+        if (showResult.started && findFirstFingerprintInColonOutput(showResult.output, fingerprint))
+        {
+            const std::string derivedKeyId = keyIdFromFingerprint(fingerprint);
+            if (derivedKeyId.size() == 16)
+            {
+                newKeyIdOut = derivedKeyId;
+                return NO_ERROR;
+            }
         }
         return INVALID_DATA;
     }
@@ -1917,6 +2075,40 @@ bool CPgpEngineWrapper::IsGnuPgAvailable(void) const
     catch (...)
     {
         return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::SetHomeDir(const char* homeDir, const int homeDirSize)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return impl_->setHomeDirInternal(homeDir, homeDirSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::LoadOwnIdentity(void)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return impl_->loadOwnIdentityInternal();
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
     }
 }
 // -----------------------------------------------------------------------------

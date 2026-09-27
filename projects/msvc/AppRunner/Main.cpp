@@ -8,7 +8,9 @@
 // to spawn an arbitrary exe path instead of a hardcoded "gpg.exe") -- kept local rather than
 // extracted into a shared header, since it originated as .cpp-local code there too.
 
+#include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -402,18 +404,98 @@ void runUsageExamples()
 }
 // -----------------------------------------------------------------------------
 
+// Creates a fresh, unique temp directory to use as the shared -keyhome for one runPgpUsageExamples()
+// run -- same uniqueness rationale as CryptoApiTester.cpp's own GenerateUniqueGnuPgHomeDir (a fixed
+// name risks colliding with stale keyring/agent state from a previous run).
+std::string createUniquePgpKeyHome()
+{
+    char tempPathBuffer[MAX_PATH];
+    const DWORD tempPathLen = GetTempPathA(MAX_PATH, tempPathBuffer);
+    std::string base = (tempPathLen > 0 && tempPathLen < MAX_PATH) ? std::string(tempPathBuffer, tempPathLen) : std::string("C:\\Windows\\Temp\\");
+    if (!base.empty() && base[base.size() - 1] != '\\')
+    {
+        base.push_back('\\');
+    }
+
+    std::ostringstream nameStream;
+    nameStream << "apprunner_pgp_examples_" << GetCurrentProcessId() << "_" << GetTickCount64();
+    return base + nameStream.str();
+}
+// -----------------------------------------------------------------------------
+
+// Triggered by `AppRunner.exe -pgp-examples`: the gpg.exe-style discrete PGP commands, driven the
+// way a real gpg.exe user actually works -- generate a key ONCE, then use it across separate, later
+// invocations, all sharing one persistent -keyhome (see SetHomeDir/LoadOwnIdentity in
+// PgpEngineWrapper.h for how that persistence works). Every step below is a REAL separate spawned
+// AppBuilder.exe process via the same runExample() used by runUsageExamples() -- nothing here is a
+// bundled single-call demo.
+void runPgpUsageExamples()
+{
+    std::cout << "=== AppRunner PGP kullanim ornekleri (gpg.exe benzeri, gercek ayri invocation'lar) ===" << std::endl;
+
+    const std::string keyHome = createUniquePgpKeyHome();
+
+    printSectionHeader("1) pgp-check -- GnuPG bu makinede kurulu mu?");
+    const std::string availability = runExample("AppBuilder.exe", { "-action", "pgp-check", "-keyhome", keyHome });
+    if (availability.find("yes") == std::string::npos)
+    {
+        std::cout << "GnuPG bulunamadi -- kalan PGP ornekleri atlaniyor." << std::endl;
+        std::error_code removeError;
+        std::filesystem::remove_all(keyHome, removeError);
+        return;
+    }
+
+    printSectionHeader("2) pgp-gen-key -- yeni bir kimlik uretiliyor (SADECE bu adimda)");
+    runExample( "AppBuilder.exe",
+               { "-action", "pgp-gen-key", "-keyhome", keyHome, "-userid", "AppRunner PGP Demo <pgp-demo@example.com>",
+                "-password", "demo123" });
+
+    printSectionHeader("3) pgp-list-keys -- AYRI bir invocation, ayni keyhome'daki anahtar goruluyor");
+    runExample("AppBuilder.exe", { "-action", "pgp-list-keys", "-keyhome", keyHome });
+
+    printSectionHeader("4) pgp-export-key -- AYRI bir invocation");
+    runExample("AppBuilder.exe", { "-action", "pgp-export-key", "-keyhome", keyHome });
+
+    printSectionHeader("5) pgp-encrypt -- AYRI bir invocation (kendi kendine sifreliyor)");
+    const std::string encrypted = runExample( "AppBuilder.exe",
+                                              { "-action", "pgp-encrypt", "-keyhome", keyHome, "-password", "demo123",
+                                               "-input", "merhaba dunya, bu gercek bir PGP mesaji" });
+
+    printSectionHeader("6) pgp-decrypt -- AYRI bir invocation, adim 5'in gercek ciktisini kullaniyor");
+    runExample("AppBuilder.exe", { "-action", "pgp-decrypt", "-keyhome", keyHome, "-password", "demo123", "-input", encrypted });
+
+    printSectionHeader("7) pgp-sign -- AYRI bir invocation");
+    const std::string signedText = runExample( "AppBuilder.exe",
+                                               { "-action", "pgp-sign", "-keyhome", keyHome, "-password", "demo123",
+                                                "-input", "bu metni imzaliyorum" });
+
+    printSectionHeader("8) pgp-verify -- AYRI bir invocation, adim 7'nin gercek ciktisini kullaniyor");
+    runExample("AppBuilder.exe", { "-action", "pgp-verify", "-keyhome", keyHome, "-input", signedText });
+
+    std::error_code removeError;
+    std::filesystem::remove_all(keyHome, removeError);
+    std::cout << "=== PGP ornekleri tamamlandi (keyhome temizlendi) ===" << std::endl;
+}
+// -----------------------------------------------------------------------------
+
 } // anonymous namespace
 
 int main()
 {
     const std::vector<std::string> args = getUtf8CommandLineArgs();
 
-    // -examples runs the whole usage-example sequence and exits -- takes no other arguments.
+    // -examples / -pgp-examples run their whole usage-example sequence and exit -- take no other
+    // arguments.
     for (std::size_t i = 0; i < args.size(); ++i)
     {
         if (args[i] == "-examples" || args[i] == "--examples")
         {
             runUsageExamples();
+            return 0;
+        }
+        if (args[i] == "-pgp-examples" || args[i] == "--pgp-examples")
+        {
+            runPgpUsageExamples();
             return 0;
         }
     }

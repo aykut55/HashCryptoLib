@@ -1,6 +1,37 @@
 #include "CommandLineParser.h"
 
+#include <cctype>
 #include <cstdlib>
+
+namespace
+{
+
+// A token is an option name (e.g. "-input"/"--input") only when a letter immediately follows its
+// leading dash(es) -- NOT any token that merely starts with '-'. This matters because PGP-armored
+// text (this parser's own values in practice, e.g. "-----BEGIN PGP MESSAGE-----...") also starts
+// with dashes; without this distinction, an armored block passed as an option's value would be
+// mistaken for the start of a new option, leaving the real option valueless and the armored block
+// stranded as a positional argument instead.
+bool looksLikeOptionToken(const std::string& token)
+{
+    if (token.size() < 2 || token[0] != '-')
+    {
+        return false;
+    }
+    std::size_t nameStart = 1;
+    if (token[1] == '-')
+    {
+        nameStart = 2;
+    }
+    if (nameStart >= token.size())
+    {
+        return false;
+    }
+    return std::isalpha(static_cast<unsigned char>(token[nameStart])) != 0;
+}
+// -----------------------------------------------------------------------------
+
+} // anonymous namespace
 
 namespace CryptoApiNS
 {
@@ -25,20 +56,16 @@ bool CCommandLineParser::Parse(const std::vector<std::string>& utf8Argv)
         for (std::size_t i = 0; i < utf8Argv.size(); ++i)
         {
             const std::string& token = utf8Argv[i];
-            if (token.empty() || token[0] != '-')
+            if (!looksLikeOptionToken(token))
             {
                 positionals_.push_back(token);
                 continue;
             }
 
-            std::size_t nameStart = 1;
-            if (token.size() > 1 && token[1] == '-')
-            {
-                nameStart = 2;
-            }
+            const std::size_t nameStart = (token[1] == '-') ? 2 : 1;
             const std::string name = token.substr(nameStart);
 
-            if (i + 1 < utf8Argv.size() && !utf8Argv[i + 1].empty() && utf8Argv[i + 1][0] != '-')
+            if (i + 1 < utf8Argv.size() && !looksLikeOptionToken(utf8Argv[i + 1]))
             {
                 options_.emplace_back(name, utf8Argv[i + 1]);
                 ++i;
