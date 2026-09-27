@@ -105,6 +105,9 @@ public:
     // empty string before GenerateKeyPair() succeeds. outputBufferCapacity must be >= 17.
     int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const override;
 
+    // Full RFC 4880 v4 fingerprint (40 hex chars) -- see IPgpEngine.h's own comment.
+    int GetKeyFingerprint(char* outputBuffer, const int outputBufferCapacity) const override;
+
     // GenerateKeyPair() must have succeeded first; password must match the one it was called
     // with. Produces a standalone RFC 4880 key revocation certificate (signature type 0x20),
     // armored under "-----BEGIN PGP PUBLIC KEY BLOCK-----" (the same label a real public key

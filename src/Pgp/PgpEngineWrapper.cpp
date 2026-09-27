@@ -923,6 +923,7 @@ struct CPgpEngineWrapper::Impl
     bool homeDirReady;
     std::string homeDir;
     bool homeDirIsCallerOwned;
+    std::string cipherPreferenceOverride; // empty = use gpg's own default; otherwise a raw gpg cipher name (e.g. "AES256"), passed through --personal-cipher-preferences verbatim -- gpg validates the name itself.
     int rsaKeyBits;
     int tempFileCounter;
 
@@ -1316,6 +1317,11 @@ int CPgpEngineWrapper::Impl::encryptCommon( const unsigned char* inputBuffer, co
             args.push_back("--compress-algo");
             args.push_back(compressionAlgorithmToGpgName(compressionAlgorithm));
         }
+        if (!cipherPreferenceOverride.empty())
+        {
+            args.push_back("--personal-cipher-preferences");
+            args.push_back(cipherPreferenceOverride);
+        }
         for (std::size_t i = 0; i < recipientIds.size(); ++i)
         {
             args.push_back("-r");
@@ -1392,6 +1398,11 @@ int CPgpEngineWrapper::Impl::encryptSymmetricCommon( const char* passphrase, con
         args.push_back("loopback");
         args.push_back("--passphrase-fd");
         args.push_back("0");
+        if (!cipherPreferenceOverride.empty())
+        {
+            args.push_back("--personal-cipher-preferences");
+            args.push_back(cipherPreferenceOverride);
+        }
         if (armor)
         {
             args.push_back("--armor");
@@ -2113,6 +2124,26 @@ int CPgpEngineWrapper::LoadOwnIdentity(void)
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngineWrapper::SetCipherPreference(const char* cipherName, const int cipherNameSize)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        impl_->cipherPreferenceOverride = (cipherName != nullptr && cipherNameSize > 0)
+            ? std::string(cipherName, static_cast<std::size_t>(cipherNameSize))
+            : std::string();
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngineWrapper::GenerateKeyPair(const char* userId, const int userIdSize, const char* password, const int passwordSize)
 {
     return GenerateKeyPair(userId, userIdSize, password, passwordSize, 0);
@@ -2275,6 +2306,30 @@ int CPgpEngineWrapper::GetKeyId(char* outputBuffer, const int outputBufferCapaci
         }
         std::memcpy(outputBuffer, impl_->ownKeyId.data(), 16);
         outputBuffer[16] = '\0';
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::GetKeyFingerprint(char* outputBuffer, const int outputBufferCapacity) const
+{
+    try
+    {
+        if (!impl_ || outputBuffer == nullptr || outputBufferCapacity < 41)
+        {
+            return BUFFER_TOO_SMALL;
+        }
+        if (!impl_->ownKeyGenerated || impl_->ownKeyFingerprint.size() != 40)
+        {
+            outputBuffer[0] = '\0';
+            return NO_ERROR;
+        }
+        std::memcpy(outputBuffer, impl_->ownKeyFingerprint.data(), 40);
+        outputBuffer[40] = '\0';
         return NO_ERROR;
     }
     catch (...)

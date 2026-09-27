@@ -89,6 +89,9 @@ public:
     int SetHomeDir(const char* homeDir, const int homeDirSize) override;
     int LoadOwnIdentity(void) override;
 
+    // See IPgpEngineWrapper.h's own comment.
+    int SetCipherPreference(const char* cipherName, const int cipherNameSize) override;
+
     // ============================================================================================
     // Identity (own key pair) -- delegates to "gpg --batch --gen-key" with a generated parameter
     // file (RSA sign+certify master key, RSA encrypt-only subkey, exactly mirroring CPgpEngine's
@@ -152,6 +155,9 @@ public:
     // reported by gpg itself; empty string before GenerateKeyPair()/GenerateKeyPairEcc() succeeds.
     // outputBufferCapacity must be >= 17.
     int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const override;
+
+    // Full RFC 4880 v4 fingerprint (40 hex chars) -- see IPgpEngineWrapper.h's own comment.
+    int GetKeyFingerprint(char* outputBuffer, const int outputBufferCapacity) const override;
 
     // GenerateKeyPair()/GenerateKeyPairEcc() must have succeeded first; password must match the one
     // it was called with. Delegates to "gpg --generate-revocation" (scripted via --command-fd/

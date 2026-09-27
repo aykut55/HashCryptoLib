@@ -99,6 +99,7 @@ struct CPgpEngine::Impl
 
     unsigned char ownMasterKeyId[8];
     unsigned char ownSubkeyKeyId[8];
+    unsigned char ownMasterFingerprint[20]; // full RFC 4880 v4 fingerprint, exposed via GetKeyFingerprint -- ownMasterKeyId above is just its low 8 bytes.
     unsigned char ownSubkeyFingerprint[20]; // needed by the ECDH KDF when decrypting a PKESK addressed to our own X25519 encryption subkey.
     unsigned char passwordCheckHash[32];
     std::string ownPublicKeyArmored;
@@ -129,6 +130,7 @@ struct CPgpEngine::Impl
         std::memset(ownX25519PublicKey, 0, 32);
         std::memset(ownMasterKeyId, 0, 8);
         std::memset(ownSubkeyKeyId, 0, 8);
+        std::memset(ownMasterFingerprint, 0, 20);
         std::memset(ownSubkeyFingerprint, 0, 20);
         std::memset(passwordCheckHash, 0, 32);
         std::memset(peerEd25519PublicKey, 0, 32);
@@ -5630,9 +5632,14 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
         std::memcpy(impl_->ownMasterKeyId, masterKeyId, 8);
         std::memcpy(impl_->ownSubkeyKeyId, subkeyKeyId, 8);
         {
-            // Recomputed from subkeyPubBody rather than threading the per-branch local fingerprint
-            // variable out of the if/else above -- cheap (one SHA-1) and keeps both branches
-            // symmetric.
+            // Recomputed from masterPubBody/subkeyPubBody rather than threading the per-branch local
+            // fingerprint variables out of the if/else above -- cheap (one SHA-1 each) and keeps both
+            // branches symmetric.
+            unsigned char masterFingerprintForStorage[20];
+            unsigned char masterKeyIdRecomputed[8];
+            computeFingerprintAndKeyId(masterPubBody, masterFingerprintForStorage, masterKeyIdRecomputed);
+            std::memcpy(impl_->ownMasterFingerprint, masterFingerprintForStorage, 20);
+
             unsigned char subkeyFingerprintForStorage[20];
             unsigned char subkeyKeyIdRecomputed[8];
             computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprintForStorage, subkeyKeyIdRecomputed);
@@ -5759,6 +5766,35 @@ int CPgpEngine::GetKeyId(char* outputBuffer, const int outputBufferCapacity) con
             outputBuffer[i * 2 + 1] = hexDigits[impl_->ownMasterKeyId[i] & 0xF];
         }
         outputBuffer[16] = '\0';
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetKeyFingerprint(char* outputBuffer, const int outputBufferCapacity) const
+{
+    try
+    {
+        if (!impl_ || outputBuffer == nullptr || outputBufferCapacity < 41)
+        {
+            return BUFFER_TOO_SMALL;
+        }
+        if (!impl_->ownKeyGenerated)
+        {
+            outputBuffer[0] = '\0';
+            return NO_ERROR;
+        }
+        static const char* hexDigits = "0123456789ABCDEF";
+        for (int i = 0; i < 20; ++i)
+        {
+            outputBuffer[i * 2] = hexDigits[(impl_->ownMasterFingerprint[i] >> 4) & 0xF];
+            outputBuffer[i * 2 + 1] = hexDigits[impl_->ownMasterFingerprint[i] & 0xF];
+        }
+        outputBuffer[40] = '\0';
         return NO_ERROR;
     }
     catch (...)

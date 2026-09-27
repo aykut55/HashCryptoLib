@@ -244,6 +244,12 @@ bool setUpPgpWrapper(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS:
                      "locally installed GnuPG/Gpg4win" << std::endl;
         return false;
     }
+    const std::string cipher = parser.GetString("cipher", "");
+    if (!cipher.empty() && wrapper.SetCipherPreference(cipher.c_str(), static_cast<int>(cipher.size())) != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SetCipherPreference(" << cipher << ") failed" << std::endl;
+        return false;
+    }
     return true;
 }
 // -----------------------------------------------------------------------------
@@ -335,6 +341,33 @@ int runCliActionPgpExportKey(const CryptoApiNS::CCommandLineParser& parser)
         return 1;
     }
     std::cout << std::string(armored, static_cast<std::size_t>(armoredSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpFingerprint(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- no (or more than one) identity in keyhome " << keyHome << std::endl;
+        return 1;
+    }
+
+    char fingerprint[64];
+    const int status = wrapper.GetKeyFingerprint(fingerprint, sizeof(fingerprint));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "GetKeyFingerprint failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << fingerprint << std::endl;
     return 0;
 }
 // -----------------------------------------------------------------------------
@@ -512,12 +545,14 @@ int runCliActionListActions(void)
         "  pgp-gen-key             [-keyhome DIR] [-userid ID] -password X\n"
         "  pgp-list-keys           [-keyhome DIR]\n"
         "  pgp-export-key          [-keyhome DIR]\n"
-        "  pgp-encrypt             [-keyhome DIR] -password X -input TEXT\n"
+        "  pgp-fingerprint         [-keyhome DIR]                       (tam 40 hex karakterlik RFC4880 fingerprint)\n"
+        "  pgp-encrypt             [-keyhome DIR] [-cipher NAME] -password X -input TEXT\n"
         "  pgp-decrypt             [-keyhome DIR] -password X -input ARMORED\n"
         "  pgp-sign                [-keyhome DIR] -password X -input TEXT\n"
         "  pgp-verify              [-keyhome DIR] -input ARMORED\n"
         "\n"
-        "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n";
+        "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n"
+        "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n";
     return 0;
 }
 // -----------------------------------------------------------------------------
@@ -562,6 +597,10 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
     {
         return runCliActionPgpExportKey(parser);
     }
+    if (action == "pgp-fingerprint")
+    {
+        return runCliActionPgpFingerprint(parser);
+    }
     if (action == "pgp-encrypt")
     {
         return runCliActionPgpEncrypt(parser);
@@ -589,8 +628,8 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
 
     std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
                  "decrypt-string, pgp-roundtrip, pgp-check, pgp-gen-key, pgp-list-keys, "
-                 "pgp-export-key, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, run-tests, "
-                 "list-actions (run -action list-actions for full usage)" << std::endl;
+                 "pgp-export-key, pgp-fingerprint, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
+                 "run-tests, list-actions (run -action list-actions for full usage)" << std::endl;
     return 2;
 }
 // -----------------------------------------------------------------------------

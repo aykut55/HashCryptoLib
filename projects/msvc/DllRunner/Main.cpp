@@ -236,6 +236,12 @@ bool setUpPgpWrapper(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS:
                      "locally installed GnuPG/Gpg4win" << std::endl;
         return false;
     }
+    const std::string cipher = parser.GetString("cipher", "");
+    if (!cipher.empty() && pWrapper->SetCipherPreference(cipher.c_str(), static_cast<int>(cipher.size())) != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SetCipherPreference(" << cipher << ") failed" << std::endl;
+        return false;
+    }
     return true;
 }
 // -----------------------------------------------------------------------------
@@ -323,6 +329,32 @@ int runCliActionPgpExportKey(const CryptoApiNS::CCommandLineParser& parser, Cryp
         return 1;
     }
     std::cout << std::string(armored, static_cast<std::size_t>(armoredSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpFingerprint(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
+{
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, pWrapper, keyHome))
+    {
+        return 6;
+    }
+
+    if (pWrapper->LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- no (or more than one) identity in keyhome " << keyHome << std::endl;
+        return 1;
+    }
+
+    char fingerprint[64];
+    const int status = pWrapper->GetKeyFingerprint(fingerprint, sizeof(fingerprint));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "GetKeyFingerprint failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << fingerprint << std::endl;
     return 0;
 }
 // -----------------------------------------------------------------------------
@@ -498,12 +530,14 @@ int runCliActionListActions(void)
         "  pgp-gen-key             [-keyhome DIR] [-userid ID] -password X\n"
         "  pgp-list-keys           [-keyhome DIR]\n"
         "  pgp-export-key          [-keyhome DIR]\n"
-        "  pgp-encrypt             [-keyhome DIR] -password X -input TEXT\n"
+        "  pgp-fingerprint         [-keyhome DIR]                       (tam 40 hex karakterlik RFC4880 fingerprint)\n"
+        "  pgp-encrypt             [-keyhome DIR] [-cipher NAME] -password X -input TEXT\n"
         "  pgp-decrypt             [-keyhome DIR] -password X -input ARMORED\n"
         "  pgp-sign                [-keyhome DIR] -password X -input TEXT\n"
         "  pgp-verify              [-keyhome DIR] -input ARMORED\n"
         "\n"
-        "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n";
+        "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n"
+        "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n";
     return 0;
 }
 // -----------------------------------------------------------------------------
@@ -563,8 +597,8 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
         }
     }
     else if (action == "pgp-check" || action == "pgp-gen-key" || action == "pgp-list-keys" ||
-             action == "pgp-export-key" || action == "pgp-encrypt" || action == "pgp-decrypt" ||
-             action == "pgp-sign" || action == "pgp-verify")
+             action == "pgp-export-key" || action == "pgp-fingerprint" || action == "pgp-encrypt" ||
+             action == "pgp-decrypt" || action == "pgp-sign" || action == "pgp-verify")
     {
         CryptoApiNS::IPgpEngineWrapper* pWrapper = dllLoader.GetPgpEngineWrapperObject();
         if (pWrapper != nullptr)
@@ -573,6 +607,7 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
             else if (action == "pgp-gen-key") { result = runCliActionPgpGenKey(parser, pWrapper); }
             else if (action == "pgp-list-keys") { result = runCliActionPgpListKeys(parser, pWrapper); }
             else if (action == "pgp-export-key") { result = runCliActionPgpExportKey(parser, pWrapper); }
+            else if (action == "pgp-fingerprint") { result = runCliActionPgpFingerprint(parser, pWrapper); }
             else if (action == "pgp-encrypt") { result = runCliActionPgpEncrypt(parser, pWrapper); }
             else if (action == "pgp-decrypt") { result = runCliActionPgpDecrypt(parser, pWrapper); }
             else if (action == "pgp-sign") { result = runCliActionPgpSign(parser, pWrapper); }
@@ -584,8 +619,8 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
     {
         std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
                      "decrypt-string, pgp-roundtrip, pgp-check, pgp-gen-key, pgp-list-keys, "
-                     "pgp-export-key, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, run-tests, "
-                     "list-actions (run -action list-actions for full usage)" << std::endl;
+                     "pgp-export-key, pgp-fingerprint, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
+                     "run-tests, list-actions (run -action list-actions for full usage)" << std::endl;
     }
 
     dllLoader.UnloadLibrary();

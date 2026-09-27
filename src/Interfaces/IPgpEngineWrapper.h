@@ -56,6 +56,13 @@ public:
     // one secret key is present (ambiguous; only a single identity per homedir is supported).
     virtual int LoadOwnIdentity(void) = 0;
 
+    // Overrides the symmetric cipher gpg picks for subsequent Encrypt*/EncryptBufferSymmetric calls
+    // (real gpg's own "--personal-cipher-preferences", e.g. "AES256"/"AES192"/"3DES" -- any name
+    // gpg's own --version reports as a supported cipher; this method does not validate the name
+    // itself, gpg does at encrypt time). Passing an empty string reverts to gpg's own default
+    // (nothing added to the command line, byte-for-byte identical to before this method existed).
+    virtual int SetCipherPreference(const char* cipherName, const int cipherNameSize) = 0;
+
     virtual int GenerateKeyPair( const char* userId, const int userIdSize,
                                 const char* password, const int passwordSize) = 0;
 
@@ -79,6 +86,12 @@ public:
     virtual int ExportSecretKeyArmored(const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
 
     virtual int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const = 0;
+
+    // Full RFC 4880 v4 fingerprint (40 hex chars, no separators) of this instance's own master key
+    // -- GetKeyId above returns only the low 16 hex chars (8 bytes) of this same fingerprint.
+    // outputBufferCapacity must be >= 41. Empty string before GenerateKeyPair/GenerateKeyPairEcc/
+    // LoadOwnIdentity succeeds, same convention as GetKeyId.
+    virtual int GetKeyFingerprint(char* outputBuffer, const int outputBufferCapacity) const = 0;
 
     virtual int RevokeKeyArmored( const char* password, const int passwordSize,
                                  const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,

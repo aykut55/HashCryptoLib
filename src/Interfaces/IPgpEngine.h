@@ -84,6 +84,12 @@ public:
 
     virtual int GetKeyId(char* outputBuffer, const int outputBufferCapacity) const = 0;
 
+    // Full RFC 4880 v4 fingerprint (40 hex chars, no separators) of this instance's own master key
+    // -- GetKeyId above returns only the low 16 hex chars (8 bytes) of this same fingerprint.
+    // outputBufferCapacity must be >= 41. Empty string before GenerateKeyPair succeeds, same
+    // convention as GetKeyId.
+    virtual int GetKeyFingerprint(char* outputBuffer, const int outputBufferCapacity) const = 0;
+
     virtual int RevokeKeyArmored( const char* password, const int passwordSize,
                                  const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
                                  const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
