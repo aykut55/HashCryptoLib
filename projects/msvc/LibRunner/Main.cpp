@@ -2307,6 +2307,12 @@ int runAllTests()
 
         cryptoApiTester.RunPgpEncryptAndSignTest();
 
+        cryptoApiTester.RunPgpListPacketsTest();
+
+        cryptoApiTester.RunPgpWrapperListPacketsTest();
+
+        cryptoApiTester.RunPgpWrapperKeyserverTest();
+
         cryptoApiTester.RunPgpAliceBobTest();
 
         cryptoApiTester.RunPgpFileEncryptDecryptTest();

@@ -7492,6 +7492,12 @@ int CPgpEngine::ListPackets(const unsigned char* inputBuffer, const int inputBuf
         {
             report += "Compressed Data: algo=" + std::to_string(static_cast<int>(inspected.compressionAlgorithm)) + "\n";
         }
+        else if (inspected.hasIntegrityProtectedData || inspected.hasUnprotectedEncryptedData)
+        {
+            // Same three-way distinction GetCompression already makes -- encrypted with no
+            // Compressed Data packet visible OUTSIDE the ciphertext is "unknown", not "absent".
+            report += "Compressed Data: unknown (needs decryption)\n";
+        }
         else
         {
             report += "Compressed Data: absent\n";

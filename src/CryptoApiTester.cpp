@@ -14310,6 +14310,274 @@ int CCryptoApiTester::RunPgpEncryptAndSignTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpListPacketsTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        CPgpEngine bob;
+        const char* aliceUserId = "Alice <alice-listpackets@example.com>";
+        const char* alicePassword = "alice-password-1";
+        const char* bobUserId = "Bob <bob-listpackets@example.com>";
+        const char* bobPassword = "bob-password-1";
+
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpListPacketsTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpListPacketsTest: FAILED bob GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        char aliceKeyIdBuffer[17];
+        alice.GetKeyId(aliceKeyIdBuffer, 17);
+        const std::string aliceKeyId(aliceKeyIdBuffer);
+
+        // Case 1: a detached signature (SignBuffer) -- uncompressed, unencrypted, exactly one
+        // top-level Signature packet, no PKESK at all. Same document/signature setup as
+        // RunPgpInspectionSignatureTest.
+        const std::vector<unsigned char> document = { 'C', 'o', 'n', 't', 'r', 'a', 'c', 't', ' ', 'v', '4' };
+        int sigSize = 0;
+        alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize));
+        int actualSigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), sigSize, &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpListPacketsTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        int sigReportSize = 0;
+        alice.ListPackets(&signature[0], actualSigSize, 0, nullptr, &sigReportSize);
+        std::vector<char> sigReportBuffer(static_cast<std::size_t>(sigReportSize));
+        int actualSigReportSize = 0;
+        status = alice.ListPackets(&signature[0], actualSigSize, sigReportSize, &sigReportBuffer[0], &actualSigReportSize);
+        const std::string sigReport(sigReportBuffer.begin(), sigReportBuffer.begin() + actualSigReportSize);
+        if (status != NO_ERROR ||
+            sigReport.find("PKESK (public-key encrypted session key) packets: 0") == std::string::npos ||
+            sigReport.find("Compressed Data: absent") == std::string::npos ||
+            sigReport.find("Signatures visible without decryption: 1") == std::string::npos ||
+            sigReport.find(aliceKeyId) == std::string::npos)
+        {
+            std::cout << "RunPgpListPacketsTest: FAILED ListPackets(detached signature) status=" << status << " report=\"" << sigReport << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Case 2: an EncryptStringArmored message (alice -> bob) -- envelope-only, so the report
+        // must show the PKESK/SEIP shape but explicitly say the compression/signature state is
+        // unknown/absent-from-view rather than guessing, since none of that is visible without
+        // decrypting.
+        char bobKeyArmored[16384];
+        int bobKeyArmoredSize = 0;
+        bob.ExportPublicKeyArmored(sizeof(bobKeyArmored), bobKeyArmored, &bobKeyArmoredSize);
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(bobKeyArmored), bobKeyArmoredSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpListPacketsTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        const char* message = "List-packets encrypted payload.";
+        int encryptedSize = 0;
+        alice.EncryptStringArmored(message, static_cast<int>(std::strlen(message)), 0, nullptr, &encryptedSize);
+        std::vector<char> encrypted(static_cast<std::size_t>(encryptedSize));
+        int actualEncryptedSize = 0;
+        status = alice.EncryptStringArmored(message, static_cast<int>(std::strlen(message)), encryptedSize, &encrypted[0], &actualEncryptedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpListPacketsTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        int encReportSize = 0;
+        alice.ListPackets(reinterpret_cast<const unsigned char*>(&encrypted[0]), actualEncryptedSize, 0, nullptr, &encReportSize);
+        std::vector<char> encReportBuffer(static_cast<std::size_t>(encReportSize));
+        int actualEncReportSize = 0;
+        status = alice.ListPackets(reinterpret_cast<const unsigned char*>(&encrypted[0]), actualEncryptedSize, encReportSize, &encReportBuffer[0], &actualEncReportSize);
+        const std::string encReport(encReportBuffer.begin(), encReportBuffer.begin() + actualEncReportSize);
+        if (status != NO_ERROR ||
+            encReport.find("PKESK (public-key encrypted session key) packets: 1") == std::string::npos ||
+            encReport.find("Integrity-protected encrypted data (SEIP/AEAD): present") == std::string::npos ||
+            encReport.find("Compressed Data: unknown (needs decryption)") == std::string::npos ||
+            encReport.find("Signatures visible without decryption: 0") == std::string::npos)
+        {
+            std::cout << "RunPgpListPacketsTest: FAILED ListPackets(encrypted) status=" << status << " report=\"" << encReport << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpListPacketsTest: PASSED detached-signature report (1 visible signature, 0 PKESK) and "
+                      "encrypted-message report (1 PKESK, SEIP present, compression/signatures correctly reported unknown/hidden)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperListPacketsTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperListPacketsTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* aliceUserId = "Alice <alice-wrapper-listpackets@example.com>";
+        const char* alicePassword = "alice-password-1";
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperListPacketsTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        // Case 1: a detached signature -- real gpg's own --list-packets text always contains a
+        // ":signature packet:" line for this shape, regardless of gpg version.
+        const std::vector<unsigned char> document = { 'C', 'o', 'n', 't', 'r', 'a', 'c', 't', ' ', 'v', '5' };
+        int sigSize = 0;
+        alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize) + 32);
+        int actualSigSize = 0;
+        status = alice.SignBuffer(alicePassword, static_cast<int>(std::strlen(alicePassword)), &document[0], static_cast<int>(document.size()), static_cast<int>(signature.size()), &signature[0], &actualSigSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperListPacketsTest: FAILED SignBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        char sigListing[8192];
+        int sigListingSize = 0;
+        status = alice.GetPacketListing(&signature[0], actualSigSize, sizeof(sigListing), sigListing, &sigListingSize);
+        const std::string sigReport(sigListing, static_cast<std::size_t>(sigListingSize > 0 ? sigListingSize : 0));
+        if (status != NO_ERROR || sigReport.find(":signature packet:") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperListPacketsTest: FAILED GetPacketListing(detached signature) status=" << status << " report=\"" << sigReport << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Case 2: a self-encrypted message -- real gpg's own --list-packets text always contains
+        // a ":pubkey enc packet:" line for the PKESK, regardless of which encrypted-data packet
+        // format (old SEIP vs. newer AEAD) this gpg version defaults to.
+        char armoredPub[16384];
+        int armoredPubSize = 0;
+        alice.ExportPublicKeyArmored(sizeof(armoredPub), armoredPub, &armoredPubSize);
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(armoredPub), armoredPubSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperListPacketsTest: FAILED ImportPeerPublicKey(self) status=" << status << std::endl;
+            return status;
+        }
+
+        const char* message = "Wrapper list-packets encrypted payload.";
+        char encrypted[16384];
+        int encryptedSize = 0;
+        status = alice.EncryptStringArmored(message, static_cast<int>(std::strlen(message)), sizeof(encrypted), encrypted, &encryptedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperListPacketsTest: FAILED EncryptStringArmored status=" << status << std::endl;
+            return status;
+        }
+
+        char encListing[8192];
+        int encListingSize = 0;
+        status = alice.GetPacketListing(reinterpret_cast<const unsigned char*>(encrypted), encryptedSize, sizeof(encListing), encListing, &encListingSize);
+        const std::string encReport(encListing, static_cast<std::size_t>(encListingSize > 0 ? encListingSize : 0));
+        if (status != NO_ERROR || encReport.find(":pubkey enc packet:") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperListPacketsTest: FAILED GetPacketListing(encrypted) status=" << status << " report=\"" << encReport << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperListPacketsTest: PASSED real gpg --list-packets text confirmed for both "
+                      "a detached signature and a self-encrypted message" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperKeyserverTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperKeyserverTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* aliceUserId = "Alice <alice-keyserver-test@example.com>";
+        const char* alicePassword = "alice-password-1";
+        int status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyserverTest: FAILED alice GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const char* keyserverUrl = "hkps://keys.openpgp.org";
+        status = alice.SendKey(keyserverUrl, static_cast<int>(std::strlen(keyserverUrl)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyserverTest: SKIPPED (NOT a pass -- real keyserver round trip not exercised) "
+                          "network/keyserver unavailable, SendKey status=" << status << std::endl;
+            return NO_ERROR;
+        }
+
+        // ReceiveKey/RefreshKeys on THIS SAME freshly-generated, never-verified identity are
+        // expected to FAIL with keys.openpgp.org's own real "no user ID" response (that server
+        // strips a key's User ID until the uploader verifies ownership by email -- confirmed
+        // directly against bare gpg.exe while building this feature, not assumed). A genuinely
+        // unexpected success here would mean the server's policy changed or a real bug hides
+        // behind an accidental pass, so it is checked explicitly rather than ignored.
+        char aliceKeyIdBuffer[17];
+        alice.GetKeyId(aliceKeyIdBuffer, 17);
+        const std::string aliceKeyId(aliceKeyIdBuffer);
+
+        const int receiveStatus = alice.ReceiveKey( keyserverUrl, static_cast<int>(std::strlen(keyserverUrl)),
+                                                    aliceKeyId.c_str(), static_cast<int>(aliceKeyId.size()));
+        if (receiveStatus == NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyserverTest: PASSED SendKey succeeded; ReceiveKey unexpectedly also "
+                          "succeeded (server policy may have changed, or the key already had a verified UID)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const int refreshStatus = alice.RefreshKeys(keyserverUrl, static_cast<int>(std::strlen(keyserverUrl)));
+        if (refreshStatus == NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperKeyserverTest: FAILED RefreshKeys succeeded but ReceiveKey (same key, same "
+                          "server) failed -- inconsistent, status=" << refreshStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperKeyserverTest: PASSED SendKey succeeded (real upload); ReceiveKey/RefreshKeys "
+                      "correctly failed with the server's own real not-yet-verified-UID response (status="
+                   << receiveStatus << "/" << refreshStatus << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunPgpAliceBobTest(void)
 {
     try

@@ -896,6 +896,12 @@ int runAllTests()
 
                         pCryptoApiTester->RunPgpEncryptAndSignTest();
 
+                        pCryptoApiTester->RunPgpListPacketsTest();
+
+                        pCryptoApiTester->RunPgpWrapperListPacketsTest();
+
+                        pCryptoApiTester->RunPgpWrapperKeyserverTest();
+
                         pCryptoApiTester->RunPgpAliceBobTest();
 
                         pCryptoApiTester->RunPgpFileEncryptDecryptTest();

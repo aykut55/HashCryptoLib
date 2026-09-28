@@ -432,6 +432,25 @@ public:
     // tolerance is purely additive and did not regress the pre-existing decrypt path.
     int RunPgpEncryptAndSignTest(void) override;
 
+    // Native ListPackets: envelope-only report on a detached signature (0 PKESK, absent
+    // Compressed Data, 1 visible signature matching the signer's Key ID) and on an
+    // EncryptStringArmored message (1 PKESK, SEIP present, Compressed Data reported as
+    // "unknown (needs decryption)" -- matches GetCompression's own three-way distinction --
+    // 0 visible signatures, since the real content is inside the encrypted container).
+    int RunPgpListPacketsTest(void) override;
+
+    // gpg-backed mirror of RunPgpListPacketsTest, via CPgpEngineWrapper::GetPacketListing's raw
+    // "gpg --list-packets" text instead of the native engine's own formatted report.
+    int RunPgpWrapperListPacketsTest(void) override;
+
+    // SendKey/ReceiveKey/RefreshKeys against a real HKP keyserver (hkps://keys.openpgp.org).
+    // SKIPPED (not a pass) if GnuPG or the network is unavailable. SendKey is expected to
+    // succeed (a real upload); ReceiveKey/RefreshKeys on the SAME freshly-generated, unverified
+    // identity are expected to fail with the server's own real "no user ID" response (that
+    // server strips the UID until the uploader verifies ownership by email) -- confirmed
+    // directly against bare gpg.exe while building this test, not assumed.
+    int RunPgpWrapperKeyserverTest(void) override;
+
     // End-to-end scenario test with four independent identities (Bob, Alice, Carol, Dave), each
     // generating its own PGP key pair (GenerateKeyPair) and exporting its public key
     // (ExportPublicKeyArmored). The test document is a real file on disk, written then read back

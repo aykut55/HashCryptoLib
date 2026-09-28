@@ -225,6 +225,20 @@ public:
     // + RunPgpEncryptDecryptTest run separately.
     virtual int RunPgpEncryptAndSignTest(void) = 0;
 
+    // Native ListPackets on a detached signature (envelope-only: PKESK=0, Compressed=absent,
+    // one visible signature) and on an EncryptStringArmored message (PKESK=1, SEIP present,
+    // Compressed=unknown-needs-decryption, 0 visible signatures -- the envelope-only limitation).
+    virtual int RunPgpListPacketsTest(void) = 0;
+
+    // gpg-backed mirror of RunPgpListPacketsTest: CPgpEngineWrapper::GetPacketListing's raw
+    // gpg --list-packets text on a detached signature and on a self-encrypted message.
+    virtual int RunPgpWrapperListPacketsTest(void) = 0;
+
+    // Real network test (SendKey/ReceiveKey/RefreshKeys against a real HKP keyserver) --
+    // SKIPPED (not a pass) if GnuPG or the network is unavailable, same philosophy as the
+    // RFC3161 timestamp tests.
+    virtual int RunPgpWrapperKeyserverTest(void) = 0;
+
     virtual int RunPgpAliceBobTest(void) = 0;
 
     virtual int RunPgpFileEncryptDecryptTest(void) = 0;

@@ -275,6 +275,12 @@ int runTestsViaCryptoApiTester()
 
     cryptoApiTester.RunPgpEncryptAndSignTest();
 
+    cryptoApiTester.RunPgpListPacketsTest();
+
+    cryptoApiTester.RunPgpWrapperListPacketsTest();
+
+    cryptoApiTester.RunPgpWrapperKeyserverTest();
+
     cryptoApiTester.RunPgpAliceBobTest();
 
     cryptoApiTester.RunPgpFileEncryptDecryptTest();
@@ -401,6 +407,14 @@ int runTestsViaCryptoApiTester()
     // its own always-on block, same reasoning as the parity-audit block above, so it runs
     // regardless of the surrounding #if 0 PGP block's own on/off state.
     cryptoApiTester.RunPgpEncryptAndSignTest();
+
+    // New capability (4d: gpg-list-packets-style introspection) -- same always-on reasoning.
+    cryptoApiTester.RunPgpListPacketsTest();
+
+    cryptoApiTester.RunPgpWrapperListPacketsTest();
+
+    // New capability (4e: real keyserver network operations) -- same always-on reasoning.
+    cryptoApiTester.RunPgpWrapperKeyserverTest();
 #endif
 
 #if 1
