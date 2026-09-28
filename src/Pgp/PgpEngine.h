@@ -435,6 +435,13 @@ public:
                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
                        int* signatureCount) const override;
 
+    // gpg-`--list-packets`-style text report combining everything IsPublicKeyEncrypted/
+    // IsPasswordEncrypted/IsIntegrityProtected/GetCompression/ListEncryptionKeyIds/
+    // ListSigningKeyIds/ListSignatures above already extract, into one human-readable dump instead
+    // of 7 separate narrow queries. Same envelope-only limitation as all of them.
+    int ListPackets( const unsigned char* inputBuffer, const int inputBufferSize,
+                    const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const override;
+
 protected:
 
 private:

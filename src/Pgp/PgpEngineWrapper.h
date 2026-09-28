@@ -247,6 +247,27 @@ public:
     int DeleteOwnIdentity(void) override;
 
     // ============================================================================================
+    // Keyserver network operations -- real gpg/dirmngr already fully implement HKP/HKPS, these
+    // just add "--keyserver <url> --send-keys/--recv-keys/--refresh-keys" to the same gpg argv
+    // pattern every other method here already uses. Genuine network calls (dirmngr does the actual
+    // HTTP(S) request) -- callers should treat failures the same way as the existing RFC3161
+    // timestamp network tests do (skip/tolerate when no network, not a hard requirement).
+    // ============================================================================================
+
+    // Uploads this instance's own public key (must exist -- GenerateKeyPair*/LoadOwnIdentity first)
+    // to keyserverUrl (e.g. "hkps://keys.openpgp.org").
+    int SendKey(const char* keyserverUrl, const int keyserverUrlSize) override;
+
+    // Downloads/imports a public key by Key ID (16 hex chars, with or without leading "0x") from
+    // keyserverUrl into this instance's keyring -- same effect as ImportPeerPublicKey, but fetched
+    // over the network instead of supplied as a buffer.
+    int ReceiveKey(const char* keyserverUrl, const int keyserverUrlSize, const char* keyId, const int keyIdSize) override;
+
+    // Re-fetches every key currently in this instance's keyring from keyserverUrl (picks up
+    // revocations/new signatures/expiration changes on keys already present).
+    int RefreshKeys(const char* keyserverUrl, const int keyserverUrlSize) override;
+
+    // ============================================================================================
     // Encrypt (to the imported peer's key) / Decrypt (with this instance's own secret key) --
     // delegates to "gpg --encrypt"/"gpg --decrypt" through a temporary input/output file pair under
     // this instance's homedir (removed afterwards on a best-effort basis).
@@ -545,6 +566,11 @@ public:
     int ListSignatures( const unsigned char* inputBuffer, const int inputBufferSize,
                        const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
                        int* signatureCount) const override;
+
+    // Real gpg's own unparsed "gpg --list-packets" text, verbatim -- combines everything the
+    // methods above already extract into one human-readable dump.
+    int GetPacketListing( const unsigned char* inputBuffer, const int inputBufferSize,
+                         const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const override;
 
 protected:
 

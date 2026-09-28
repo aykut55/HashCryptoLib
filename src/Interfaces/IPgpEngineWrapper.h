@@ -115,6 +115,14 @@ public:
 
     virtual int DeleteOwnIdentity(void) = 0;
 
+    // Keyserver network operations (real gpg/dirmngr HKP/HKPS) -- genuine network calls, treat
+    // failures the same way as the existing RFC3161 timestamp tests (tolerate no network).
+    virtual int SendKey(const char* keyserverUrl, const int keyserverUrlSize) = 0;
+
+    virtual int ReceiveKey(const char* keyserverUrl, const int keyserverUrlSize, const char* keyId, const int keyIdSize) = 0;
+
+    virtual int RefreshKeys(const char* keyserverUrl, const int keyserverUrlSize) = 0;
+
     virtual int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
 
@@ -243,6 +251,12 @@ public:
     virtual int ListSignatures( const unsigned char* inputBuffer, const int inputBufferSize,
                                const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
                                int* signatureCount) const = 0;
+
+    // Real gpg's own unparsed "gpg --list-packets" text, verbatim -- the same text the Is*/List*
+    // methods above already derive their narrow booleans/counts from, surfaced as the full
+    // human-readable dump instead. Read-only/envelope-only, same as those methods.
+    virtual int GetPacketListing( const unsigned char* inputBuffer, const int inputBufferSize,
+                                 const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const = 0;
 
 protected:
 

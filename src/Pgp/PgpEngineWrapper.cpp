@@ -995,10 +995,17 @@ struct CPgpEngineWrapper::Impl
                         const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
                         std::string& outArmored);
 
-    int listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing);
+    // rawListingTextOut, when non-null, receives gpg's own unparsed --list-packets text verbatim
+    // (the same text parseGpgPacketListing above turns into outListing) -- lets a caller get the
+    // full human-readable dump instead of just the narrow booleans/counts outListing exposes.
+    int listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing, std::string* rawListingTextOut = nullptr);
 
     int setHomeDirInternal(const char* newHomeDir, const int newHomeDirSize);
     int loadOwnIdentityInternal(void);
+
+    int sendKeyCommon(const std::string& keyserverUrl);
+    int receiveKeyCommon(const std::string& keyserverUrl, const std::string& keyId);
+    int refreshKeysCommon(const std::string& keyserverUrl);
 };
 // -----------------------------------------------------------------------------
 
@@ -1168,6 +1175,113 @@ int CPgpEngineWrapper::Impl::loadOwnIdentityInternal(void)
         ownKeyFingerprint = fingerprint;
         ownPublicKeyArmored = exportPubResult.output;
         ownSecretKeyArmored.clear();
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::sendKeyCommon(const std::string& keyserverUrl)
+{
+    try
+    {
+        if (!ownKeyGenerated || keyserverUrl.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--keyserver");
+        args.push_back(keyserverUrl);
+        args.push_back("--send-keys");
+        args.push_back(ownKeyId);
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::receiveKeyCommon(const std::string& keyserverUrl, const std::string& keyId)
+{
+    try
+    {
+        if (keyserverUrl.empty() || keyId.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--keyserver");
+        args.push_back(keyserverUrl);
+        args.push_back("--recv-keys");
+        args.push_back(keyId);
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::refreshKeysCommon(const std::string& keyserverUrl)
+{
+    try
+    {
+        if (keyserverUrl.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--keyserver");
+        args.push_back(keyserverUrl);
+        args.push_back("--refresh-keys");
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
         return NO_ERROR;
     }
     catch (...)
@@ -2149,7 +2263,7 @@ int CPgpEngineWrapper::Impl::revokeKeyCommon( const char* password, const int pa
 }
 // -----------------------------------------------------------------------------
 
-int CPgpEngineWrapper::Impl::listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing)
+int CPgpEngineWrapper::Impl::listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing, std::string* rawListingTextOut)
 {
     try
     {
@@ -2214,6 +2328,10 @@ int CPgpEngineWrapper::Impl::listPacketsCommon(const unsigned char* inputBuffer,
         // methods), yet still prints the complete outer packet listing. The listing text is the
         // verdict.
         parseGpgPacketListing(result.output, outListing);
+        if (rawListingTextOut != nullptr)
+        {
+            *rawListingTextOut = result.output;
+        }
         if (!outListing.sawAnyPacket)
         {
             return INVALID_DATA;
@@ -2830,6 +2948,58 @@ int CPgpEngineWrapper::DeleteOwnIdentity(void)
         impl_->ownSecretKeyArmored.clear();
         impl_->keyExpirationSeconds = 0;
         return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::SendKey(const char* keyserverUrl, const int keyserverUrlSize)
+{
+    try
+    {
+        if (!impl_ || keyserverUrl == nullptr || keyserverUrlSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->sendKeyCommon(std::string(keyserverUrl, static_cast<std::size_t>(keyserverUrlSize)));
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::ReceiveKey(const char* keyserverUrl, const int keyserverUrlSize, const char* keyId, const int keyIdSize)
+{
+    try
+    {
+        if (!impl_ || keyserverUrl == nullptr || keyserverUrlSize <= 0 || keyId == nullptr || keyIdSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->receiveKeyCommon( std::string(keyserverUrl, static_cast<std::size_t>(keyserverUrlSize)),
+                                       std::string(keyId, static_cast<std::size_t>(keyIdSize)));
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::RefreshKeys(const char* keyserverUrl, const int keyserverUrlSize)
+{
+    try
+    {
+        if (!impl_ || keyserverUrl == nullptr || keyserverUrlSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->refreshKeysCommon(std::string(keyserverUrl, static_cast<std::size_t>(keyserverUrlSize)));
     }
     catch (...)
     {
@@ -4026,6 +4196,37 @@ int CPgpEngineWrapper::ListSignatures(const unsigned char* inputBuffer, const in
         }
         *signatureCount = static_cast<int>(listing.signatures.size());
         return writeWrapperInspectionRecords(records, outputBufferCapacity, outputBuffer, outputBufferSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Real gpg's own unparsed "gpg --list-packets" text, verbatim -- the same text
+// IsPublicKeyEncrypted/GetCompression/ListSignatures/etc. above already derive their narrow
+// booleans/counts from, surfaced here as the full human-readable dump instead. Same
+// --pinentry-mode cancel / read-only / envelope-only behavior as those methods (see
+// Impl::listPacketsCommon's own comment) -- does not decrypt, so packets nested inside an
+// encrypted container are only shown if gpg's own keyring can decrypt them without a passphrase
+// prompt (an unprotected secret key), matching this class's other inspection methods exactly.
+int CPgpEngineWrapper::GetPacketListing(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const
+{
+    try
+    {
+        if (!impl_ || inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        GpgInspectedListing listing;
+        std::string rawText;
+        const int status = impl_->listPacketsCommon(inputBuffer, inputBufferSize, listing, &rawText);
+        if (status != NO_ERROR)
+        {
+            return status;
+        }
+        return writeWrapperInspectionRecords(rawText, outputBufferCapacity, outputBuffer, outputBufferSize);
     }
     catch (...)
     {

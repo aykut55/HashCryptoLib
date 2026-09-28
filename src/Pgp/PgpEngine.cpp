@@ -7457,4 +7457,74 @@ int CPgpEngine::ListSignatures(const unsigned char* inputBuffer, const int input
 }
 // -----------------------------------------------------------------------------
 
+// Human-readable, gpg-`--list-packets`-style text dump of everything the other Is*/List* methods
+// above already extract via the SAME inspectMessageBuffer/PgpInspectedMessage call, just surfaced
+// together in one report instead of split across 7 narrow boolean/count queries. Envelope-only,
+// same as every other inspection method here -- packets nested inside an encrypted (SEIP/AEAD)
+// container are NOT visible without decrypting first (matching real gpg's own --list-packets
+// behavior when run without a usable secret key/passphrase); this method does not decrypt.
+int CPgpEngine::ListPackets(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const
+{
+    try
+    {
+        if (inputBuffer == nullptr || inputBufferSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpInspectedMessage inspected;
+        if (!inspectMessageBuffer(inputBuffer, inputBufferSize, inspected))
+        {
+            return INVALID_DATA;
+        }
+
+        std::string report;
+        report += "PKESK (public-key encrypted session key) packets: " + std::to_string(inspected.recipientKeyIds.size()) + "\n";
+        for (std::size_t i = 0; i < inspected.recipientKeyIds.size(); ++i)
+        {
+            unsigned char keyId[8];
+            std::memcpy(keyId, inspected.recipientKeyIds[i].data(), 8);
+            report += "  recipient keyid=" + formatInspectionKeyIdHex(true, keyId) + "\n";
+        }
+        report += std::string("SKESK (symmetric-key encrypted session key): ") + (inspected.hasSkesk ? "present" : "absent") + "\n";
+        report += std::string("Integrity-protected encrypted data (SEIP/AEAD): ") + (inspected.hasIntegrityProtectedData ? "present" : "absent") + "\n";
+        report += std::string("Unprotected encrypted data (SED, obsolete): ") + (inspected.hasUnprotectedEncryptedData ? "present" : "absent") + "\n";
+        if (inspected.hasCompressedData)
+        {
+            report += "Compressed Data: algo=" + std::to_string(static_cast<int>(inspected.compressionAlgorithm)) + "\n";
+        }
+        else
+        {
+            report += "Compressed Data: absent\n";
+        }
+        report += "Signatures visible without decryption: " + std::to_string(inspected.signatures.size()) + "\n";
+        for (std::size_t i = 0; i < inspected.signatures.size(); ++i)
+        {
+            const PgpInspectedSignature& sig = inspected.signatures[i];
+            report += "  sigType=0x" + formatInspectionOctetHex(sig.signatureType) +
+                      " hashAlgo=" + std::to_string(static_cast<int>(sig.hashAlgorithm)) +
+                      " issuerKeyid=" + formatInspectionKeyIdHex(sig.haveIssuerKeyId, sig.issuerKeyId) + "\n";
+        }
+        if ((inspected.hasIntegrityProtectedData || inspected.hasUnprotectedEncryptedData) && inspected.signatures.empty())
+        {
+            report += "(note: any One-Pass-Signature/Signature packets embedded inside the encrypted "
+                      "container above are not visible without decrypting -- this method inspects the "
+                      "outer envelope only)\n";
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(report.size()))
+        {
+            *outputBufferSize = static_cast<int>(report.size());
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, report.data(), report.size());
+        *outputBufferSize = static_cast<int>(report.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS

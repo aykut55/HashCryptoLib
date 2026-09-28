@@ -359,6 +359,93 @@ int runCliActionPgpFingerprint(const CryptoApiNS::CCommandLineParser& parser, Cr
 }
 // -----------------------------------------------------------------------------
 
+int runCliActionPgpListPackets(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
+{
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, pWrapper, keyHome))
+    {
+        return 6;
+    }
+
+    const std::string input = parser.GetString("input", "");
+    char listing[16384];
+    int listingSize = 0;
+    const int status = pWrapper->GetPacketListing( reinterpret_cast<const unsigned char*>(input.c_str()), static_cast<int>(input.size()),
+                                                   sizeof(listing), listing, &listingSize);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "GetPacketListing failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << std::string(listing, static_cast<std::size_t>(listingSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpSendKey(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
+{
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, pWrapper, keyHome))
+    {
+        return 6;
+    }
+    if (pWrapper->LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+    const std::string keyserver = parser.GetString("keyserver", "hkps://keys.openpgp.org");
+    const int status = pWrapper->SendKey(keyserver.c_str(), static_cast<int>(keyserver.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SendKey failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, sent to " << keyserver << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpReceiveKey(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
+{
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, pWrapper, keyHome))
+    {
+        return 6;
+    }
+    const std::string keyserver = parser.GetString("keyserver", "hkps://keys.openpgp.org");
+    const std::string keyId = parser.GetString("keyid", "");
+    const int status = pWrapper->ReceiveKey( keyserver.c_str(), static_cast<int>(keyserver.size()),
+                                            keyId.c_str(), static_cast<int>(keyId.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ReceiveKey failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, received " << keyId << " from " << keyserver << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpRefreshKeys(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
+{
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, pWrapper, keyHome))
+    {
+        return 6;
+    }
+    const std::string keyserver = parser.GetString("keyserver", "hkps://keys.openpgp.org");
+    const int status = pWrapper->RefreshKeys(keyserver.c_str(), static_cast<int>(keyserver.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "RefreshKeys failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, refreshed from " << keyserver << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
 int runCliActionPgpEncrypt(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::IPgpEngineWrapper* pWrapper)
 {
     std::string keyHome;
@@ -619,6 +706,10 @@ int runCliActionListActions(void)
         "  pgp-list-keys           [-keyhome DIR]\n"
         "  pgp-export-key          [-keyhome DIR]\n"
         "  pgp-fingerprint         [-keyhome DIR]                       (tam 40 hex karakterlik RFC4880 fingerprint)\n"
+        "  pgp-list-packets        [-keyhome DIR] -input TEXT/ARMORED    (gpg --list-packets tarzi tam paket dokumu, envelope-only)\n"
+        "  pgp-send-key            [-keyhome DIR] [-keyserver URL]       (kendi public key'i keyserver'a yukler)\n"
+        "  pgp-recv-key            [-keyhome DIR] [-keyserver URL] -keyid ID  (keyserver'dan public key indirir/import eder)\n"
+        "  pgp-refresh-keys        [-keyhome DIR] [-keyserver URL]       (keyring'deki tum anahtarlari keyserver'dan tazeler)\n"
         "  pgp-encrypt             [-keyhome DIR] [-cipher NAME] -password X -input TEXT\n"
         "  pgp-decrypt             [-keyhome DIR] -password X -input ARMORED\n"
         "  pgp-sign                [-keyhome DIR] -password X -input TEXT\n"
@@ -627,7 +718,8 @@ int runCliActionListActions(void)
         "  pgp-decrypt-verify      [-keyhome DIR] -password X -input ARMORED                (gomulu imzayi ister/dogrular; imzasizsa hata)\n"
         "\n"
         "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n"
-        "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n";
+        "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n"
+        "-keyserver varsayilani: hkps://keys.openpgp.org (verilmezse). pgp-send-key/pgp-recv-key/pgp-refresh-keys gercek ag istegi atar (dirmngr).\n";
     return 0;
 }
 // -----------------------------------------------------------------------------
@@ -687,9 +779,10 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
         }
     }
     else if (action == "pgp-check" || action == "pgp-gen-key" || action == "pgp-list-keys" ||
-             action == "pgp-export-key" || action == "pgp-fingerprint" || action == "pgp-encrypt" ||
-             action == "pgp-decrypt" || action == "pgp-sign" || action == "pgp-verify" ||
-             action == "pgp-sign-encrypt" || action == "pgp-decrypt-verify")
+             action == "pgp-export-key" || action == "pgp-fingerprint" || action == "pgp-list-packets" ||
+             action == "pgp-send-key" || action == "pgp-recv-key" || action == "pgp-refresh-keys" ||
+             action == "pgp-encrypt" || action == "pgp-decrypt" || action == "pgp-sign" ||
+             action == "pgp-verify" || action == "pgp-sign-encrypt" || action == "pgp-decrypt-verify")
     {
         CryptoApiNS::IPgpEngineWrapper* pWrapper = dllLoader.GetPgpEngineWrapperObject();
         if (pWrapper != nullptr)
@@ -699,6 +792,10 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
             else if (action == "pgp-list-keys") { result = runCliActionPgpListKeys(parser, pWrapper); }
             else if (action == "pgp-export-key") { result = runCliActionPgpExportKey(parser, pWrapper); }
             else if (action == "pgp-fingerprint") { result = runCliActionPgpFingerprint(parser, pWrapper); }
+            else if (action == "pgp-list-packets") { result = runCliActionPgpListPackets(parser, pWrapper); }
+            else if (action == "pgp-send-key") { result = runCliActionPgpSendKey(parser, pWrapper); }
+            else if (action == "pgp-recv-key") { result = runCliActionPgpReceiveKey(parser, pWrapper); }
+            else if (action == "pgp-refresh-keys") { result = runCliActionPgpRefreshKeys(parser, pWrapper); }
             else if (action == "pgp-encrypt") { result = runCliActionPgpEncrypt(parser, pWrapper); }
             else if (action == "pgp-decrypt") { result = runCliActionPgpDecrypt(parser, pWrapper); }
             else if (action == "pgp-sign") { result = runCliActionPgpSign(parser, pWrapper); }
@@ -712,7 +809,8 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
     {
         std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
                      "decrypt-string, pgp-roundtrip, pgp-check, pgp-gen-key, pgp-list-keys, "
-                     "pgp-export-key, pgp-fingerprint, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
+                     "pgp-export-key, pgp-fingerprint, pgp-list-packets, pgp-send-key, pgp-recv-key, "
+                     "pgp-refresh-keys, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
                      "pgp-sign-encrypt, pgp-decrypt-verify, run-tests, list-actions (run -action "
                      "list-actions for full usage)" << std::endl;
     }

@@ -196,6 +196,13 @@ public:
                                const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize,
                                int* signatureCount) const = 0;
 
+    // Human-readable, gpg-`--list-packets`-style text dump combining everything the Is*/List*
+    // methods above already extract into one report. Envelope-only, same limitation as those
+    // methods -- packets inside an encrypted (SEIP/AEAD) container are not visible without
+    // decrypting first.
+    virtual int ListPackets( const unsigned char* inputBuffer, const int inputBufferSize,
+                            const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const = 0;
+
 protected:
 
 private:
