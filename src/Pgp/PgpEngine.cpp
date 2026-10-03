@@ -50,6 +50,7 @@ namespace
     const unsigned char PGP_TAG_SECRET_SUBKEY   = 7;
     const unsigned char PGP_TAG_COMPRESSED_DATA = 8;
     const unsigned char PGP_TAG_SED             = 9;
+    const unsigned char PGP_TAG_USER_ID         = 13;
     const unsigned char PGP_TAG_LITERAL_DATA    = 11;
     const unsigned char PGP_TAG_PUBLIC_SUBKEY   = 14;
     const unsigned char PGP_TAG_SEIP            = 18;
@@ -81,6 +82,92 @@ struct PgpEncryptionRecipient
     }
 };
 
+// One of this instance's own User IDs (RFC 4880 multi-UID support -- gpg --edit-key adduid/deluid/
+// primary parity, see AddUserId/RevokeUserId/SetPrimaryUserId below). certSigPacket/
+// revocationSigPacket are cached as produced (not re-derived at export time) because a signature
+// packet embeds its own creation-time subpacket, which is not deterministically re-derivable from
+// state alone.
+struct PgpOwnUserId
+{
+    std::string uidText;
+    std::uint32_t certCreationTime;
+    std::vector<unsigned char> certSigPacket;        // full tag-2 packet, signature type 0x13
+    bool isPrimary;
+    bool isRevoked;
+    std::vector<unsigned char> revocationSigPacket;   // signature type 0x30, empty if !isRevoked
+
+    PgpOwnUserId() : certCreationTime(0), isPrimary(false), isRevoked(false) {}
+};
+
+// One of this instance's own subkeys beyond the single subkey GenerateKeyPair always creates
+// (multi-subkey support -- gpg --edit-key addkey/expire parity, see AddSubkey/RevokeSubkey/
+// SetKeyExpiration below). Only the fields matching this engine instance's fixed keyAlgorithm
+// family are ever populated/used (see CPgpEngine::Impl::keyAlgorithm) -- for an Ed25519/X25519-
+// family instance a subkey is always X25519 (encrypt-only) in this version, see AddSubkey's own
+// comment for why. secretPacketBody is the encrypted (not cleartext) tag-7 body, cached the same
+// way ownMasterSecretPacketBody below is.
+struct PgpOwnSubkey
+{
+    CryptoPP::RSA::PrivateKey rsaPrivateKey;
+    CryptoPP::RSA::PublicKey  rsaPublicKey;
+    unsigned char x25519PrivateKey[32];
+    unsigned char x25519PublicKey[32];
+    unsigned char keyId[8];
+    unsigned char fingerprint[20];
+    std::uint32_t creationTime;
+    std::uint32_t expirationSeconds;                  // 0 = never
+    unsigned char keyFlags;                           // RFC 4880 5.2.3.21: 0x02 sign, 0x0C encrypt, 0x20 auth
+    std::vector<unsigned char> bindingSigPacket;       // signature type 0x18, cached
+    bool isRevoked;
+    std::vector<unsigned char> revocationSigPacket;    // signature type 0x28, empty if !isRevoked
+    std::vector<unsigned char> secretPacketBody;       // encrypted tag-7 body, cached
+
+    PgpOwnSubkey() : creationTime(0), expirationSeconds(0), keyFlags(0), isRevoked(false)
+    {
+        std::memset(x25519PrivateKey, 0, 32);
+        std::memset(x25519PublicKey, 0, 32);
+        std::memset(keyId, 0, 8);
+        std::memset(fingerprint, 0, 20);
+    }
+};
+
+// One of a peer's User IDs, collected by parsePeerPublicKeyBlock (multi-UID peer support). Declared
+// here (rather than next to parsePeerPublicKeyBlock itself, further down this file) so
+// CPgpEngine::Impl below can hold a std::vector<PgpPeerUserId> member.
+struct PgpPeerUserId
+{
+    std::string uidText;
+    bool isRevoked;
+
+    PgpPeerUserId() : isRevoked(false) {}
+};
+
+// One of a peer's subkeys, collected by parsePeerPublicKeyBlock (multi-subkey peer support). See
+// that function's own comment for how creationTime/keyFlags/expirationSeconds feed the "which
+// subkey do we pick" rule.
+struct PgpPeerSubkey
+{
+    PgpKeyAlgorithm algorithm;
+    CryptoPP::RSA::PublicKey rsaKey;
+    unsigned char x25519Key[32];
+    unsigned char keyId[8];
+    unsigned char fingerprint[20];
+    std::uint32_t creationTime;
+    bool haveKeyFlags;
+    unsigned char keyFlags;             // RFC 4880 5.2.3.21, from the subkey's own 0x18 binding sig if present
+    bool haveExpiration;
+    std::uint32_t expirationSeconds;    // from the subkey's own 0x18 binding sig if present; 0 if absent/never
+    bool isRevoked;
+
+    PgpPeerSubkey() : algorithm(PGP_KEY_ALGORITHM_RSA), creationTime(0), haveKeyFlags(false), keyFlags(0),
+                       haveExpiration(false), expirationSeconds(0), isRevoked(false)
+    {
+        std::memset(x25519Key, 0, 32);
+        std::memset(keyId, 0, 8);
+        std::memset(fingerprint, 0, 20);
+    }
+};
+
 struct CPgpEngine::Impl
 {
     PgpKeyAlgorithm keyAlgorithm; // this instance's OWN identity algorithm; fixed at construction.
@@ -102,8 +189,6 @@ struct CPgpEngine::Impl
     unsigned char ownMasterFingerprint[20]; // full RFC 4880 v4 fingerprint, exposed via GetKeyFingerprint -- ownMasterKeyId above is just its low 8 bytes.
     unsigned char ownSubkeyFingerprint[20]; // needed by the ECDH KDF when decrypting a PKESK addressed to our own X25519 encryption subkey.
     unsigned char passwordCheckHash[32];
-    std::string ownPublicKeyArmored;
-    std::string ownSecretKeyArmored;
     std::uint32_t keyCreationTime;   // seconds since epoch, as embedded in the exported public key packet -- reused by RevokeKeyArmored so its recomputed public-key-packet body byte-matches the one already exported (and therefore fingerprints/Key-IDs the same).
     std::uint32_t keyExpirationSeconds; // 0 = never expires; otherwise seconds after keyCreationTime, as set by GenerateKeyPair's expiration overload.
 
@@ -118,8 +203,24 @@ struct CPgpEngine::Impl
     unsigned char peerSubkeyKeyId[8];
     unsigned char peerSubkeyFingerprint[20]; // needed by the ECDH KDF when peerSubkeyAlgorithm==ED25519_X25519.
 
+    // Every UID/subkey the most recently imported peer block actually contained (multi-UID/multi-
+    // subkey peer support) -- the flat peerSubkey*/peerMaster* fields above stay populated
+    // unchanged (from the "which subkey do we pick" rule, see parsePeerPublicKeyBlock), for every
+    // pre-existing Encrypt/Verify call site.
+    std::vector<PgpPeerUserId> peerUserIds;
+    std::vector<PgpPeerSubkey> peerSubkeys;
+
     // ImportAdditionalRecipientPublicKey() additions -- encryption-only, never used for verify.
     std::vector<PgpEncryptionRecipient> additionalRecipients;
+
+    // Multi-UID/multi-subkey own-identity state (see PgpOwnUserId/PgpOwnSubkey above). GenerateKeyPair
+    // seeds these with exactly one entry each (mirroring the flat ownMaster*/ownSubkey* fields above,
+    // which stay populated unchanged for backward compatibility with every existing Encrypt/Sign/
+    // Verify/ClearSign call site); AddUserId/AddSubkey append further entries. ownMasterSecretPacketBody
+    // is the encrypted (not cleartext) tag-5 body, the master-key analogue of PgpOwnSubkey::secretPacketBody.
+    std::vector<PgpOwnUserId> ownUserIds;
+    std::vector<PgpOwnSubkey> ownSubkeys;
+    std::vector<unsigned char> ownMasterSecretPacketBody;
 
     Impl() : keyAlgorithm(PGP_KEY_ALGORITHM_RSA), rsaKeyBits(2048), ownKeyGenerated(false), keyCreationTime(0), keyExpirationSeconds(0),
              peerKeyImported(false), peerMasterAlgorithm(PGP_KEY_ALGORITHM_RSA), peerSubkeyAlgorithm(PGP_KEY_ALGORITHM_RSA)
@@ -1476,13 +1577,29 @@ std::vector<unsigned char> deriveS2kKey(const char* password, const int password
 }
 // -----------------------------------------------------------------------------
 
+// RFC 4880 5.5.3 requires the two secret primes be written smaller-first (p < q) and the trailing
+// MPI be u = p^-1 mod q (the inverse of the FIRST written prime, modulo the second) -- CryptoPP's
+// own GetMultiplicativeInverseOfPrime2ModPrime1() computes the OPPOSITE direction (its own PKCS#1
+// CRT "qInv" convention, q^-1 mod p) and CryptoPP does not guarantee GetPrime1() < GetPrime2()
+// either, so both must be handled explicitly here rather than trusting the CryptoPP accessor
+// names to already match OpenPGP's convention. Verified against real GnuPG 2.5.21: a key exported
+// with the naive (wrong-direction, unsorted) encoding imports and lists fine (gpg's own
+// --list-keys never touches the encrypted secret payload) but fails to actually SIGN with real
+// gpg ("Bad secret key" with the correct passphrase, or "Bad signature" once the passphrase itself
+// checks out) -- this bug was invisible to every previous internal-only or list-keys-only PGP test.
 std::vector<unsigned char> buildRsaSecretKeyCleartext(const CryptoPP::RSA::PrivateKey& privateKey)
 {
     std::vector<unsigned char> cleartext;
+    const CryptoPP::Integer& prime1 = privateKey.GetPrime1();
+    const CryptoPP::Integer& prime2 = privateKey.GetPrime2();
+    const CryptoPP::Integer& p = (prime1 < prime2) ? prime1 : prime2;
+    const CryptoPP::Integer& q = (prime1 < prime2) ? prime2 : prime1;
+    const CryptoPP::Integer u = p.InverseMod(q);
+
     appendAll(cleartext, encodeMpi(privateKey.GetPrivateExponent()));
-    appendAll(cleartext, encodeMpi(privateKey.GetPrime1()));
-    appendAll(cleartext, encodeMpi(privateKey.GetPrime2()));
-    appendAll(cleartext, encodeMpi(privateKey.GetMultiplicativeInverseOfPrime2ModPrime1()));
+    appendAll(cleartext, encodeMpi(p));
+    appendAll(cleartext, encodeMpi(q));
+    appendAll(cleartext, encodeMpi(u));
     return cleartext;
 }
 // -----------------------------------------------------------------------------
@@ -1882,6 +1999,55 @@ std::vector<unsigned char> buildEd25519SignaturePacket(const unsigned char priva
     }
 }
 // -----------------------------------------------------------------------------
+
+// ================================================================================================
+// Multi-UID/multi-subkey document/signature helpers (gpg --edit-key adduid/deluid/addkey/expire/
+// primary parity). Generalize the inline logic GenerateKeyPair above duplicates once per algorithm
+// branch (self-cert document, subkey-binding document, RSA-vs-Ed25519 signing dispatch) so
+// AddUserId/RevokeUserId/AddSubkey/RevokeSubkey/SetKeyExpiration/SetPrimaryUserId below share one
+// implementation instead of re-duplicating it a third+ time.
+// ================================================================================================
+
+// Document shape for a 0x13 self-certification signature (RFC 4880 5.2.4) -- also reused verbatim
+// for a 0x30 certification-revocation signature, which signs the identical bytes.
+std::vector<unsigned char> buildUserIdCertificationDocument(const std::vector<unsigned char>& masterPubBody, const std::vector<unsigned char>& uidBody)
+{
+    std::vector<unsigned char> document = buildKeyHashPrefix(masterPubBody);
+    document.push_back(0xB4);
+    appendBigEndian32(document, static_cast<std::uint32_t>(uidBody.size()));
+    appendAll(document, uidBody);
+    return document;
+}
+// -----------------------------------------------------------------------------
+
+// Document shape for a 0x18 subkey-binding signature -- also reused verbatim for a 0x28 subkey-
+// revocation signature, which signs the identical bytes.
+std::vector<unsigned char> buildSubkeyBindingDocument(const std::vector<unsigned char>& masterPubBody, const std::vector<unsigned char>& subkeyPubBody)
+{
+    std::vector<unsigned char> document = buildKeyHashPrefix(masterPubBody);
+    appendAll(document, buildKeyHashPrefix(subkeyPubBody));
+    return document;
+}
+// -----------------------------------------------------------------------------
+
+// RFC 4880 section 5.2.3.19 (subpacket type 25): single boolean octet marking a self-certification
+// as designating the primary User ID. Only ever emitted by SetPrimaryUserId's freshly-issued cert
+// -- AddUserId's initial cert never sets it (a lone UID is implicitly primary, matching real gpg
+// never emitting subpacket 25 on a single-UID key).
+std::vector<unsigned char> buildPrimaryUserIdSubpacket(const bool isPrimary)
+{
+    std::vector<unsigned char> sub;
+    std::vector<unsigned char> body(1, isPrimary ? 1 : 0);
+    appendSubpacket(sub, 25, body);
+    return sub;
+}
+// -----------------------------------------------------------------------------
+
+// signWithOwnMasterKey/buildOwnMasterPubBody/buildOwnSubkeyPubBody/renderOwnKeyBlocks (all of which
+// need access to this instance's private Impl) are declared as CPgpEngine PRIVATE MEMBER functions
+// instead of free functions here -- Impl is a private nested type (PgpEngine.h), inaccessible to
+// free functions even within this same .cpp file's anonymous namespace. See their definitions
+// further down this file, alongside the other CPgpEngine:: method bodies.
 
 // Same NO_ERROR/*isValid convention as verifySignaturePacket above.
 bool verifyEd25519SignaturePacket(const unsigned char publicKey[32], const std::vector<unsigned char>& documentData, const std::vector<unsigned char>& signaturePacketBytes, bool* isValid)
@@ -2693,6 +2859,10 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
     }
 }
 // -----------------------------------------------------------------------------
+
+// parseAndDecryptMessageWithAnyOwnSubkey (needs access to this instance's private Impl) is declared
+// as a CPgpEngine PRIVATE MEMBER function instead of a free function here -- see its definition
+// further down this file, alongside the other CPgpEngine:: method bodies.
 
 // ================================================================================================
 // Streaming (chunked, O(chunk size) memory) file-based variants of the buffer-based helpers
@@ -4955,6 +5125,10 @@ int decryptSeipBodyStreaming(HANDLE inputFileHandle, const std::vector<unsigned 
 // keep both in the same family.
 // ================================================================================================
 
+// PgpPeerUserId/PgpPeerSubkey (multi-UID/multi-subkey peer support) are declared up near
+// CPgpEngine::Impl, not here -- Impl itself holds std::vector<PgpPeerUserId>/std::vector<PgpPeerSubkey>
+// members, which requires their complete type before Impl's own definition.
+
 struct ParsedPeerPublicKeyBlock
 {
     bool haveMaster;
@@ -4962,6 +5136,7 @@ struct ParsedPeerPublicKeyBlock
     CryptoPP::RSA::PublicKey masterRsaKey;
     unsigned char masterEd25519Key[32];
     unsigned char masterKeyId[8];
+    unsigned char masterFingerprint[20];
 
     bool haveSubkey;
     PgpKeyAlgorithm subkeyAlgorithm;
@@ -4970,10 +5145,17 @@ struct ParsedPeerPublicKeyBlock
     unsigned char subkeyKeyId[8];
     unsigned char subkeyFingerprint[20];
 
+    // Every UID/subkey packet seen (multi-UID/multi-subkey support) -- the single-valued fields
+    // above are populated FROM these, by "first UID" and the "which subkey do we pick" rule
+    // respectively, once the whole block has been walked (see parsePeerPublicKeyBlock below).
+    std::vector<PgpPeerUserId> userIds;
+    std::vector<PgpPeerSubkey> subkeys;
+
     ParsedPeerPublicKeyBlock() : haveMaster(false), masterAlgorithm(PGP_KEY_ALGORITHM_RSA), haveSubkey(false), subkeyAlgorithm(PGP_KEY_ALGORITHM_RSA)
     {
         std::memset(masterEd25519Key, 0, 32);
         std::memset(masterKeyId, 0, 8);
+        std::memset(masterFingerprint, 0, 20);
         std::memset(subkeyX25519Key, 0, 32);
         std::memset(subkeyKeyId, 0, 8);
         std::memset(subkeyFingerprint, 0, 20);
@@ -5001,10 +5183,144 @@ bool decodeKeyBlockToBinary(const unsigned char* keyBlockBuffer, const int keyBl
 }
 // -----------------------------------------------------------------------------
 
+// Minimal self-contained scan of a v4 signature packet body's HASHED subpacket area, extracting
+// just the signatureType octet plus (when present) the type-27 key-flags and type-9 key-expiration
+// subpackets -- everything parsePeerPublicKeyBlock below needs to track UID/subkey revocation and
+// per-subkey usage/expiration for a peer. Deliberately NOT reusing the fuller
+// inspectSignaturePacketBody/PgpInspectedSignature machinery further down this file (it is defined
+// textually AFTER parsePeerPublicKeyBlock, which would need a forward declaration) -- RFC 4880
+// 5.2.3.1's subpacket length encoding is small enough to inline directly here.
+bool scanSignatureHashedSubpackets(const std::vector<unsigned char>& body, unsigned char& signatureTypeOut, bool& haveKeyFlagsOut, unsigned char& keyFlagsOut, bool& haveExpirationOut, std::uint32_t& expirationSecondsOut)
+{
+    try
+    {
+        signatureTypeOut = 0;
+        haveKeyFlagsOut = false;
+        keyFlagsOut = 0;
+        haveExpirationOut = false;
+        expirationSecondsOut = 0;
+
+        if (body.size() < 6 || body[0] != 4)
+        {
+            return false;
+        }
+        signatureTypeOut = body[1];
+        const std::size_t hashedLength = readBigEndian16(body, 4);
+        std::size_t pos = 6;
+        const std::size_t end = pos + hashedLength;
+        if (end > body.size())
+        {
+            return false;
+        }
+
+        while (pos < end)
+        {
+            std::size_t subpacketLength = 0;
+            const unsigned char first = body[pos];
+            if (first < 192)
+            {
+                subpacketLength = first;
+                pos += 1;
+            }
+            else if (first < 255)
+            {
+                if (pos + 1 >= end)
+                {
+                    break;
+                }
+                subpacketLength = ((static_cast<std::size_t>(first) - 192) << 8) + static_cast<std::size_t>(body[pos + 1]) + 192;
+                pos += 2;
+            }
+            else
+            {
+                if (pos + 4 >= end)
+                {
+                    break;
+                }
+                subpacketLength = (static_cast<std::size_t>(body[pos + 1]) << 24) | (static_cast<std::size_t>(body[pos + 2]) << 16) |
+                                   (static_cast<std::size_t>(body[pos + 3]) << 8) | static_cast<std::size_t>(body[pos + 4]);
+                pos += 5;
+            }
+            if (subpacketLength == 0 || pos + subpacketLength > end)
+            {
+                break;
+            }
+            const unsigned char subpacketType = body[pos] & 0x7F; // strip the "critical" high bit
+            const std::size_t subBodyBegin = pos + 1;
+            const std::size_t subBodyLength = subpacketLength - 1;
+
+            if (subpacketType == 27 && subBodyLength >= 1)
+            {
+                haveKeyFlagsOut = true;
+                keyFlagsOut = body[subBodyBegin];
+            }
+            else if (subpacketType == 9 && subBodyLength >= 4)
+            {
+                haveExpirationOut = true;
+                expirationSecondsOut = (static_cast<std::uint32_t>(body[subBodyBegin]) << 24) |
+                                        (static_cast<std::uint32_t>(body[subBodyBegin + 1]) << 16) |
+                                        (static_cast<std::uint32_t>(body[subBodyBegin + 2]) << 8) |
+                                        static_cast<std::uint32_t>(body[subBodyBegin + 3]);
+            }
+            pos += subpacketLength;
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Which of a peer's parsed subkeys to use for encryption (RFC 4880 doesn't mandate a single rule;
+// this matches real gpg's own preference in spirit): the newest-creationTime entry that is not
+// revoked, not expired, and whose key flags (when known) include Encrypt (0x0C) -- or, if no
+// candidate carries key-flags information at all, the newest non-revoked non-expired entry
+// regardless of flags (tolerates producers that omit the subpacket). Returns nullptr if none qualify.
+const PgpPeerSubkey* chooseBestPeerEncryptionSubkey(const std::vector<PgpPeerSubkey>& subkeys)
+{
+    const std::uint32_t now = static_cast<std::uint32_t>(std::time(nullptr));
+    const PgpPeerSubkey* bestWithFlags = nullptr;
+    const PgpPeerSubkey* bestAny = nullptr;
+
+    for (std::size_t i = 0; i < subkeys.size(); ++i)
+    {
+        const PgpPeerSubkey& candidate = subkeys[i];
+        if (candidate.isRevoked)
+        {
+            continue;
+        }
+        const bool expired = candidate.haveExpiration && candidate.expirationSeconds > 0 &&
+                              (candidate.creationTime + candidate.expirationSeconds) <= now;
+        if (expired)
+        {
+            continue;
+        }
+        if (bestAny == nullptr || candidate.creationTime > bestAny->creationTime)
+        {
+            bestAny = &candidate;
+        }
+        if (candidate.haveKeyFlags && (candidate.keyFlags & 0x0C) != 0)
+        {
+            if (bestWithFlags == nullptr || candidate.creationTime > bestWithFlags->creationTime)
+            {
+                bestWithFlags = &candidate;
+            }
+        }
+    }
+    return (bestWithFlags != nullptr) ? bestWithFlags : bestAny;
+}
+// -----------------------------------------------------------------------------
+
 bool parsePeerPublicKeyBlock(const std::vector<unsigned char>& binary, ParsedPeerPublicKeyBlock& out)
 {
     try
     {
+        enum OwnerKind { OWNER_NONE, OWNER_MASTER, OWNER_UID, OWNER_SUBKEY };
+        OwnerKind currentOwnerKind = OWNER_NONE;
+        std::size_t currentOwnerIndex = 0;
+
         std::size_t pos = 0;
         while (pos < binary.size())
         {
@@ -5017,74 +5333,167 @@ bool parsePeerPublicKeyBlock(const std::vector<unsigned char>& binary, ParsedPee
             const std::vector<unsigned char> body(binary.begin() + pos, binary.begin() + pos + bodyLength);
             pos += bodyLength;
 
-            if (tag != PGP_TAG_PUBLIC_KEY && tag != PGP_TAG_PUBLIC_SUBKEY)
+            if (tag == PGP_TAG_PUBLIC_KEY)
             {
-                continue;
-            }
-            const bool isMaster = (tag == PGP_TAG_PUBLIC_KEY);
-            if ((isMaster && out.haveMaster) || (!isMaster && out.haveSubkey))
-            {
-                continue;
-            }
-            if (body.size() < 6)
-            {
-                continue;
-            }
-            const unsigned char algo = body[5];
-
-            if (algo == PGP_ALGO_RSA)
-            {
-                CryptoPP::Integer n;
-                CryptoPP::Integer e;
-                unsigned char keyId[8];
-                if (!parseRsaPublicKeyPacketBody(body, n, e, keyId))
+                // A second tag-6 in the same block genuinely starts a different key -- "first
+                // master wins" stays correct here (unlike PGP_TAG_PUBLIC_SUBKEY below, which now
+                // collects every subkey instead of only the first).
+                if (out.haveMaster || body.size() < 6)
                 {
+                    currentOwnerKind = OWNER_NONE;
                     continue;
                 }
-                CryptoPP::RSA::PublicKey key;
-                key.Initialize(n, e);
-                if (isMaster)
+                const unsigned char algo = body[5];
+                if (algo == PGP_ALGO_RSA)
                 {
+                    CryptoPP::Integer n;
+                    CryptoPP::Integer e;
+                    unsigned char keyId[8];
+                    if (!parseRsaPublicKeyPacketBody(body, n, e, keyId))
+                    {
+                        currentOwnerKind = OWNER_NONE;
+                        continue;
+                    }
+                    CryptoPP::RSA::PublicKey key;
+                    key.Initialize(n, e);
                     out.masterAlgorithm = PGP_KEY_ALGORITHM_RSA;
                     out.masterRsaKey = key;
                     std::memcpy(out.masterKeyId, keyId, 8);
                     out.haveMaster = true;
                 }
+                else if (algo == PGP_ALGO_EDDSA)
+                {
+                    unsigned char point[32];
+                    unsigned char keyId[8];
+                    if (!parseEd25519PublicKeyPacketBody(body, point, keyId))
+                    {
+                        currentOwnerKind = OWNER_NONE;
+                        continue;
+                    }
+                    out.masterAlgorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
+                    std::memcpy(out.masterEd25519Key, point, 32);
+                    std::memcpy(out.masterKeyId, keyId, 8);
+                    out.haveMaster = true;
+                }
                 else
                 {
-                    out.subkeyAlgorithm = PGP_KEY_ALGORITHM_RSA;
-                    out.subkeyRsaKey = key;
-                    std::memcpy(out.subkeyKeyId, keyId, 8);
-                    out.haveSubkey = true;
+                    currentOwnerKind = OWNER_NONE;
+                    continue;
                 }
+                unsigned char masterFingerprintScratch[20];
+                unsigned char masterKeyIdScratch[8];
+                computeFingerprintAndKeyId(body, masterFingerprintScratch, masterKeyIdScratch);
+                std::memcpy(out.masterFingerprint, masterFingerprintScratch, 20);
+                currentOwnerKind = OWNER_MASTER;
             }
-            else if (algo == PGP_ALGO_EDDSA && isMaster)
+            else if (tag == PGP_TAG_PUBLIC_SUBKEY)
             {
-                unsigned char point[32];
-                unsigned char keyId[8];
-                if (!parseEd25519PublicKeyPacketBody(body, point, keyId))
+                if (body.size() < 6)
+                {
+                    currentOwnerKind = OWNER_NONE;
+                    continue;
+                }
+                const unsigned char algo = body[5];
+                const std::uint32_t creationTime = (static_cast<std::uint32_t>(body[1]) << 24) | (static_cast<std::uint32_t>(body[2]) << 16) |
+                                                    (static_cast<std::uint32_t>(body[3]) << 8) | static_cast<std::uint32_t>(body[4]);
+                PgpPeerSubkey newSubkey;
+                newSubkey.creationTime = creationTime;
+
+                if (algo == PGP_ALGO_RSA)
+                {
+                    CryptoPP::Integer n;
+                    CryptoPP::Integer e;
+                    unsigned char keyId[8];
+                    if (!parseRsaPublicKeyPacketBody(body, n, e, keyId))
+                    {
+                        currentOwnerKind = OWNER_NONE;
+                        continue;
+                    }
+                    newSubkey.algorithm = PGP_KEY_ALGORITHM_RSA;
+                    newSubkey.rsaKey.Initialize(n, e);
+                    std::memcpy(newSubkey.keyId, keyId, 8);
+                }
+                else if (algo == PGP_ALGO_ECDH)
+                {
+                    unsigned char point[32];
+                    unsigned char keyId[8];
+                    unsigned char fingerprint[20];
+                    if (!parseX25519PublicKeyPacketBody(body, point, keyId, fingerprint))
+                    {
+                        currentOwnerKind = OWNER_NONE;
+                        continue;
+                    }
+                    newSubkey.algorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
+                    std::memcpy(newSubkey.x25519Key, point, 32);
+                    std::memcpy(newSubkey.keyId, keyId, 8);
+                    std::memcpy(newSubkey.fingerprint, fingerprint, 20);
+                }
+                else
+                {
+                    currentOwnerKind = OWNER_NONE;
+                    continue;
+                }
+                if (newSubkey.algorithm == PGP_KEY_ALGORITHM_RSA)
+                {
+                    unsigned char fingerprintScratch[20];
+                    unsigned char keyIdScratch[8];
+                    computeFingerprintAndKeyId(body, fingerprintScratch, keyIdScratch);
+                    std::memcpy(newSubkey.fingerprint, fingerprintScratch, 20);
+                }
+                out.subkeys.push_back(newSubkey);
+                currentOwnerKind = OWNER_SUBKEY;
+                currentOwnerIndex = out.subkeys.size() - 1;
+                // out.haveSubkey (the legacy single-valued flag) is deliberately NOT set here --
+                // it's decided once, after the whole block is walked, by the "which subkey do we
+                // pick" rule below (a subkey seen here might end up revoked/expired and excluded).
+            }
+            else if (tag == PGP_TAG_USER_ID)
+            {
+                PgpPeerUserId newUid;
+                newUid.uidText.assign(body.begin(), body.end());
+                out.userIds.push_back(newUid);
+                currentOwnerKind = OWNER_UID;
+                currentOwnerIndex = out.userIds.size() - 1;
+            }
+            else if (tag == PGP_TAG_SIGNATURE)
+            {
+                unsigned char signatureType = 0;
+                bool haveKeyFlags = false;
+                unsigned char keyFlags = 0;
+                bool haveExpiration = false;
+                std::uint32_t expirationSeconds = 0;
+                if (!scanSignatureHashedSubpackets(body, signatureType, haveKeyFlags, keyFlags, haveExpiration, expirationSeconds))
                 {
                     continue;
                 }
-                out.masterAlgorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
-                std::memcpy(out.masterEd25519Key, point, 32);
-                std::memcpy(out.masterKeyId, keyId, 8);
-                out.haveMaster = true;
-            }
-            else if (algo == PGP_ALGO_ECDH && !isMaster)
-            {
-                unsigned char point[32];
-                unsigned char keyId[8];
-                unsigned char fingerprint[20];
-                if (!parseX25519PublicKeyPacketBody(body, point, keyId, fingerprint))
+
+                if (signatureType == 0x30 && currentOwnerKind == OWNER_UID && currentOwnerIndex < out.userIds.size())
                 {
-                    continue;
+                    out.userIds[currentOwnerIndex].isRevoked = true;
                 }
-                out.subkeyAlgorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
-                std::memcpy(out.subkeyX25519Key, point, 32);
-                std::memcpy(out.subkeyKeyId, keyId, 8);
-                std::memcpy(out.subkeyFingerprint, fingerprint, 20);
-                out.haveSubkey = true;
+                else if (currentOwnerKind == OWNER_SUBKEY && currentOwnerIndex < out.subkeys.size())
+                {
+                    if (signatureType == 0x28)
+                    {
+                        out.subkeys[currentOwnerIndex].isRevoked = true;
+                    }
+                    else if (signatureType == 0x18)
+                    {
+                        if (haveKeyFlags)
+                        {
+                            out.subkeys[currentOwnerIndex].haveKeyFlags = true;
+                            out.subkeys[currentOwnerIndex].keyFlags = keyFlags;
+                        }
+                        if (haveExpiration)
+                        {
+                            out.subkeys[currentOwnerIndex].haveExpiration = true;
+                            out.subkeys[currentOwnerIndex].expirationSeconds = expirationSeconds;
+                        }
+                    }
+                }
+                // signature types targeting OWNER_MASTER/OWNER_NONE (direct-key sigs, primary-key
+                // revocations) are intentionally not tracked here -- out of scope for the peer
+                // multi-UID/multi-subkey fix; see this function's own header comment.
             }
         }
 
@@ -5092,17 +5501,35 @@ bool parsePeerPublicKeyBlock(const std::vector<unsigned char>& binary, ParsedPee
         {
             return false;
         }
-        // No separate encryption subkey found (e.g. a bare master-key-only block) -- mirror the
-        // pre-multi-recipient/pre-ECC behavior of falling back to encrypting to the master key
-        // itself, but only when the master is RSA (an Ed25519 master key cannot encrypt -- RFC
-        // 4880 key flags reserve that to Encrypt-flagged keys, i.e. an X25519 subkey, which by
-        // construction never doubles as a signing master here).
-        if (!out.haveSubkey && out.masterAlgorithm == PGP_KEY_ALGORITHM_RSA)
+
+        // Legacy single-valued subkey fields, populated from the "which subkey do we pick" rule
+        // over everything collected above -- keeps ImportPeerPublicKey/
+        // ImportAdditionalRecipientPublicKey correct and unmodified.
+        const PgpPeerSubkey* chosen = chooseBestPeerEncryptionSubkey(out.subkeys);
+        if (chosen != nullptr)
+        {
+            out.subkeyAlgorithm = chosen->algorithm;
+            out.subkeyRsaKey = chosen->rsaKey;
+            std::memcpy(out.subkeyX25519Key, chosen->x25519Key, 32);
+            std::memcpy(out.subkeyKeyId, chosen->keyId, 8);
+            std::memcpy(out.subkeyFingerprint, chosen->fingerprint, 20);
+            out.haveSubkey = true;
+        }
+        // No usable subkey found (e.g. a bare master-key-only block, or every subkey revoked/
+        // expired) -- mirror the pre-multi-recipient/pre-ECC behavior of falling back to
+        // encrypting to the master key itself, but only when the master is RSA (an Ed25519 master
+        // key cannot encrypt -- RFC 4880 key flags reserve that to Encrypt-flagged keys, i.e. an
+        // X25519 subkey, which by construction never doubles as a signing master here).
+        else if (out.masterAlgorithm == PGP_KEY_ALGORITHM_RSA)
         {
             out.subkeyAlgorithm = PGP_KEY_ALGORITHM_RSA;
             out.subkeyRsaKey = out.masterRsaKey;
             std::memcpy(out.subkeyKeyId, out.masterKeyId, 8);
             out.haveSubkey = true;
+        }
+        else
+        {
+            out.haveSubkey = false;
         }
         return true;
     }
@@ -5653,6 +6080,122 @@ CPgpEngine::CPgpEngine(const PgpKeyAlgorithm keyAlgorithm) : impl_(new Impl())
 }
 // -----------------------------------------------------------------------------
 
+// Generalizes the RSA-vs-Ed25519 signing-key dispatch duplicated across GenerateKeyPair (both its
+// self-cert and subkey-binding signatures) and RevokeKeyArmored -- signs with THIS instance's own
+// master key, whichever algorithm family it is.
+std::vector<unsigned char> CPgpEngine::signWithOwnMasterKey(const unsigned char signatureType, const std::vector<unsigned char>& documentData, const std::vector<unsigned char>& extraHashedSubpacket) const
+{
+    return (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+        buildSignaturePacket(impl_->ownMasterPrivateKey, signatureType, documentData, extraHashedSubpacket, impl_->ownMasterKeyId) :
+        buildEd25519SignaturePacket(impl_->ownEd25519PrivateKey, signatureType, documentData, extraHashedSubpacket, impl_->ownMasterKeyId);
+}
+// -----------------------------------------------------------------------------
+
+// Recomputes this instance's own master-key public-key-packet body from stored Impl fields -- same
+// approach RevokeKeyArmored already uses, so the result byte-matches the packet already embedded
+// in every previously exported key block (required for new signatures over it to verify).
+std::vector<unsigned char> CPgpEngine::buildOwnMasterPubBody(void) const
+{
+    return (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+        buildRsaPublicKeyPacketBody(impl_->keyCreationTime, impl_->ownMasterPublicKey.GetModulus(), impl_->ownMasterPublicKey.GetPublicExponent()) :
+        buildEd25519PublicKeyPacketBody(impl_->keyCreationTime, impl_->ownEd25519PublicKey);
+}
+// -----------------------------------------------------------------------------
+
+// Recomputes one own-subkey's public-key-packet body from its stored PgpOwnSubkey fields (indexed
+// into impl_->ownSubkeys), same approach as buildOwnMasterPubBody above (RSA subkeys use the
+// master's own RSA family; an Ed25519-family instance's subkeys are always X25519 in this version
+// -- see AddSubkey's comment). Caller-validated index -- no bounds check here.
+std::vector<unsigned char> CPgpEngine::buildOwnSubkeyPubBody(const int subkeyIndex) const
+{
+    const PgpOwnSubkey& subkey = impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)];
+    return (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+        buildRsaPublicKeyPacketBody(subkey.creationTime, subkey.rsaPublicKey.GetModulus(), subkey.rsaPublicKey.GetPublicExponent()) :
+        buildX25519PublicKeyPacketBody(subkey.creationTime, subkey.x25519PublicKey);
+}
+// -----------------------------------------------------------------------------
+
+// Reassembles this instance's own exported public/secret key blocks (armored, not yet including
+// the "-----BEGIN...-----" wrapper -- callers armorEncode the result) from the current
+// ownUserIds/ownSubkeys vectors -- pure concatenation of already-cached packet bytes, no signing.
+// Replaces GenerateKeyPair-era caching of a single pre-baked armored string, so mutators
+// (AddUserId/RevokeUserId/SetPrimaryUserId/AddSubkey/RevokeSubkey/SetKeyExpiration/ChangePassword)
+// only need to update the relevant vector entry; export always reflects current state.
+void CPgpEngine::renderOwnKeyBlocks(std::vector<unsigned char>& publicBlockOut, std::vector<unsigned char>& secretBlockOut) const
+{
+    publicBlockOut.clear();
+    secretBlockOut.clear();
+    if (!impl_->ownKeyGenerated)
+    {
+        return;
+    }
+
+    const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+    appendAll(publicBlockOut, writePacket(PGP_TAG_PUBLIC_KEY, masterPubBody));
+    appendAll(secretBlockOut, writePacket(PGP_TAG_SECRET_KEY, impl_->ownMasterSecretPacketBody));
+
+    for (std::size_t i = 0; i < impl_->ownUserIds.size(); ++i)
+    {
+        const PgpOwnUserId& uid = impl_->ownUserIds[i];
+        const std::vector<unsigned char> uidBody(uid.uidText.begin(), uid.uidText.end());
+        const std::vector<unsigned char> uidPacket = writePacket(PGP_TAG_USER_ID, uidBody);
+        appendAll(publicBlockOut, uidPacket);
+        appendAll(publicBlockOut, uid.certSigPacket);
+        if (uid.isRevoked)
+        {
+            appendAll(publicBlockOut, uid.revocationSigPacket);
+        }
+        appendAll(secretBlockOut, uidPacket);
+        appendAll(secretBlockOut, uid.certSigPacket);
+        if (uid.isRevoked)
+        {
+            appendAll(secretBlockOut, uid.revocationSigPacket);
+        }
+    }
+
+    for (std::size_t i = 0; i < impl_->ownSubkeys.size(); ++i)
+    {
+        const PgpOwnSubkey& subkey = impl_->ownSubkeys[i];
+        const std::vector<unsigned char> subkeyPubBody = buildOwnSubkeyPubBody(static_cast<int>(i));
+        appendAll(publicBlockOut, writePacket(PGP_TAG_PUBLIC_SUBKEY, subkeyPubBody));
+        appendAll(publicBlockOut, subkey.bindingSigPacket);
+        if (subkey.isRevoked)
+        {
+            appendAll(publicBlockOut, subkey.revocationSigPacket);
+        }
+        appendAll(secretBlockOut, writePacket(PGP_TAG_SECRET_SUBKEY, subkey.secretPacketBody));
+        appendAll(secretBlockOut, subkey.bindingSigPacket);
+        if (subkey.isRevoked)
+        {
+            appendAll(secretBlockOut, subkey.revocationSigPacket);
+        }
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Multi-subkey decryption fallback (see PgpOwnSubkey/AddSubkey) -- tries the flat
+// ownSubkeyPrivateKey/ownX25519PrivateKey/ownSubkeyFingerprint/ownSubkeyKeyId fields FIRST (the
+// fast path every pre-existing message still hits, since those fields always mirror
+// ownSubkeys[0]), then falls back to searching ownSubkeys by key ID on miss -- so a peer who
+// encrypted to a subkey added by AddSubkey() after our last export can still be decrypted.
+bool CPgpEngine::parseAndDecryptMessageWithAnyOwnSubkey(const std::vector<unsigned char>& message, std::vector<unsigned char>& outPlaintext, std::vector<unsigned char>* outSignaturePacket) const
+{
+    if (parseAndDecryptMessage(impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint, impl_->ownSubkeyKeyId, message, outPlaintext, outSignaturePacket))
+    {
+        return true;
+    }
+    for (std::size_t i = 0; i < impl_->ownSubkeys.size(); ++i)
+    {
+        const PgpOwnSubkey& subkey = impl_->ownSubkeys[i];
+        if (parseAndDecryptMessage(impl_->keyAlgorithm, subkey.rsaPrivateKey, subkey.x25519PrivateKey, subkey.fingerprint, subkey.keyId, message, outPlaintext, outSignaturePacket))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+// -----------------------------------------------------------------------------
+
 PgpKeyAlgorithm CPgpEngine::GetKeyAlgorithm(void) const
 {
     try
@@ -5731,17 +6274,11 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
             computeFingerprintAndKeyId(masterPubBody, masterFingerprint, masterKeyId);
             computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprint, subkeyKeyId);
 
-            std::vector<unsigned char> certDocument = buildKeyHashPrefix(masterPubBody);
             const std::string userIdStrForCert(userId, static_cast<std::size_t>(userIdSize));
             const std::vector<unsigned char> userIdBodyForCert(userIdStrForCert.begin(), userIdStrForCert.end());
-            certDocument.push_back(0xB4);
-            appendBigEndian32(certDocument, static_cast<std::uint32_t>(userIdBodyForCert.size()));
-            appendAll(certDocument, userIdBodyForCert);
-            certSigPacket = buildSignaturePacket(rsaMasterPrivateKey, 0x13, certDocument, certExtraSubpackets, masterKeyId);
+            certSigPacket = buildSignaturePacket(rsaMasterPrivateKey, 0x13, buildUserIdCertificationDocument(masterPubBody, userIdBodyForCert), certExtraSubpackets, masterKeyId);
 
-            std::vector<unsigned char> bindDocument = buildKeyHashPrefix(masterPubBody);
-            appendAll(bindDocument, buildKeyHashPrefix(subkeyPubBody));
-            bindSigPacket = buildSignaturePacket(rsaMasterPrivateKey, 0x18, bindDocument, bindExtraSubpackets, masterKeyId);
+            bindSigPacket = buildSignaturePacket(rsaMasterPrivateKey, 0x18, buildSubkeyBindingDocument(masterPubBody, subkeyPubBody), bindExtraSubpackets, masterKeyId);
 
             masterSecretBody = encryptSecretKeyMaterial(masterPubBody, buildRsaSecretKeyCleartext(rsaMasterPrivateKey), password, passwordSize);
             subkeySecretBody = encryptSecretKeyMaterial(subkeyPubBody, buildRsaSecretKeyCleartext(rsaSubkeyPrivateKey), password, passwordSize);
@@ -5766,17 +6303,11 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
             computeFingerprintAndKeyId(masterPubBody, masterFingerprint, masterKeyId);
             computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprint, subkeyKeyId);
 
-            std::vector<unsigned char> certDocument = buildKeyHashPrefix(masterPubBody);
             const std::string userIdStrForCert(userId, static_cast<std::size_t>(userIdSize));
             const std::vector<unsigned char> userIdBodyForCert(userIdStrForCert.begin(), userIdStrForCert.end());
-            certDocument.push_back(0xB4);
-            appendBigEndian32(certDocument, static_cast<std::uint32_t>(userIdBodyForCert.size()));
-            appendAll(certDocument, userIdBodyForCert);
-            certSigPacket = buildEd25519SignaturePacket(edMasterPrivateKey, 0x13, certDocument, certExtraSubpackets, masterKeyId);
+            certSigPacket = buildEd25519SignaturePacket(edMasterPrivateKey, 0x13, buildUserIdCertificationDocument(masterPubBody, userIdBodyForCert), certExtraSubpackets, masterKeyId);
 
-            std::vector<unsigned char> bindDocument = buildKeyHashPrefix(masterPubBody);
-            appendAll(bindDocument, buildKeyHashPrefix(subkeyPubBody));
-            bindSigPacket = buildEd25519SignaturePacket(edMasterPrivateKey, 0x18, bindDocument, bindExtraSubpackets, masterKeyId);
+            bindSigPacket = buildEd25519SignaturePacket(edMasterPrivateKey, 0x18, buildSubkeyBindingDocument(masterPubBody, subkeyPubBody), bindExtraSubpackets, masterKeyId);
 
             masterSecretBody = encryptSecretKeyMaterial(masterPubBody, buildEd25519SecretKeyCleartext(edMasterPrivateKey), password, passwordSize);
             subkeySecretBody = encryptSecretKeyMaterial(subkeyPubBody, buildX25519SecretKeyCleartext(edSubkeyPrivateKey), password, passwordSize);
@@ -5787,7 +6318,7 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
 
         const std::string userIdStr(userId, static_cast<std::size_t>(userIdSize));
         const std::vector<unsigned char> userIdBody(userIdStr.begin(), userIdStr.end());
-        const std::vector<unsigned char> userIdPacket = writePacket(13, userIdBody);
+        const std::vector<unsigned char> userIdPacket = writePacket(PGP_TAG_USER_ID, userIdBody);
 
         if (certSigPacket.empty() || bindSigPacket.empty() || masterSecretBody.empty() || subkeySecretBody.empty())
         {
@@ -5840,13 +6371,48 @@ int CPgpEngine::GenerateKeyPair(const char* userId, const int userIdSize, const 
             unsigned char subkeyKeyIdRecomputed[8];
             computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprintForStorage, subkeyKeyIdRecomputed);
             std::memcpy(impl_->ownSubkeyFingerprint, subkeyFingerprintForStorage, 20);
+
+            // Seed the multi-UID/multi-subkey vectors with exactly this one UID/subkey (the flat
+            // ownMaster*/ownSubkey* fields above stay populated unchanged, for every pre-existing
+            // Encrypt/Sign/Verify/ClearSign call site). A second GenerateKeyPair call replaces the
+            // whole identity, same v1 decision as before -- both vectors are cleared first.
+            impl_->ownUserIds.clear();
+            impl_->ownSubkeys.clear();
+            impl_->ownMasterSecretPacketBody = masterSecretBody;
+
+            PgpOwnUserId seededUid;
+            seededUid.uidText = userIdStr;
+            seededUid.certCreationTime = creationTime;
+            seededUid.certSigPacket = certSigPacket;
+            seededUid.isPrimary = true;
+            seededUid.isRevoked = false;
+            impl_->ownUserIds.push_back(seededUid);
+
+            PgpOwnSubkey seededSubkey;
+            if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                seededSubkey.rsaPrivateKey = rsaSubkeyPrivateKey;
+                seededSubkey.rsaPublicKey = rsaSubkeyPublicKey;
+            }
+            else
+            {
+                std::memcpy(seededSubkey.x25519PrivateKey, edSubkeyPrivateKey, 32);
+                std::memcpy(seededSubkey.x25519PublicKey, edSubkeyPublicKey, 32);
+            }
+            std::memcpy(seededSubkey.keyId, subkeyKeyId, 8);
+            std::memcpy(seededSubkey.fingerprint, subkeyFingerprintForStorage, 20);
+            seededSubkey.creationTime = creationTime;
+            seededSubkey.expirationSeconds = expirationSeconds;
+            seededSubkey.keyFlags = 0x0C; // GenerateKeyPair's own subkey is always encrypt-only
+            seededSubkey.bindingSigPacket = bindSigPacket;
+            seededSubkey.isRevoked = false;
+            seededSubkey.secretPacketBody = subkeySecretBody;
+            impl_->ownSubkeys.push_back(seededSubkey);
         }
         impl_->keyCreationTime = creationTime;
         impl_->keyExpirationSeconds = expirationSeconds;
         CryptoPP::SHA256().CalculateDigest(impl_->passwordCheckHash, reinterpret_cast<const CryptoPP::byte*>(password), static_cast<std::size_t>(passwordSize));
 
-        impl_->ownPublicKeyArmored = armorEncode("PGP PUBLIC KEY BLOCK", publicKeyBlock);
-        impl_->ownSecretKeyArmored = armorEncode("PGP PRIVATE KEY BLOCK", secretKeyBlock);
         impl_->ownKeyGenerated = true;
 
         return NO_ERROR;
@@ -5866,7 +6432,10 @@ int CPgpEngine::GetPublicKeyArmoredSize(void) const
         {
             return 0;
         }
-        return static_cast<int>(impl_->ownPublicKeyArmored.size());
+        std::vector<unsigned char> publicBlock;
+        std::vector<unsigned char> secretBlock;
+        renderOwnKeyBlocks(publicBlock, secretBlock);
+        return static_cast<int>(armorEncode("PGP PUBLIC KEY BLOCK", publicBlock).size());
     }
     catch (...)
     {
@@ -5883,7 +6452,10 @@ int CPgpEngine::GetSecretKeyArmoredSize(void) const
         {
             return 0;
         }
-        return static_cast<int>(impl_->ownSecretKeyArmored.size());
+        std::vector<unsigned char> publicBlock;
+        std::vector<unsigned char> secretBlock;
+        renderOwnKeyBlocks(publicBlock, secretBlock);
+        return static_cast<int>(armorEncode("PGP PRIVATE KEY BLOCK", secretBlock).size());
     }
     catch (...)
     {
@@ -5900,7 +6472,10 @@ int CPgpEngine::ExportPublicKeyArmored(const int outputBufferCapacity, char* out
         {
             return INVALID_ARGUMENT;
         }
-        const std::string& armored = impl_->ownPublicKeyArmored;
+        std::vector<unsigned char> publicBlock;
+        std::vector<unsigned char> secretBlock;
+        renderOwnKeyBlocks(publicBlock, secretBlock);
+        const std::string armored = armorEncode("PGP PUBLIC KEY BLOCK", publicBlock);
         if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armored.size()))
         {
             *outputBufferSize = static_cast<int>(armored.size());
@@ -5925,7 +6500,10 @@ int CPgpEngine::ExportSecretKeyArmored(const int outputBufferCapacity, char* out
         {
             return INVALID_ARGUMENT;
         }
-        const std::string& armored = impl_->ownSecretKeyArmored;
+        std::vector<unsigned char> publicBlock;
+        std::vector<unsigned char> secretBlock;
+        renderOwnKeyBlocks(publicBlock, secretBlock);
+        const std::string armored = armorEncode("PGP PRIVATE KEY BLOCK", secretBlock);
         if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(armored.size()))
         {
             *outputBufferSize = static_cast<int>(armored.size());
@@ -6071,6 +6649,620 @@ int CPgpEngine::RevokeKeyArmored(const char* password, const int passwordSize, c
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngine::AddUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize, const bool makePrimary)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0 || userId == nullptr || userIdSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+        const std::string uidStr(userId, static_cast<std::size_t>(userIdSize));
+        const std::vector<unsigned char> uidBody(uidStr.begin(), uidStr.end());
+
+        std::vector<unsigned char> extra = buildKeyFlagsSubpacket(0x03);
+        if (impl_->keyExpirationSeconds > 0)
+        {
+            appendAll(extra, buildKeyExpirationSubpacket(impl_->keyExpirationSeconds));
+        }
+
+        PgpOwnUserId newUid;
+        newUid.uidText = uidStr;
+        newUid.certCreationTime = static_cast<std::uint32_t>(std::time(nullptr));
+        newUid.certSigPacket = signWithOwnMasterKey(0x13, buildUserIdCertificationDocument(masterPubBody, uidBody), extra);
+        newUid.isPrimary = false;
+        newUid.isRevoked = false;
+        if (newUid.certSigPacket.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+        impl_->ownUserIds.push_back(newUid);
+
+        if (makePrimary)
+        {
+            const int status = SetPrimaryUserId(password, passwordSize, static_cast<int>(impl_->ownUserIds.size()) - 1);
+            if (status != NO_ERROR)
+            {
+                return status;
+            }
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// deluid equivalent -- revokes (0x30 signature layered on the existing 0x13 self-cert), does not
+// delete: hard-deleting a UID breaks third-party certifications on it, matching real gpg's own
+// current behavior. The last remaining non-revoked UID can still be revoked here (unlike gpg's
+// --quick-revoke-uid, which refuses to revoke a key's only remaining non-revoked UID) -- this
+// engine leaves that policy choice to the caller.
+int CPgpEngine::RevokeUserId(const char* password, const int passwordSize, const int userIdIndex, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (userIdIndex < 0 || userIdIndex >= static_cast<int>(impl_->ownUserIds.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        PgpOwnUserId& uid = impl_->ownUserIds[static_cast<std::size_t>(userIdIndex)];
+        const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+        const std::vector<unsigned char> uidBody(uid.uidText.begin(), uid.uidText.end());
+        const std::vector<unsigned char> reasonSubpacket = buildRevocationReasonSubpacket(reasonCode, reasonText, reasonTextSize);
+
+        const std::vector<unsigned char> revocationSig = signWithOwnMasterKey(0x30, buildUserIdCertificationDocument(masterPubBody, uidBody), reasonSubpacket);
+        if (revocationSig.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        uid.revocationSigPacket = revocationSig;
+        uid.isRevoked = true;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::SetPrimaryUserId(const char* password, const int passwordSize, const int userIdIndex)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (userIdIndex < 0 || userIdIndex >= static_cast<int>(impl_->ownUserIds.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        PgpOwnUserId& target = impl_->ownUserIds[static_cast<std::size_t>(userIdIndex)];
+        const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+        const std::vector<unsigned char> uidBody(target.uidText.begin(), target.uidText.end());
+
+        // RFC 4880's "newest self-cert wins" resolution rule means the previous certSigPacket for
+        // this UID need not be kept or separately marked -- overwriting it here is sufficient, and
+        // no other UID's own self-cert needs re-signing to clear its (implicit or absent) primary
+        // flag; isPrimary bookkeeping below is purely in-memory.
+        std::vector<unsigned char> extra = buildKeyFlagsSubpacket(0x03);
+        if (impl_->keyExpirationSeconds > 0)
+        {
+            appendAll(extra, buildKeyExpirationSubpacket(impl_->keyExpirationSeconds));
+        }
+        appendAll(extra, buildPrimaryUserIdSubpacket(true));
+
+        const std::vector<unsigned char> newCert = signWithOwnMasterKey(0x13, buildUserIdCertificationDocument(masterPubBody, uidBody), extra);
+        if (newCert.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        target.certSigPacket = newCert;
+        for (std::size_t i = 0; i < impl_->ownUserIds.size(); ++i)
+        {
+            impl_->ownUserIds[i].isPrimary = (static_cast<int>(i) == userIdIndex);
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetUserIdCount(void) const
+{
+    try
+    {
+        return (!impl_ || !impl_->ownKeyGenerated) ? 0 : static_cast<int>(impl_->ownUserIds.size());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetUserId(const int userIdIndex, char* outputBuffer, const int outputBufferCapacity, int* outputBufferSize) const
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (userIdIndex < 0 || userIdIndex >= static_cast<int>(impl_->ownUserIds.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        const std::string& uidText = impl_->ownUserIds[static_cast<std::size_t>(userIdIndex)].uidText;
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(uidText.size()))
+        {
+            *outputBufferSize = static_cast<int>(uidText.size());
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, uidText.data(), uidText.size());
+        *outputBufferSize = static_cast<int>(uidText.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetUserIdIsPrimary(const int userIdIndex, bool* isPrimary) const
+{
+    try
+    {
+        if (!impl_ || isPrimary == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (userIdIndex < 0 || userIdIndex >= static_cast<int>(impl_->ownUserIds.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        *isPrimary = impl_->ownUserIds[static_cast<std::size_t>(userIdIndex)].isPrimary;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetUserIdIsRevoked(const int userIdIndex, bool* isRevoked) const
+{
+    try
+    {
+        if (!impl_ || isRevoked == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (userIdIndex < 0 || userIdIndex >= static_cast<int>(impl_->ownUserIds.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        *isRevoked = impl_->ownUserIds[static_cast<std::size_t>(userIdIndex)].isRevoked;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::AddSubkey(const char* password, const int passwordSize, const unsigned char keyFlags, const unsigned int expirationSeconds)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_ED25519_X25519 && keyFlags != 0x0C)
+        {
+            // Ed25519-family engines only ever generate an X25519 (ECDH, encrypt-only) subkey
+            // today -- a sign/auth subkey there needs a separate Ed25519 (not X25519) subkey code
+            // path this engine does not yet have. See IPgpEngine.h's own comment.
+            return NOT_IMPLEMENTED;
+        }
+
+        const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+        const std::uint32_t creationTime = static_cast<std::uint32_t>(std::time(nullptr));
+
+        PgpOwnSubkey newSubkey;
+        std::vector<unsigned char> subkeyPubBody;
+
+        if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+        {
+            if (impl_->rsaKeyBits != 1024 && impl_->rsaKeyBits != 2048 && impl_->rsaKeyBits != 3072 && impl_->rsaKeyBits != 4096)
+            {
+                return INVALID_ARGUMENT;
+            }
+            CryptoPP::AutoSeededRandomPool rng;
+            newSubkey.rsaPrivateKey.GenerateRandomWithKeySize(rng, static_cast<unsigned int>(impl_->rsaKeyBits));
+            newSubkey.rsaPublicKey = CryptoPP::RSA::PublicKey(newSubkey.rsaPrivateKey);
+            subkeyPubBody = buildRsaPublicKeyPacketBody(creationTime, newSubkey.rsaPublicKey.GetModulus(), newSubkey.rsaPublicKey.GetPublicExponent());
+            newSubkey.secretPacketBody = encryptSecretKeyMaterial(subkeyPubBody, buildRsaSecretKeyCleartext(newSubkey.rsaPrivateKey), password, passwordSize);
+        }
+        else
+        {
+            CryptoPP::AutoSeededRandomPool rng;
+            CryptoPP::x25519 dh;
+            dh.GeneratePrivateKey(rng, newSubkey.x25519PrivateKey);
+            dh.GeneratePublicKey(rng, newSubkey.x25519PrivateKey, newSubkey.x25519PublicKey);
+            subkeyPubBody = buildX25519PublicKeyPacketBody(creationTime, newSubkey.x25519PublicKey);
+            newSubkey.secretPacketBody = encryptSecretKeyMaterial(subkeyPubBody, buildX25519SecretKeyCleartext(newSubkey.x25519PrivateKey), password, passwordSize);
+        }
+
+        unsigned char subkeyFingerprint[20];
+        unsigned char subkeyKeyId[8];
+        computeFingerprintAndKeyId(subkeyPubBody, subkeyFingerprint, subkeyKeyId);
+
+        std::vector<unsigned char> extra = buildKeyFlagsSubpacket(keyFlags);
+        if (expirationSeconds > 0)
+        {
+            appendAll(extra, buildKeyExpirationSubpacket(expirationSeconds));
+        }
+        newSubkey.bindingSigPacket = signWithOwnMasterKey(0x18, buildSubkeyBindingDocument(masterPubBody, subkeyPubBody), extra);
+        if (newSubkey.bindingSigPacket.empty() || newSubkey.secretPacketBody.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::memcpy(newSubkey.keyId, subkeyKeyId, 8);
+        std::memcpy(newSubkey.fingerprint, subkeyFingerprint, 20);
+        newSubkey.creationTime = creationTime;
+        newSubkey.expirationSeconds = expirationSeconds;
+        newSubkey.keyFlags = keyFlags;
+        newSubkey.isRevoked = false;
+
+        impl_->ownSubkeys.push_back(newSubkey);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::RevokeSubkey(const char* password, const int passwordSize, const int subkeyIndex, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (subkeyIndex < 0 || subkeyIndex >= static_cast<int>(impl_->ownSubkeys.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        PgpOwnSubkey& subkey = impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)];
+        const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+        const std::vector<unsigned char> subkeyPubBody = buildOwnSubkeyPubBody(subkeyIndex);
+        const std::vector<unsigned char> reasonSubpacket = buildRevocationReasonSubpacket(reasonCode, reasonText, reasonTextSize);
+
+        const std::vector<unsigned char> revocationSig = signWithOwnMasterKey(0x28, buildSubkeyBindingDocument(masterPubBody, subkeyPubBody), reasonSubpacket);
+        if (revocationSig.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        subkey.revocationSigPacket = revocationSig;
+        subkey.isRevoked = true;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// subkeyIndex == -1 targets the primary key itself -- expressed by re-issuing the PRIMARY UID's
+// self-cert (0x13) with an updated key-expiration-time subpacket, the same mechanism GenerateKeyPair
+// itself uses, matching real gpg's own --quick-set-expire (no subkey argument) semantics. Otherwise
+// subkeyIndex selects an entry in ownSubkeys, re-issuing its subkey-binding signature (0x18).
+int CPgpEngine::SetKeyExpiration(const char* password, const int passwordSize, const int subkeyIndex, const unsigned int expirationSeconds)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated || password == nullptr || passwordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, password, passwordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+
+        if (subkeyIndex == -1)
+        {
+            int primaryIndex = -1;
+            for (std::size_t i = 0; i < impl_->ownUserIds.size(); ++i)
+            {
+                if (impl_->ownUserIds[i].isPrimary)
+                {
+                    primaryIndex = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (primaryIndex < 0 && !impl_->ownUserIds.empty())
+            {
+                primaryIndex = 0;
+            }
+            if (primaryIndex < 0)
+            {
+                return UNEXPECTED_ERROR;
+            }
+
+            PgpOwnUserId& primaryUid = impl_->ownUserIds[static_cast<std::size_t>(primaryIndex)];
+            const std::vector<unsigned char> uidBody(primaryUid.uidText.begin(), primaryUid.uidText.end());
+            std::vector<unsigned char> extra = buildKeyFlagsSubpacket(0x03);
+            if (expirationSeconds > 0)
+            {
+                appendAll(extra, buildKeyExpirationSubpacket(expirationSeconds));
+            }
+            if (primaryUid.isPrimary)
+            {
+                appendAll(extra, buildPrimaryUserIdSubpacket(true));
+            }
+            const std::vector<unsigned char> newCert = signWithOwnMasterKey(0x13, buildUserIdCertificationDocument(masterPubBody, uidBody), extra);
+            if (newCert.empty())
+            {
+                return UNEXPECTED_ERROR;
+            }
+            primaryUid.certSigPacket = newCert;
+            impl_->keyExpirationSeconds = expirationSeconds;
+            return NO_ERROR;
+        }
+
+        if (subkeyIndex < 0 || subkeyIndex >= static_cast<int>(impl_->ownSubkeys.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        PgpOwnSubkey& subkey = impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)];
+        const std::vector<unsigned char> subkeyPubBody = buildOwnSubkeyPubBody(subkeyIndex);
+        std::vector<unsigned char> extra = buildKeyFlagsSubpacket(subkey.keyFlags);
+        if (expirationSeconds > 0)
+        {
+            appendAll(extra, buildKeyExpirationSubpacket(expirationSeconds));
+        }
+        const std::vector<unsigned char> newBinding = signWithOwnMasterKey(0x18, buildSubkeyBindingDocument(masterPubBody, subkeyPubBody), extra);
+        if (newBinding.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+        subkey.bindingSigPacket = newBinding;
+        subkey.expirationSeconds = expirationSeconds;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetSubkeyCount(void) const
+{
+    try
+    {
+        return (!impl_ || !impl_->ownKeyGenerated) ? 0 : static_cast<int>(impl_->ownSubkeys.size());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetSubkeyKeyId(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const
+{
+    try
+    {
+        if (!impl_ || outputBuffer == nullptr || outputBufferCapacity < 17)
+        {
+            return BUFFER_TOO_SMALL;
+        }
+        if (subkeyIndex < 0 || subkeyIndex >= static_cast<int>(impl_->ownSubkeys.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        static const char* hexDigits = "0123456789ABCDEF";
+        const unsigned char* keyId = impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)].keyId;
+        for (int i = 0; i < 8; ++i)
+        {
+            outputBuffer[i * 2] = hexDigits[(keyId[i] >> 4) & 0xF];
+            outputBuffer[i * 2 + 1] = hexDigits[keyId[i] & 0xF];
+        }
+        outputBuffer[16] = '\0';
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetSubkeyFingerprint(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const
+{
+    try
+    {
+        if (!impl_ || outputBuffer == nullptr || outputBufferCapacity < 41)
+        {
+            return BUFFER_TOO_SMALL;
+        }
+        if (subkeyIndex < 0 || subkeyIndex >= static_cast<int>(impl_->ownSubkeys.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        static const char* hexDigits = "0123456789ABCDEF";
+        const unsigned char* fingerprint = impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)].fingerprint;
+        for (int i = 0; i < 20; ++i)
+        {
+            outputBuffer[i * 2] = hexDigits[(fingerprint[i] >> 4) & 0xF];
+            outputBuffer[i * 2 + 1] = hexDigits[fingerprint[i] & 0xF];
+        }
+        outputBuffer[40] = '\0';
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetSubkeyIsRevoked(const int subkeyIndex, bool* isRevoked) const
+{
+    try
+    {
+        if (!impl_ || isRevoked == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (subkeyIndex < 0 || subkeyIndex >= static_cast<int>(impl_->ownSubkeys.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        *isRevoked = impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)].isRevoked;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetSubkeyExpirationSeconds(const int subkeyIndex, unsigned int* expirationSeconds) const
+{
+    try
+    {
+        if (!impl_ || expirationSeconds == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (subkeyIndex < 0 || subkeyIndex >= static_cast<int>(impl_->ownSubkeys.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        *expirationSeconds = static_cast<unsigned int>(impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)].expirationSeconds);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// passwd equivalent -- re-runs encryptSecretKeyMaterial for the own master key and every own
+// subkey's secret material under newPassword. No decryption step is needed first: the cleartext
+// private key material is already held in memory at all times (Impl's own RSA/Ed25519/X25519
+// members), unlike gpg's own on-disk-encrypted keyring.
+int CPgpEngine::ChangePassword(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize)
+{
+    try
+    {
+        if (!impl_ || !impl_->ownKeyGenerated)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (oldPassword == nullptr || oldPasswordSize <= 0 || newPassword == nullptr || newPasswordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!checkPasswordHash(impl_->passwordCheckHash, oldPassword, oldPasswordSize))
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::vector<unsigned char> masterPubBody = buildOwnMasterPubBody();
+        std::vector<unsigned char> masterCleartext = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            buildRsaSecretKeyCleartext(impl_->ownMasterPrivateKey) : buildEd25519SecretKeyCleartext(impl_->ownEd25519PrivateKey);
+        const std::vector<unsigned char> newMasterSecretBody = encryptSecretKeyMaterial(masterPubBody, masterCleartext, newPassword, newPasswordSize);
+        if (newMasterSecretBody.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::vector<std::vector<unsigned char>> newSubkeySecretBodies(impl_->ownSubkeys.size());
+        for (std::size_t i = 0; i < impl_->ownSubkeys.size(); ++i)
+        {
+            const PgpOwnSubkey& subkey = impl_->ownSubkeys[i];
+            const std::vector<unsigned char> subkeyPubBody = buildOwnSubkeyPubBody(static_cast<int>(i));
+            const std::vector<unsigned char> subkeyCleartext = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+                buildRsaSecretKeyCleartext(subkey.rsaPrivateKey) : buildX25519SecretKeyCleartext(subkey.x25519PrivateKey);
+            newSubkeySecretBodies[i] = encryptSecretKeyMaterial(subkeyPubBody, subkeyCleartext, newPassword, newPasswordSize);
+            if (newSubkeySecretBodies[i].empty())
+            {
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        impl_->ownMasterSecretPacketBody = newMasterSecretBody;
+        for (std::size_t i = 0; i < impl_->ownSubkeys.size(); ++i)
+        {
+            impl_->ownSubkeys[i].secretPacketBody = newSubkeySecretBodies[i];
+        }
+        CryptoPP::SHA256().CalculateDigest(impl_->passwordCheckHash, reinterpret_cast<const CryptoPP::byte*>(newPassword), static_cast<std::size_t>(newPasswordSize));
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngine::ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize)
 {
     try
@@ -6115,7 +7307,94 @@ int CPgpEngine::ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const i
         }
         std::memcpy(impl_->peerSubkeyKeyId, parsed.subkeyKeyId, 8);
 
+        impl_->peerUserIds = parsed.userIds;
+        impl_->peerSubkeys = parsed.subkeys;
+
         impl_->peerKeyImported = true;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetPeerUserIdCount(void) const
+{
+    try
+    {
+        return (!impl_ || !impl_->peerKeyImported) ? 0 : static_cast<int>(impl_->peerUserIds.size());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetPeerUserId(const int userIdIndex, char* outputBuffer, const int outputBufferCapacity, int* outputBufferSize) const
+{
+    try
+    {
+        if (!impl_ || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (userIdIndex < 0 || userIdIndex >= static_cast<int>(impl_->peerUserIds.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        const std::string& uidText = impl_->peerUserIds[static_cast<std::size_t>(userIdIndex)].uidText;
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(uidText.size()))
+        {
+            *outputBufferSize = static_cast<int>(uidText.size());
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(outputBuffer, uidText.data(), uidText.size());
+        *outputBufferSize = static_cast<int>(uidText.size());
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetPeerSubkeyCount(void) const
+{
+    try
+    {
+        return (!impl_ || !impl_->peerKeyImported) ? 0 : static_cast<int>(impl_->peerSubkeys.size());
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::GetPeerSubkeyKeyId(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const
+{
+    try
+    {
+        if (!impl_ || outputBuffer == nullptr || outputBufferCapacity < 17)
+        {
+            return BUFFER_TOO_SMALL;
+        }
+        if (subkeyIndex < 0 || subkeyIndex >= static_cast<int>(impl_->peerSubkeys.size()))
+        {
+            return INVALID_ARGUMENT;
+        }
+        static const char* hexDigits = "0123456789ABCDEF";
+        const unsigned char* keyId = impl_->peerSubkeys[static_cast<std::size_t>(subkeyIndex)].keyId;
+        for (int i = 0; i < 8; ++i)
+        {
+            outputBuffer[i * 2] = hexDigits[(keyId[i] >> 4) & 0xF];
+            outputBuffer[i * 2 + 1] = hexDigits[keyId[i] & 0xF];
+        }
+        outputBuffer[16] = '\0';
         return NO_ERROR;
     }
     catch (...)
@@ -6465,7 +7744,7 @@ int CPgpEngine::DecryptBuffer(const char* password, const int passwordSize, cons
 
         const std::vector<unsigned char> message(inputBuffer, inputBuffer + inputBufferSize);
         std::vector<unsigned char> plaintext;
-        if (!parseAndDecryptMessage(impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint, impl_->ownSubkeyKeyId, message, plaintext))
+        if (!parseAndDecryptMessageWithAnyOwnSubkey(message, plaintext, nullptr))
         {
             return INVALID_DATA;
         }
@@ -6511,7 +7790,7 @@ int CPgpEngine::DecryptStringArmored(const char* password, const int passwordSiz
         }
 
         std::vector<unsigned char> plaintext;
-        if (!parseAndDecryptMessage(impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint, impl_->ownSubkeyKeyId, message, plaintext))
+        if (!parseAndDecryptMessageWithAnyOwnSubkey(message, plaintext, nullptr))
         {
             return INVALID_DATA;
         }
@@ -6555,8 +7834,7 @@ int CPgpEngine::DecryptAndVerifyBuffer(const char* password, const int passwordS
         const std::vector<unsigned char> message(inputBuffer, inputBuffer + inputBufferSize);
         std::vector<unsigned char> plaintext;
         std::vector<unsigned char> sigPacketBytes;
-        if (!parseAndDecryptMessage( impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint,
-                                    impl_->ownSubkeyKeyId, message, plaintext, &sigPacketBytes))
+        if (!parseAndDecryptMessageWithAnyOwnSubkey(message, plaintext, &sigPacketBytes))
         {
             return INVALID_DATA;
         }
@@ -6614,8 +7892,7 @@ int CPgpEngine::DecryptAndVerifyStringArmored(const char* password, const int pa
 
         std::vector<unsigned char> plaintext;
         std::vector<unsigned char> sigPacketBytes;
-        if (!parseAndDecryptMessage( impl_->keyAlgorithm, impl_->ownSubkeyPrivateKey, impl_->ownX25519PrivateKey, impl_->ownSubkeyFingerprint,
-                                    impl_->ownSubkeyKeyId, message, plaintext, &sigPacketBytes))
+        if (!parseAndDecryptMessageWithAnyOwnSubkey(message, plaintext, &sigPacketBytes))
         {
             return INVALID_DATA;
         }

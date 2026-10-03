@@ -94,7 +94,54 @@ public:
                                  const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
                                  const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
 
+    // -- Own-identity UID management (multi-UID support, gpg --edit-key adduid/deluid/primary parity) --
+    virtual int AddUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize, const bool makePrimary) = 0;
+
+    // deluid equivalent: revokes (does not delete) the UID at userIdIndex -- matches real gpg's own
+    // current behavior of layering a 0x30 revocation signature over the existing self-cert rather
+    // than removing the UID packet, since hard-deleting a UID breaks third-party certifications on it.
+    virtual int RevokeUserId(const char* password, const int passwordSize, const int userIdIndex, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize) = 0;
+
+    virtual int SetPrimaryUserId(const char* password, const int passwordSize, const int userIdIndex) = 0;
+
+    virtual int GetUserIdCount(void) const = 0;
+    virtual int GetUserId(const int userIdIndex, char* outputBuffer, const int outputBufferCapacity, int* outputBufferSize) const = 0;
+    virtual int GetUserIdIsPrimary(const int userIdIndex, bool* isPrimary) const = 0;
+    virtual int GetUserIdIsRevoked(const int userIdIndex, bool* isRevoked) const = 0;
+
+    // -- Own-identity subkey management (multi-subkey support, gpg --edit-key addkey/expire parity) --
+    // No algorithm parameter -- a new subkey always matches this instance's own fixed key-algorithm
+    // family (see GetKeyAlgorithm above). keyFlags follows RFC 4880 5.2.3.21: 0x02 sign, 0x0C
+    // encrypt, 0x20 authenticate. On an Ed25519/X25519-family instance only 0x0C (encrypt, producing
+    // an additional X25519 subkey) is currently supported -- any other flags value returns
+    // NOT_IMPLEMENTED, since a sign/auth subkey there would need a separate Ed25519 (not X25519)
+    // subkey code path this engine does not yet have.
+    virtual int AddSubkey(const char* password, const int passwordSize, const unsigned char keyFlags, const unsigned int expirationSeconds) = 0;
+
+    virtual int RevokeSubkey(const char* password, const int passwordSize, const int subkeyIndex, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize) = 0;
+
+    // subkeyIndex == -1 targets the primary key itself; otherwise an index into the own-subkey list.
+    virtual int SetKeyExpiration(const char* password, const int passwordSize, const int subkeyIndex, const unsigned int expirationSeconds) = 0;
+
+    virtual int GetSubkeyCount(void) const = 0;
+    virtual int GetSubkeyKeyId(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const = 0;
+    virtual int GetSubkeyFingerprint(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const = 0;
+    virtual int GetSubkeyIsRevoked(const int subkeyIndex, bool* isRevoked) const = 0;
+    virtual int GetSubkeyExpirationSeconds(const int subkeyIndex, unsigned int* expirationSeconds) const = 0;
+
+    // passwd equivalent -- re-encrypts the own master key and every own subkey's secret material
+    // under newPassword; oldPassword must match the identity's current password.
+    virtual int ChangePassword(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize) = 0;
+
     virtual int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) = 0;
+
+    // Peer-identity enumeration -- mirrors the own-identity getters above, populated by
+    // ImportPeerPublicKey once its parser collects every UID/subkey packet (not just the first of
+    // each) from the imported public key block.
+    virtual int GetPeerUserIdCount(void) const = 0;
+    virtual int GetPeerUserId(const int userIdIndex, char* outputBuffer, const int outputBufferCapacity, int* outputBufferSize) const = 0;
+    virtual int GetPeerSubkeyCount(void) const = 0;
+    virtual int GetPeerSubkeyKeyId(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const = 0;
 
     virtual int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const = 0;
 

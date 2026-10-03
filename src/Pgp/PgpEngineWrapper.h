@@ -174,6 +174,54 @@ public:
                          const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
+    // Own-identity UID/subkey management (multi-UID/multi-subkey support -- gpg --edit-key
+    // adduid/deluid/addkey/expire/primary/passwd parity), each delegating to one of real gpg's own
+    // "--quick-*" one-shot commands (GnuPG >= 2.1) rather than scripting the interactive --edit-key
+    // menu -- gpg itself updates the self-certifications/binding signatures, same ground truth the
+    // native CPgpEngine side re-derives and re-signs by hand (see PgpEngine.h's own equivalent
+    // section). GenerateKeyPair()/GenerateKeyPairEcc()/LoadOwnIdentity() must have succeeded first;
+    // password must match this identity's current passphrase.
+    // ============================================================================================
+
+    // adduid equivalent ("gpg --quick-add-uid"); if makePrimary, a second "--quick-set-primary-uid"
+    // call follows in the same operation.
+    int AddUserId(const char* password, const int passwordSize, const char* newUserId, const int newUserIdSize, const bool makePrimary) override;
+
+    // deluid equivalent ("gpg --quick-revoke-uid") -- revokes, never hard-deletes (see
+    // IPgpEngineWrapper.h's own comment for why).
+    int RevokeUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize) override;
+
+    // primary equivalent ("gpg --quick-set-primary-uid").
+    int SetPrimaryUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize) override;
+
+    // addkey equivalent ("gpg --quick-add-key FPR default usageSpec expireSpec") -- "default"
+    // reuses the primary key's own algorithm, matching native CPgpEngine::AddSubkey's
+    // no-algorithm-parameter design. usageSpec is gpg's own usage string ("encrypt"/"sign"/"auth"/
+    // a comma-separated combination). expirationSeconds == 0 means never-expire.
+    int AddSubkey(const char* password, const int passwordSize, const char* usageSpec, const int usageSpecSize, const unsigned int expirationSeconds) override;
+
+    // expire equivalent ("gpg --quick-set-expire"). subkeyFingerprint == nullptr/0-length targets
+    // the primary key itself; otherwise the full 40-hex fingerprint of one own subkey (see
+    // GetKeyFingerprint's own doc comment for the format).
+    int SetKeyExpiration(const char* password, const int passwordSize, const unsigned int expirationSeconds, const char* subkeyFingerprint, const int subkeyFingerprintSize) override;
+
+    // passwd equivalent ("gpg --change-passphrase", scripted via --command-fd since it needs BOTH
+    // the old and the new passphrase in sequence -- --passphrase-fd's loopback-pinentry value can
+    // only ever supply one single value per run).
+    int ChangePassword(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize) override;
+
+    // disable/enable equivalent (scripted "--edit-key" "disable"/"enable"/"save") -- a local
+    // public-keyring flag only; does not touch the secret key, and has no native CPgpEngine
+    // analogue (that engine has no persisted keyring to disable a key within).
+    int SetKeyDisabled(const bool disabled) override;
+
+    // Ground truth sourced from "gpg --export-ownertrust" (its own TRUSTDB's ownertrust byte,
+    // 0x80 bit == gpg's own TRUST_FLAG_DISABLED) -- NOT "--with-colons --list-keys", which this
+    // gpg version no longer reflects the disabled state in (see Pgp/PgpEngineWrapper.cpp's own
+    // comment on this method for how that was verified empirically).
+    int GetKeyDisabled(bool* isDisabled) const override;
+
+    // ============================================================================================
     // Peer key(s) (the other party's public key) -- imported into this instance's own isolated gpg
     // keyring via "gpg --import". Unlike CPgpEngine (which tracks exactly one peer identity at a
     // time), this class keeps every successfully imported peer key id, in import order, so the

@@ -891,6 +891,94 @@ public:
     int RunPgpWrapperInspectionSignatureTest(void) override;
 
     // ============================================================================================
+    // Multi-UID / multi-subkey (prompt2.md item 4a -- gpg --edit-key parity: adduid/deluid/addkey/
+    // expire/passwd/primary). Native (CPgpEngine) side.
+    // ============================================================================================
+
+    // Internal-only (no GnuPG needed): AddUserId twice (the second with makePrimary=true), asserts
+    // GetUserIdCount/GetUserId/GetUserIdIsPrimary/GetUserIdIsRevoked reflect all three UIDs
+    // correctly (the original GenerateKeyPair UID plus the two added), then RevokeUserId on the
+    // first (original) UID and asserts GetUserIdIsRevoked flips for it and only it.
+    int RunPgpNativeMultiUidTest(void) override;
+
+    // Internal-only: AddSubkey (encrypt-flagged) on engine A, asserting GetSubkeyCount==2 with
+    // distinct fingerprints from the original GenerateKeyPair subkey; A's public key is exported
+    // and imported into engine B, which EncryptBuffer's a message that A then DecryptBuffer's
+    // successfully -- exercising parseAndDecryptMessageWithAnyOwnSubkey's fallback search over
+    // ownSubkeys (not just the flat ownSubkeyKeyId fast path).
+    int RunPgpNativeMultiSubkeyTest(void) override;
+
+    // Internal-only: sets both a primary-key expiration (SetKeyExpiration with subkeyIndex==-1) and
+    // a subkey expiration (SetKeyExpiration with a concrete subkeyIndex) on engine A, asserts
+    // GetSubkeyExpirationSeconds reflects the new subkey expiration; re-exports and imports into
+    // engine B as a sanity check that the re-issued self-cert/binding-sig round-trip still parses
+    // (GetPeerSubkeyCount==1, GetPeerSubkeyKeyId matches A's own subkey Key ID) -- there is no
+    // peer-side expiration getter (out of the declared peer-enumeration surface), so the
+    // expiration value itself is only asserted on the owning (A) side.
+    int RunPgpNativeSetKeyExpirationTest(void) override;
+
+    // Internal-only: engine "Bob" generates with 2 UIDs (via AddUserId) and 2 subkeys (via
+    // AddSubkey, one of which is then RevokeSubkey'd), exports, and is imported into engine
+    // "Alice" via ImportPeerPublicKey. Asserts GetPeerUserIdCount==2/GetPeerSubkeyCount==2, and
+    // that Alice's EncryptBuffer actually picks the NON-revoked subkey per the "which subkey do we
+    // pick" rule (verified by decrypting the resulting ciphertext with that specific subkey's own
+    // private key on Bob's side, and confirming the revoked subkey's private key does NOT work).
+    int RunPgpNativePeerMultiUidSubkeyImportTest(void) override;
+
+    // gpg-backed (SKIPPED, not FAILED, if gpg.exe isn't found, same convention as
+    // RunPgpGnuPgRevocationInteropTest): CPgpEngine generates, AddUserId x2, AddSubkey x1,
+    // RevokeUserId on one of the added UIDs, exports both public and secret key blocks, imports
+    // both into a fresh gpg --homedir, and confirms via "gpg --with-colons --list-keys" that: the
+    // uid: line count is 3, the sub: line count is 2, the UID that was made primary appears FIRST
+    // among the uid: lines, and the revoked UID's own uid: line carries validity 'r'. This is the
+    // flagship packet-correctness check for the new Export/renderOwnKeyBlocks path -- it proves the
+    // reassembled multi-UID/multi-subkey packet sequence is byte-correct against a real, independent
+    // OpenPGP implementation.
+    int RunPgpGnuPgMultiUidMultiSubkeyInteropTest(void) override;
+
+    // gpg-backed (SKIPPED if gpg.exe isn't found): CPgpEngine generates under password A, exports
+    // its secret key, ChangePassword(A, B), re-exports, imports the NEW secret export into a fresh
+    // gpg --homedir, and confirms gpg itself can unlock and use the secret key with passphrase B
+    // (via --pinentry-mode loopback --passphrase-fd 0 on a --sign) while passphrase A is rejected.
+    int RunPgpGnuPgChangePasswordInteropTest(void) override;
+
+    // ============================================================================================
+    // 4a (multi-UID/multi-subkey -- gpg --edit-key adduid/deluid/addkey/expire/primary/passwd
+    // parity), WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side. Each delegates to one of
+    // gpg's own "--quick-*" one-shot commands; SKIPPED (not FAILED) only if gpg.exe isn't found.
+    // ============================================================================================
+
+    // GenerateKeyPair with UID 1, AddUserId(UID 2, makePrimary=false), asserts (via
+    // GetKeyringListing's real "--with-colons" text) that both addresses now have their own uid:
+    // record.
+    int RunPgpWrapperQuickAddUidTest(void) override;
+
+    // GenerateKeyPair with UID 1, AddUserId(UID 2), RevokeUserId(UID 1), asserts UID 1's own uid:
+    // record carries real gpg's own revoked-validity marker ("uid:r:").
+    int RunPgpWrapperQuickRevokeUidTest(void) override;
+
+    // GenerateKeyPair with UID 1, AddUserId(UID 2, makePrimary=false), SetPrimaryUserId(UID 2),
+    // asserts UID 2 is now the FIRST uid: record (gpg always lists the primary UID first).
+    int RunPgpWrapperQuickSetPrimaryUidTest(void) override;
+
+    // GenerateKeyPair, AddSubkey("encrypt", never-expire), asserts the sub: record count went
+    // from 1 (GenerateKeyPair's own RSA encrypt subkey) to 2.
+    int RunPgpWrapperQuickAddKeyTest(void) override;
+
+    // GenerateKeyPair, SetKeyExpiration on the primary key (subkeyFingerprint == nullptr), asserts
+    // the pub: record's own expiration-date field is no longer empty.
+    int RunPgpWrapperQuickSetExpireTest(void) override;
+
+    // GenerateKeyPair under passphrase A, ChangePassword(A, B), asserts SignBuffer fails with A
+    // and succeeds with B.
+    int RunPgpWrapperChangePasswordTest(void) override;
+
+    // GenerateKeyPair (asserts GetKeyDisabled starts false), SetKeyDisabled(true) (asserts
+    // GetKeyDisabled now true), SetKeyDisabled(false) (asserts it clears again) -- full round trip
+    // confirmed against real gpg's own keyring state each time, not just this instance's own cache.
+    int RunPgpWrapperSetKeyDisabledTest(void) override;
+
+    // ============================================================================================
     // Certificates (§25) / CMS (§29.4 gap #5) / RFC 3161 timestamping (§29.4 gap #6).
     // ============================================================================================
 

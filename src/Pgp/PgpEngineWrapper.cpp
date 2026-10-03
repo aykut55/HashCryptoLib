@@ -1006,6 +1006,23 @@ struct CPgpEngineWrapper::Impl
     int sendKeyCommon(const std::string& keyserverUrl);
     int receiveKeyCommon(const std::string& keyserverUrl, const std::string& keyId);
     int refreshKeysCommon(const std::string& keyserverUrl);
+
+    // -- Own-identity UID/subkey management (4a: multi-UID/multi-subkey -- gpg --edit-key parity),
+    // each a thin single-passphrase "gpg --quick-*" invocation via baseArgs()/runGpgProcess, same
+    // pattern signCommon above already uses -- see Pgp/PgpEngineWrapper.h's public method comments
+    // for the full per-operation documentation.
+    int addUserIdCommon(const char* password, const int passwordSize, const std::string& newUserId, const bool makePrimary);
+    int revokeUserIdCommon(const char* password, const int passwordSize, const std::string& userId);
+    int setPrimaryUserIdCommon(const char* password, const int passwordSize, const std::string& userId);
+    int addKeyCommon(const char* password, const int passwordSize, const std::string& usageSpec, const unsigned int expirationSeconds);
+    int setExpireCommon(const char* password, const int passwordSize, const unsigned int expirationSeconds, const std::string& subkeyFingerprintOrEmpty);
+
+    // --command-fd interactive scripts (NOT baseArgs()/--batch -- same "can't do this in batch
+    // mode" constraint revokeKeyCommon above documents) -- the two higher-risk wrapper operations
+    // (see pgp-multi-uid-subkey-plan.md Phase F).
+    int changePassphraseCommon(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize);
+    int setKeyDisabledCommon(const bool disabled);
+    int getKeyDisabledCommon(bool* isDisabledOut) const;
 };
 // -----------------------------------------------------------------------------
 
@@ -2263,6 +2280,449 @@ int CPgpEngineWrapper::Impl::revokeKeyCommon( const char* password, const int pa
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngineWrapper::Impl::addUserIdCommon(const char* password, const int passwordSize, const std::string& newUserId, const bool makePrimary)
+{
+    try
+    {
+        if (!ownKeyGenerated || password == nullptr || passwordSize <= 0 || newUserId.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string stdinData(password, static_cast<std::size_t>(passwordSize));
+        stdinData.push_back('\n');
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        args.push_back("--quick-add-uid");
+        args.push_back(ownKeyFingerprint);
+        args.push_back(newUserId);
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        if (makePrimary)
+        {
+            return setPrimaryUserIdCommon(password, passwordSize, newUserId);
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::revokeUserIdCommon(const char* password, const int passwordSize, const std::string& userId)
+{
+    try
+    {
+        if (!ownKeyGenerated || password == nullptr || passwordSize <= 0 || userId.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string stdinData(password, static_cast<std::size_t>(passwordSize));
+        stdinData.push_back('\n');
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        args.push_back("--quick-revoke-uid");
+        args.push_back(ownKeyFingerprint);
+        args.push_back(userId);
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::setPrimaryUserIdCommon(const char* password, const int passwordSize, const std::string& userId)
+{
+    try
+    {
+        if (!ownKeyGenerated || password == nullptr || passwordSize <= 0 || userId.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string stdinData(password, static_cast<std::size_t>(passwordSize));
+        stdinData.push_back('\n');
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        args.push_back("--quick-set-primary-uid");
+        args.push_back(ownKeyFingerprint);
+        args.push_back(userId);
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::addKeyCommon(const char* password, const int passwordSize, const std::string& usageSpec, const unsigned int expirationSeconds)
+{
+    try
+    {
+        if (!ownKeyGenerated || password == nullptr || passwordSize <= 0 || usageSpec.empty())
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // NOT the literal "default" keyword -- verified empirically against this machine's gpg.exe
+        // (2.5.21) while building this method that omitting/defaulting the ALGO argument does NOT
+        // reuse the primary key's own algorithm; it always falls back to gpg's own globally
+        // configured default-new-key-algo (ed25519/cv25519), even for an RSA primary. To actually
+        // match the primary key's own algorithm family (this method's documented contract, mirroring
+        // native CPgpEngine::AddSubkey's no-algorithm-parameter design), query it explicitly from
+        // "--with-colons --list-keys" own pub: record (field 3 = length-in-bits, field 4 = pubkey
+        // algo id: 1 = RSA, 22 = EdDSA/ed25519, 18 = ECDH/cv25519) and pass gpg's own matching ALGO
+        // keyword instead.
+        std::vector<std::string> listArgs = baseArgs();
+        listArgs.push_back("--with-colons");
+        listArgs.push_back("--list-keys");
+        listArgs.push_back(ownKeyFingerprint);
+        const GpgProcessResult listResult = runGpgProcess(listArgs, std::string());
+        if (!listResult.started)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        std::string algoSpec;
+        std::istringstream lineStream(listResult.output);
+        std::string line;
+        while (std::getline(lineStream, line))
+        {
+            if (line.rfind("pub:", 0) == 0)
+            {
+                std::vector<std::string> fields;
+                std::istringstream fieldStream(line);
+                std::string field;
+                while (std::getline(fieldStream, field, ':'))
+                {
+                    fields.push_back(field);
+                }
+                if (fields.size() > 3)
+                {
+                    const int pubkeyAlgoId = std::atoi(fields[3].c_str());
+                    if (pubkeyAlgoId == 1) // RSA
+                    {
+                        algoSpec = "rsa" + fields[2];
+                    }
+                    else // 22 = EdDSA/ed25519, 18 = ECDH/cv25519 -- both this engine's own Ed25519-family primary
+                    {
+                        algoSpec = (usageSpec.find("encrypt") != std::string::npos) ? "cv25519" : "ed25519";
+                    }
+                }
+                break;
+            }
+        }
+        if (algoSpec.empty())
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string expireSpec = (expirationSeconds == 0) ? std::string("0") : (std::string("seconds=") + std::to_string(expirationSeconds));
+
+        std::string stdinData(password, static_cast<std::size_t>(passwordSize));
+        stdinData.push_back('\n');
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        args.push_back("--quick-add-key");
+        args.push_back(ownKeyFingerprint);
+        args.push_back(algoSpec);
+        args.push_back(usageSpec);
+        args.push_back(expireSpec);
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::setExpireCommon(const char* password, const int passwordSize, const unsigned int expirationSeconds, const std::string& subkeyFingerprintOrEmpty)
+{
+    try
+    {
+        if (!ownKeyGenerated || password == nullptr || passwordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string expireSpec = (expirationSeconds == 0) ? std::string("0") : (std::string("seconds=") + std::to_string(expirationSeconds));
+
+        std::string stdinData(password, static_cast<std::size_t>(passwordSize));
+        stdinData.push_back('\n');
+
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--passphrase-fd");
+        args.push_back("0");
+        args.push_back("--quick-set-expire");
+        args.push_back(ownKeyFingerprint);
+        args.push_back(expireSpec);
+        if (!subkeyFingerprintOrEmpty.empty())
+        {
+            args.push_back(subkeyFingerprintOrEmpty);
+        }
+        const GpgProcessResult result = runGpgProcess(args, stdinData);
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// "passwd" equivalent -- unlike every --quick-* command above (one single passphrase, suppliable
+// via --passphrase-fd loopback), "--change-passphrase" needs the OLD passphrase and then the NEW
+// one (typed twice, for confirmation) in sequence. Loopback pinentry answers every GET_PASSPHRASE
+// request in a run with the SAME one value, so it cannot supply two different values -- this is
+// why this method (like revokeKeyCommon/setKeyDisabledCommon below) drives gpg interactively over
+// --command-fd instead, with NO --batch (same "can't do this in batch mode" constraint
+// revokeKeyCommon's own comment documents).
+int CPgpEngineWrapper::Impl::changePassphraseCommon(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize)
+{
+    try
+    {
+        if (!ownKeyGenerated || oldPassword == nullptr || oldPasswordSize <= 0 || newPassword == nullptr || newPasswordSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ostringstream stdinScript;
+        stdinScript << std::string(oldPassword, static_cast<std::size_t>(oldPasswordSize)) << "\n"
+                    << std::string(newPassword, static_cast<std::size_t>(newPasswordSize)) << "\n"
+                    << std::string(newPassword, static_cast<std::size_t>(newPasswordSize)) << "\n";
+
+        std::vector<std::string> args;
+        args.push_back(gpgExePath);
+        args.push_back("--homedir");
+        args.push_back(homeDir);
+        args.push_back("--yes");
+        args.push_back("--pinentry-mode");
+        args.push_back("loopback");
+        args.push_back("--command-fd");
+        args.push_back("0");
+        args.push_back("--change-passphrase");
+        args.push_back(ownKeyFingerprint);
+
+        const GpgProcessResult result = runGpgProcess(args, stdinScript.str());
+        if (!result.started || result.exitCode != 0)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// "disable"/"enable" equivalent -- a local public-keyring attribute only (no secret-key material
+// touched, no passphrase needed), driven over the interactive "--edit-key" menu since there is no
+// "--quick-*" shortcut for it. Same --command-fd-without---batch constraint as
+// changePassphraseCommon/revokeKeyCommon above.
+int CPgpEngineWrapper::Impl::setKeyDisabledCommon(const bool disabled)
+{
+    try
+    {
+        if (!ownKeyGenerated)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        const std::string stdinScript = disabled ? std::string("disable\nsave\n") : std::string("enable\nsave\n");
+
+        std::vector<std::string> args;
+        args.push_back(gpgExePath);
+        args.push_back("--homedir");
+        args.push_back(homeDir);
+        args.push_back("--yes");
+        args.push_back("--command-fd");
+        args.push_back("0");
+        args.push_back("--edit-key");
+        args.push_back(ownKeyFingerprint);
+
+        const GpgProcessResult result = runGpgProcess(args, stdinScript);
+        if (!result.started)
+        {
+            return UNEXPECTED_ERROR;
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::Impl::getKeyDisabledCommon(bool* isDisabledOut) const
+{
+    try
+    {
+        if (!ownKeyGenerated || isDisabledOut == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        if (!gpgFound)
+        {
+            return NOT_IMPLEMENTED;
+        }
+        if (!homeDirReady)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        // NOT "--with-colons --list-keys" pub: record field 2 -- verified empirically against this
+        // machine's gpg.exe (2.5.21) while building this method that it no longer surfaces the
+        // disabled state there (it always reports the key's plain validity letter, e.g. "u"/"f",
+        // same before and after SetKeyDisabled(true)). The real ground truth is the TRUSTDB's own
+        // ownertrust byte: "gpg --export-ownertrust" emits "FPR:TRUSTVALUE:" lines where
+        // TRUSTVALUE's 0x80 bit is gpg's own TRUST_FLAG_DISABLED -- confirmed directly against
+        // plain "gpg --list-keys" (non-colon), which prints a literal "*** This key has been
+        // disabled" line precisely when this bit is set.
+        std::vector<std::string> args = baseArgs();
+        args.push_back("--export-ownertrust");
+        const GpgProcessResult result = runGpgProcess(args, std::string());
+        if (!result.started)
+        {
+            return UNEXPECTED_ERROR;
+        }
+
+        *isDisabledOut = false;
+        std::istringstream lineStream(result.output);
+        std::string line;
+        while (std::getline(lineStream, line))
+        {
+            if (line.rfind(ownKeyFingerprint, 0) == 0)
+            {
+                std::vector<std::string> fields;
+                std::istringstream fieldStream(line);
+                std::string field;
+                while (std::getline(fieldStream, field, ':'))
+                {
+                    fields.push_back(field);
+                }
+                if (fields.size() > 1)
+                {
+                    const int trustValue = std::atoi(fields[1].c_str());
+                    *isDisabledOut = ((trustValue & 0x80) != 0);
+                }
+                break;
+            }
+        }
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngineWrapper::Impl::listPacketsCommon(const unsigned char* inputBuffer, const int inputBufferSize, GpgInspectedListing& outListing, std::string* rawListingTextOut)
 {
     try
@@ -2666,6 +3126,143 @@ int CPgpEngineWrapper::RevokeKeyArmored( const char* password, const int passwor
         std::memcpy(outputBuffer, armored.data(), armored.size());
         *outputBufferSize = static_cast<int>(armored.size());
         return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::AddUserId(const char* password, const int passwordSize, const char* newUserId, const int newUserIdSize, const bool makePrimary)
+{
+    try
+    {
+        if (!impl_ || newUserId == nullptr || newUserIdSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->addUserIdCommon(password, passwordSize, std::string(newUserId, static_cast<std::size_t>(newUserIdSize)), makePrimary);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::RevokeUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize)
+{
+    try
+    {
+        if (!impl_ || userId == nullptr || userIdSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->revokeUserIdCommon(password, passwordSize, std::string(userId, static_cast<std::size_t>(userIdSize)));
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::SetPrimaryUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize)
+{
+    try
+    {
+        if (!impl_ || userId == nullptr || userIdSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->setPrimaryUserIdCommon(password, passwordSize, std::string(userId, static_cast<std::size_t>(userIdSize)));
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::AddSubkey(const char* password, const int passwordSize, const char* usageSpec, const int usageSpecSize, const unsigned int expirationSeconds)
+{
+    try
+    {
+        if (!impl_ || usageSpec == nullptr || usageSpecSize <= 0)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->addKeyCommon(password, passwordSize, std::string(usageSpec, static_cast<std::size_t>(usageSpecSize)), expirationSeconds);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::SetKeyExpiration(const char* password, const int passwordSize, const unsigned int expirationSeconds, const char* subkeyFingerprint, const int subkeyFingerprintSize)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return INVALID_ARGUMENT;
+        }
+        const std::string subkeyFpr = (subkeyFingerprint != nullptr && subkeyFingerprintSize > 0) ? std::string(subkeyFingerprint, static_cast<std::size_t>(subkeyFingerprintSize)) : std::string();
+        return impl_->setExpireCommon(password, passwordSize, expirationSeconds, subkeyFpr);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::ChangePassword(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->changePassphraseCommon(oldPassword, oldPasswordSize, newPassword, newPasswordSize);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::SetKeyDisabled(const bool disabled)
+{
+    try
+    {
+        if (!impl_)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->setKeyDisabledCommon(disabled);
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngineWrapper::GetKeyDisabled(bool* isDisabled) const
+{
+    try
+    {
+        if (!impl_ || isDisabled == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+        return impl_->getKeyDisabledCommon(isDisabled);
     }
     catch (...)
     {

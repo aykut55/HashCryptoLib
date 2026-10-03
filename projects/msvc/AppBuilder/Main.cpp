@@ -418,6 +418,38 @@ int runTestsViaCryptoApiTester()
 #endif
 
 #if 1
+    // New capability (4a: multi-UID/multi-subkey -- gpg --edit-key parity), native (CPgpEngine)
+    // side -- kept in its own always-on block, same reasoning as the other new-capability blocks
+    // above, so it runs regardless of the surrounding #if 0 PGP block's own on/off state.
+    cryptoApiTester.RunPgpNativeMultiUidTest();
+
+    cryptoApiTester.RunPgpNativeMultiSubkeyTest();
+
+    cryptoApiTester.RunPgpNativeSetKeyExpirationTest();
+
+    cryptoApiTester.RunPgpNativePeerMultiUidSubkeyImportTest();
+
+    cryptoApiTester.RunPgpGnuPgMultiUidMultiSubkeyInteropTest();
+
+    cryptoApiTester.RunPgpGnuPgChangePasswordInteropTest();
+
+    // 4a, WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side -- same always-on block.
+    cryptoApiTester.RunPgpWrapperQuickAddUidTest();
+
+    cryptoApiTester.RunPgpWrapperQuickRevokeUidTest();
+
+    cryptoApiTester.RunPgpWrapperQuickSetPrimaryUidTest();
+
+    cryptoApiTester.RunPgpWrapperQuickAddKeyTest();
+
+    cryptoApiTester.RunPgpWrapperQuickSetExpireTest();
+
+    cryptoApiTester.RunPgpWrapperChangePasswordTest();
+
+    cryptoApiTester.RunPgpWrapperSetKeyDisabledTest();
+#endif
+
+#if 1
     cryptoApiTester.RunCertificateSelfSignedTest();
 
     cryptoApiTester.RunCertificateDerPemRoundtripTest();
@@ -1298,6 +1330,209 @@ int runCliActionPgpVerify(const CryptoApiNS::CCommandLineParser& parser)
 }
 // -----------------------------------------------------------------------------
 
+// 4a: multi-UID/multi-subkey -- gpg --edit-key adduid/deluid/addkey/expire/primary/passwd parity,
+// WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side. Each delegates to one of gpg's own
+// "--quick-*" one-shot commands (see Pgp/PgpEngineWrapper.h for the full per-method documentation).
+
+int runCliActionPgpAddUid(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    const std::string password = parser.GetString("password", "");
+    const std::string userId = parser.GetString("userid", "");
+    const bool makePrimary = parser.HasFlag("makeprimary");
+    const int status = wrapper.AddUserId( password.c_str(), static_cast<int>(password.size()),
+                                         userId.c_str(), static_cast<int>(userId.size()), makePrimary);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "AddUserId failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, added UID: " << userId << (makePrimary ? " (primary)" : "") << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpRevokeUid(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    const std::string password = parser.GetString("password", "");
+    const std::string userId = parser.GetString("userid", "");
+    const int status = wrapper.RevokeUserId( password.c_str(), static_cast<int>(password.size()),
+                                            userId.c_str(), static_cast<int>(userId.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "RevokeUserId failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, revoked UID: " << userId << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpSetPrimaryUid(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    const std::string password = parser.GetString("password", "");
+    const std::string userId = parser.GetString("userid", "");
+    const int status = wrapper.SetPrimaryUserId( password.c_str(), static_cast<int>(password.size()),
+                                                 userId.c_str(), static_cast<int>(userId.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SetPrimaryUserId failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, primary UID is now: " << userId << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpAddKey(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    const std::string password = parser.GetString("password", "");
+    const std::string usage = parser.GetString("usage", "encrypt");
+    const unsigned int expirationSeconds = static_cast<unsigned int>(parser.GetInt("expire", 0));
+    const int status = wrapper.AddSubkey( password.c_str(), static_cast<int>(password.size()),
+                                         usage.c_str(), static_cast<int>(usage.size()), expirationSeconds);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "AddSubkey failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, added subkey (usage=" << usage << ")" << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpSetExpire(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    const std::string password = parser.GetString("password", "");
+    const unsigned int expirationSeconds = static_cast<unsigned int>(parser.GetInt("expire", 0));
+    const std::string subkeyFpr = parser.GetString("subkeyfpr", "");
+    const int status = wrapper.SetKeyExpiration( password.c_str(), static_cast<int>(password.size()), expirationSeconds,
+                                                subkeyFpr.empty() ? nullptr : subkeyFpr.c_str(), static_cast<int>(subkeyFpr.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SetKeyExpiration failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, expiration set to " << expirationSeconds << "s"
+               << (subkeyFpr.empty() ? " (primary key)" : (" (subkey " + subkeyFpr + ")")) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpChangePassword(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    const std::string oldPassword = parser.GetString("password", "");
+    const std::string newPassword = parser.GetString("newpassword", "");
+    const int status = wrapper.ChangePassword( oldPassword.c_str(), static_cast<int>(oldPassword.size()),
+                                              newPassword.c_str(), static_cast<int>(newPassword.size()));
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ChangePassword failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, passphrase changed" << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionPgpSetKeyDisabled(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CPgpEngineWrapper wrapper;
+    std::string keyHome;
+    if (!setUpPgpWrapper(parser, wrapper, keyHome))
+    {
+        return 6;
+    }
+    if (wrapper.LoadOwnIdentity() != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "LoadOwnIdentity failed -- run pgp-gen-key on this keyhome first" << std::endl;
+        return 1;
+    }
+
+    const std::string disabledStr = parser.GetString("disabled", "true");
+    const bool disabled = (disabledStr == "true" || disabledStr == "1" || disabledStr == "yes");
+    const int status = wrapper.SetKeyDisabled(disabled);
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SetKeyDisabled failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, key disabled=" << (disabled ? "true" : "false") << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
 // The exact sequence main() always ran unconditionally before the CLI existed (CCryptoApiTester's
 // full suite + all 5 script engines' own demo/test suites) -- extracted here, unchanged, so it can be
 // triggered explicitly via `-action run-tests` as well as by the original no-args fallback in main().
@@ -1405,6 +1640,15 @@ int runCliActionListActions(void)
         "  pgp-sign-encrypt        [-keyhome DIR] [-cipher NAME] -password X -input TEXT   (tek gpg cagrisinda birlesik sign+encrypt)\n"
         "  pgp-decrypt-verify      [-keyhome DIR] -password X -input ARMORED                (gomulu imzayi ister/dogrular; imzasizsa hata)\n"
         "\n"
+        "PGP 4a -- multi-UID/multi-subkey (gpg --edit-key adduid/deluid/addkey/expire/primary/passwd parity, CPgpEngineWrapper):\n"
+        "  pgp-add-uid             [-keyhome DIR] -userid \"Yeni <email>\" [-makeprimary] -password X\n"
+        "  pgp-revoke-uid          [-keyhome DIR] -userid \"Mevcut <email>\" -password X\n"
+        "  pgp-set-primary-uid     [-keyhome DIR] -userid \"Mevcut <email>\" -password X\n"
+        "  pgp-add-key             [-keyhome DIR] -usage encrypt|sign|auth[,...] [-expire SANIYE] -password X\n"
+        "  pgp-set-expire          [-keyhome DIR] -expire SANIYE [-subkeyfpr FPR] -password X    (FPR verilmezse ana anahtar)\n"
+        "  pgp-change-password     [-keyhome DIR] -password ESKI -newpassword YENI\n"
+        "  pgp-set-key-disabled    [-keyhome DIR] -disabled true|false                           (sadece lokal keyring bayragi)\n"
+        "\n"
         "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n"
         "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n"
         "-keyserver varsayilani: hkps://keys.openpgp.org (verilmezse). pgp-send-key/pgp-recv-key/pgp-refresh-keys gercek ag istegi atar (dirmngr).\n";
@@ -1499,6 +1743,34 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
     {
         return runCliActionPgpDecryptVerify(parser);
     }
+    if (action == "pgp-add-uid")
+    {
+        return runCliActionPgpAddUid(parser);
+    }
+    if (action == "pgp-revoke-uid")
+    {
+        return runCliActionPgpRevokeUid(parser);
+    }
+    if (action == "pgp-set-primary-uid")
+    {
+        return runCliActionPgpSetPrimaryUid(parser);
+    }
+    if (action == "pgp-add-key")
+    {
+        return runCliActionPgpAddKey(parser);
+    }
+    if (action == "pgp-set-expire")
+    {
+        return runCliActionPgpSetExpire(parser);
+    }
+    if (action == "pgp-change-password")
+    {
+        return runCliActionPgpChangePassword(parser);
+    }
+    if (action == "pgp-set-key-disabled")
+    {
+        return runCliActionPgpSetKeyDisabled(parser);
+    }
     if (action == "run-tests")
     {
         return runAllTests();
@@ -1512,7 +1784,9 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
                  "decrypt-string, pgp-roundtrip, pgp-check, pgp-gen-key, pgp-list-keys, "
                  "pgp-export-key, pgp-fingerprint, pgp-list-packets, pgp-send-key, pgp-recv-key, "
                  "pgp-refresh-keys, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
-                 "pgp-sign-encrypt, pgp-decrypt-verify, run-tests, list-actions (run -action "
+                 "pgp-sign-encrypt, pgp-decrypt-verify, pgp-add-uid, pgp-revoke-uid, "
+                 "pgp-set-primary-uid, pgp-add-key, pgp-set-expire, pgp-change-password, "
+                 "pgp-set-key-disabled, run-tests, list-actions (run -action "
                  "list-actions for full usage)" << std::endl;
     return 2;
 }

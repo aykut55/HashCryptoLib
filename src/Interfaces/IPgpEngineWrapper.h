@@ -97,6 +97,40 @@ public:
                                  const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
                                  const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
 
+    // -- Own-identity UID/subkey management (multi-UID/multi-subkey support -- gpg --edit-key
+    // adduid/deluid/addkey/expire/primary/passwd parity), delegated to real gpg's own --quick-*
+    // one-shot commands (no interactive --edit-key menu scripting needed for these). GenerateKeyPair/
+    // GenerateKeyPairEcc/LoadOwnIdentity must have succeeded first; password must match the
+    // identity's current passphrase. See Pgp/PgpEngineWrapper.h for full per-method documentation.
+    virtual int AddUserId(const char* password, const int passwordSize, const char* newUserId, const int newUserIdSize, const bool makePrimary) = 0;
+
+    // deluid equivalent: revokes (gpg --quick-revoke-uid), never hard-deletes -- same reasoning as
+    // CPgpEngine's own RevokeUserId (see IPgpEngine.h).
+    virtual int RevokeUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize) = 0;
+
+    virtual int SetPrimaryUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize) = 0;
+
+    // usageSpec is gpg's own --quick-add-key usage string (e.g. "encrypt", "sign", "auth", or a
+    // comma-separated combination); the new subkey always reuses the primary key's own algorithm
+    // (gpg's "default" keyword), matching the native CPgpEngine::AddSubkey's no-algorithm-parameter
+    // design. expirationSeconds == 0 means never-expire.
+    virtual int AddSubkey(const char* password, const int passwordSize, const char* usageSpec, const int usageSpecSize, const unsigned int expirationSeconds) = 0;
+
+    // subkeyFingerprint == nullptr/0-length targets the primary key itself; otherwise the full
+    // 40-hex fingerprint of one specific own subkey (see GetKeyFingerprint's own doc comment for
+    // the format) -- matches the native CPgpEngine::SetKeyExpiration's subkeyIndex==-1 convention.
+    virtual int SetKeyExpiration(const char* password, const int passwordSize, const unsigned int expirationSeconds, const char* subkeyFingerprint, const int subkeyFingerprintSize) = 0;
+
+    // passwd equivalent -- re-encrypts every secret-key packet in this identity under newPassword;
+    // oldPassword must match the identity's current passphrase.
+    virtual int ChangePassword(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize) = 0;
+
+    // disable/enable equivalent -- flips this identity's own public-keyring "disabled" flag (a
+    // local gpg-keyring attribute; does not touch the secret key, and has no native CPgpEngine
+    // analogue -- that engine has no persisted keyring to disable a key within).
+    virtual int SetKeyDisabled(const bool disabled) = 0;
+    virtual int GetKeyDisabled(bool* isDisabled) const = 0;
+
     virtual int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) = 0;
 
     virtual int GetPeerKeyId(char* outputBuffer, const int outputBufferCapacity) const = 0;

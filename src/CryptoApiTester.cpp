@@ -22511,6 +22511,1185 @@ int CCryptoApiTester::RunPgpWrapperInspectionSignatureTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpNativeMultiUidTest(void)
+{
+    try
+    {
+        CPgpEngine pgp;
+        const char* userId1 = "Multi UID One <multiuid1@example.com>";
+        const char* password = "MultiUidTest-1";
+        int status = pgp.GenerateKeyPair(userId1, static_cast<int>(std::strlen(userId1)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const char* userId2 = "Multi UID Two <multiuid2@example.com>";
+        status = pgp.AddUserId(password, static_cast<int>(std::strlen(password)), userId2, static_cast<int>(std::strlen(userId2)), false);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED AddUserId(2) status=" << status << std::endl;
+            return status;
+        }
+
+        const char* userId3 = "Multi UID Three <multiuid3@example.com>";
+        status = pgp.AddUserId(password, static_cast<int>(std::strlen(password)), userId3, static_cast<int>(std::strlen(userId3)), true);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED AddUserId(3, makePrimary) status=" << status << std::endl;
+            return status;
+        }
+
+        const int uidCount = pgp.GetUserIdCount();
+        if (uidCount != 3)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED GetUserIdCount=" << uidCount << " expected 3" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        char uidText[256];
+        int uidTextSize = 0;
+        status = pgp.GetUserId(0, uidText, sizeof(uidText), &uidTextSize);
+        const std::string uid0(uidText, static_cast<std::size_t>(uidTextSize));
+        if (status != NO_ERROR || uid0 != userId1)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED GetUserId(0)=\"" << uid0 << "\" expected \"" << userId1 << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        status = pgp.GetUserId(2, uidText, sizeof(uidText), &uidTextSize);
+        const std::string uid2(uidText, static_cast<std::size_t>(uidTextSize));
+        if (status != NO_ERROR || uid2 != userId3)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED GetUserId(2)=\"" << uid2 << "\" expected \"" << userId3 << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool isPrimary = false;
+        pgp.GetUserIdIsPrimary(0, &isPrimary);
+        if (isPrimary)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED UID 0 unexpectedly primary after UID 2 was made primary" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        pgp.GetUserIdIsPrimary(2, &isPrimary);
+        if (!isPrimary)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED UID 2 not marked primary" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        bool isRevoked = true;
+        pgp.GetUserIdIsRevoked(0, &isRevoked);
+        if (isRevoked)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED UID 0 already revoked before RevokeUserId" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = pgp.RevokeUserId(password, static_cast<int>(std::strlen(password)), 0, 0, nullptr, 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED RevokeUserId(0) status=" << status << std::endl;
+            return status;
+        }
+        pgp.GetUserIdIsRevoked(0, &isRevoked);
+        if (!isRevoked)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED UID 0 not marked revoked" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        pgp.GetUserIdIsRevoked(1, &isRevoked);
+        if (isRevoked)
+        {
+            std::cout << "RunPgpNativeMultiUidTest: FAILED UID 1 unexpectedly revoked" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpNativeMultiUidTest: PASSED 3 UIDs, primary switch, and revocation all tracked correctly" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpNativeMultiSubkeyTest(void)
+{
+    try
+    {
+        CPgpEngine pgpA;
+        const char* userIdA = "Multi Subkey A <multisubkeyA@example.com>";
+        const char* passwordA = "MultiSubkeyTest-A";
+        int status = pgpA.GenerateKeyPair(userIdA, static_cast<int>(std::strlen(userIdA)), passwordA, static_cast<int>(std::strlen(passwordA)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED GenerateKeyPair(A) status=" << status << std::endl;
+            return status;
+        }
+
+        status = pgpA.AddSubkey(passwordA, static_cast<int>(std::strlen(passwordA)), 0x0C, 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED AddSubkey status=" << status << std::endl;
+            return status;
+        }
+
+        const int subkeyCount = pgpA.GetSubkeyCount();
+        if (subkeyCount != 2)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED GetSubkeyCount=" << subkeyCount << " expected 2" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        char fingerprint0[41];
+        char fingerprint1[41];
+        pgpA.GetSubkeyFingerprint(0, fingerprint0, sizeof(fingerprint0));
+        pgpA.GetSubkeyFingerprint(1, fingerprint1, sizeof(fingerprint1));
+        if (std::strcmp(fingerprint0, fingerprint1) == 0)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED both subkeys report the same fingerprint" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int pubSize = 0;
+        pgpA.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgpA.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+
+        CPgpEngine pgpB;
+        const char* userIdB = "Multi Subkey B <multisubkeyB@example.com>";
+        const char* passwordB = "MultiSubkeyTest-B";
+        status = pgpB.GenerateKeyPair(userIdB, static_cast<int>(std::strlen(userIdB)), passwordB, static_cast<int>(std::strlen(passwordB)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED GenerateKeyPair(B) status=" << status << std::endl;
+            return status;
+        }
+        status = pgpB.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&pubKey[0]), pubActualSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const unsigned char plaintext[] = "multi-subkey round trip";
+        unsigned char ciphertext[4096];
+        int ciphertextSize = 0;
+        status = pgpB.EncryptBuffer(plaintext, static_cast<int>(sizeof(plaintext) - 1), sizeof(ciphertext), ciphertext, &ciphertextSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char decrypted[4096];
+        int decryptedSize = 0;
+        status = pgpA.DecryptBuffer(passwordA, static_cast<int>(std::strlen(passwordA)), ciphertext, ciphertextSize, sizeof(decrypted), decrypted, &decryptedSize);
+        if (status != NO_ERROR || decryptedSize != static_cast<int>(sizeof(plaintext) - 1) ||
+            std::memcmp(decrypted, plaintext, static_cast<std::size_t>(decryptedSize)) != 0)
+        {
+            std::cout << "RunPgpNativeMultiSubkeyTest: FAILED DecryptBuffer status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpNativeMultiSubkeyTest: PASSED 2 distinct subkeys, round trip decrypted via multi-subkey fallback search" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpNativeSetKeyExpirationTest(void)
+{
+    try
+    {
+        CPgpEngine pgpA;
+        const char* userIdA = "Set Expiration A <setexpirationA@example.com>";
+        const char* passwordA = "SetExpirationTest-A";
+        int status = pgpA.GenerateKeyPair(userIdA, static_cast<int>(std::strlen(userIdA)), passwordA, static_cast<int>(std::strlen(passwordA)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeSetKeyExpirationTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const unsigned int subkeyExpirationSeconds = 3600u * 24u * 90u;
+        status = pgpA.SetKeyExpiration(passwordA, static_cast<int>(std::strlen(passwordA)), 0, subkeyExpirationSeconds);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeSetKeyExpirationTest: FAILED SetKeyExpiration(subkey 0) status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned int readBack = 0;
+        pgpA.GetSubkeyExpirationSeconds(0, &readBack);
+        if (readBack != subkeyExpirationSeconds)
+        {
+            std::cout << "RunPgpNativeSetKeyExpirationTest: FAILED GetSubkeyExpirationSeconds=" << readBack << " expected " << subkeyExpirationSeconds << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned int primaryExpirationSeconds = 3600u * 24u * 365u;
+        status = pgpA.SetKeyExpiration(passwordA, static_cast<int>(std::strlen(passwordA)), -1, primaryExpirationSeconds);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeSetKeyExpirationTest: FAILED SetKeyExpiration(primary) status=" << status << std::endl;
+            return status;
+        }
+
+        char subkeyKeyIdA[17];
+        pgpA.GetSubkeyKeyId(0, subkeyKeyIdA, sizeof(subkeyKeyIdA));
+
+        int pubSize = 0;
+        pgpA.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgpA.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+
+        CPgpEngine pgpB;
+        const char* userIdB = "Set Expiration B <setexpirationB@example.com>";
+        const char* passwordB = "SetExpirationTest-B";
+        status = pgpB.GenerateKeyPair(userIdB, static_cast<int>(std::strlen(userIdB)), passwordB, static_cast<int>(std::strlen(passwordB)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeSetKeyExpirationTest: FAILED GenerateKeyPair(B) status=" << status << std::endl;
+            return status;
+        }
+        status = pgpB.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&pubKey[0]), pubActualSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativeSetKeyExpirationTest: FAILED ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const int peerSubkeyCount = pgpB.GetPeerSubkeyCount();
+        char peerSubkeyKeyId[17];
+        pgpB.GetPeerSubkeyKeyId(0, peerSubkeyKeyId, sizeof(peerSubkeyKeyId));
+        if (peerSubkeyCount != 1 || std::strcmp(peerSubkeyKeyId, subkeyKeyIdA) != 0)
+        {
+            std::cout << "RunPgpNativeSetKeyExpirationTest: FAILED GetPeerSubkeyCount=" << peerSubkeyCount << " peerKeyId=" << peerSubkeyKeyId
+                      << " expected 1/" << subkeyKeyIdA << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpNativeSetKeyExpirationTest: PASSED primary+subkey expiration set (subkey=" << readBack
+                  << "s) and re-exported key still parses correctly on import" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpNativePeerMultiUidSubkeyImportTest(void)
+{
+    try
+    {
+        CPgpEngine bob;
+        const char* bobUserId1 = "Bob One <bobone@example.com>";
+        const char* bobPassword = "BobPeerTest-1";
+        int status = bob.GenerateKeyPair(bobUserId1, static_cast<int>(std::strlen(bobUserId1)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED GenerateKeyPair(bob) status=" << status << std::endl;
+            return status;
+        }
+        const char* bobUserId2 = "Bob Two <bobtwo@example.com>";
+        status = bob.AddUserId(bobPassword, static_cast<int>(std::strlen(bobPassword)), bobUserId2, static_cast<int>(std::strlen(bobUserId2)), false);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED AddUserId(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        status = bob.AddSubkey(bobPassword, static_cast<int>(std::strlen(bobPassword)), 0x0C, 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED AddSubkey(bob) status=" << status << std::endl;
+            return status;
+        }
+        // Revoke the ORIGINAL (GenerateKeyPair) subkey, index 0, leaving only the AddSubkey one
+        // (index 1) usable -- exercises chooseBestPeerEncryptionSubkey's revoked-subkey exclusion.
+        status = bob.RevokeSubkey(bobPassword, static_cast<int>(std::strlen(bobPassword)), 0, 0, nullptr, 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED RevokeSubkey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        char goodSubkeyKeyId[17];
+        bob.GetSubkeyKeyId(1, goodSubkeyKeyId, sizeof(goodSubkeyKeyId));
+
+        int pubSize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        bob.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+
+        CPgpEngine alice;
+        const char* aliceUserId = "Alice Peer <alicepeer@example.com>";
+        const char* alicePassword = "AlicePeerTest-1";
+        status = alice.GenerateKeyPair(aliceUserId, static_cast<int>(std::strlen(aliceUserId)), alicePassword, static_cast<int>(std::strlen(alicePassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED GenerateKeyPair(alice) status=" << status << std::endl;
+            return status;
+        }
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&pubKey[0]), pubActualSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED ImportPeerPublicKey status=" << status << std::endl;
+            return status;
+        }
+
+        const int peerUidCount = alice.GetPeerUserIdCount();
+        const int peerSubkeyCount = alice.GetPeerSubkeyCount();
+        if (peerUidCount != 2 || peerSubkeyCount != 2)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED GetPeerUserIdCount=" << peerUidCount
+                      << " GetPeerSubkeyCount=" << peerSubkeyCount << " expected 2/2" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const unsigned char plaintext[] = "peer multi-uid/multi-subkey round trip";
+        unsigned char ciphertext[4096];
+        int ciphertextSize = 0;
+        status = alice.EncryptBuffer(plaintext, static_cast<int>(sizeof(plaintext) - 1), sizeof(ciphertext), ciphertext, &ciphertextSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED EncryptBuffer status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char decrypted[4096];
+        int decryptedSize = 0;
+        status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), ciphertext, ciphertextSize, sizeof(decrypted), decrypted, &decryptedSize);
+        if (status != NO_ERROR || decryptedSize != static_cast<int>(sizeof(plaintext) - 1) ||
+            std::memcmp(decrypted, plaintext, static_cast<std::size_t>(decryptedSize)) != 0)
+        {
+            std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: FAILED DecryptBuffer(bob) status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpNativePeerMultiUidSubkeyImportTest: PASSED alice picked bob's non-revoked subkey (" << goodSubkeyKeyId
+                  << ") out of 2 UIDs/2 subkeys" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Flagship packet-correctness check for the multi-UID/multi-subkey Export/renderOwnKeyBlocks path
+// -- see the header comment (CryptoApiTester.h) for the full scenario.
+int CCryptoApiTester::RunPgpGnuPgMultiUidMultiSubkeyInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_multiuid_home");
+        const char* homeDir = homeDirStr.c_str();
+        const char* pubKeyPath = "cryptoapi_pgp_gnupg_multiuid_pub.asc";
+        const char* secKeyPath = "cryptoapi_pgp_gnupg_multiuid_sec.asc";
+        const std::string absoluteHomeDir = std::filesystem::absolute(homeDir).string();
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(absoluteHomeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        CPgpEngine pgp;
+        const char* userId1 = "MultiUid GnuPg One <multiuidgnupg1@example.com>";
+        const char* password = "MultiUidGnuPgTest-1";
+        int status = pgp.GenerateKeyPair(userId1, static_cast<int>(std::strlen(userId1)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const char* userId2 = "MultiUid GnuPg Two <multiuidgnupg2@example.com>";
+        status = pgp.AddUserId(password, static_cast<int>(std::strlen(password)), userId2, static_cast<int>(std::strlen(userId2)), false);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED AddUserId(2) status=" << status << std::endl;
+            return status;
+        }
+
+        const char* userId3 = "MultiUid GnuPg Three <multiuidgnupg3@example.com>";
+        status = pgp.AddUserId(password, static_cast<int>(std::strlen(password)), userId3, static_cast<int>(std::strlen(userId3)), true);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED AddUserId(3, makePrimary) status=" << status << std::endl;
+            return status;
+        }
+
+        status = pgp.AddSubkey(password, static_cast<int>(std::strlen(password)), 0x0C, 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED AddSubkey status=" << status << std::endl;
+            return status;
+        }
+
+        status = pgp.RevokeUserId(password, static_cast<int>(std::strlen(password)), 0, 0, nullptr, 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED RevokeUserId(0) status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int secSize = 0;
+        pgp.ExportSecretKeyArmored(0, nullptr, &secSize);
+        std::vector<char> secKey(static_cast<std::size_t>(secSize));
+        int secActualSize = 0;
+        pgp.ExportSecretKeyArmored(secSize, &secKey[0], &secActualSize);
+        if (!WriteTesterFile(secKeyPath, std::vector<unsigned char>(secKey.begin(), secKey.begin() + secActualSize)))
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED to write secret key file" << std::endl;
+            std::remove(pubKeyPath);
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+        std::string primeOutput;
+        RunShellCommand(gpgBase + "--check-trustdb", primeOutput);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED gpg --import(pub) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(secKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(secKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED gpg --import(sec) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(secKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        std::string listOutput;
+        rc = RunShellCommand(gpgBase + "--with-colons --list-keys " + keyId, listOutput);
+        std::remove(pubKeyPath);
+        std::remove(secKeyPath);
+        std::filesystem::remove_all(homeDir, fsError);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED gpg --list-keys rc=" << rc << "\n" << listOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        int uidLineCount = 0;
+        int subLineCount = 0;
+        bool firstUidIsThree = false;
+        bool firstUidLineSeen = false;
+        bool oneUidRevoked = false;
+        std::istringstream iss(listOutput);
+        std::string line;
+        while (std::getline(iss, line))
+        {
+            if (line.rfind("uid:", 0) == 0)
+            {
+                ++uidLineCount;
+                std::vector<std::string> fields;
+                std::istringstream fss(line);
+                std::string field;
+                while (std::getline(fss, field, ':'))
+                {
+                    fields.push_back(field);
+                }
+                if (!firstUidLineSeen)
+                {
+                    firstUidLineSeen = true;
+                    if (fields.size() > 9 && fields[9].find("MultiUid GnuPg Three") != std::string::npos)
+                    {
+                        firstUidIsThree = true;
+                    }
+                }
+                if (fields.size() > 9 && fields[1] == "r" && fields[9].find("MultiUid GnuPg One") != std::string::npos)
+                {
+                    oneUidRevoked = true;
+                }
+            }
+            else if (line.rfind("sub:", 0) == 0)
+            {
+                ++subLineCount;
+            }
+        }
+
+        if (uidLineCount != 3)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED uid: line count=" << uidLineCount << " expected 3\n" << listOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (subLineCount != 2)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED sub: line count=" << subLineCount << " expected 2\n" << listOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (!firstUidIsThree)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED primary UID (Three) not listed first\n" << listOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (!oneUidRevoked)
+        {
+            std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: FAILED UID One not marked revoked by gpg\n" << listOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGnuPgMultiUidMultiSubkeyInteropTest: PASSED real gpg confirmed 3 uid:/2 sub: lines, primary-first ordering, and UID revocation" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpGnuPgChangePasswordInteropTest(void)
+{
+    try
+    {
+        const std::string gpgExe = FindGpgExecutable();
+        if (gpgExe.empty())
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const std::string homeDirStr = GenerateUniqueGnuPgHomeDir("cryptoapi_pgp_gnupg_changepw_home");
+        const char* homeDir = homeDirStr.c_str();
+        const char* pubKeyPath = "cryptoapi_pgp_gnupg_changepw_pub.asc";
+        const char* secKeyPath = "cryptoapi_pgp_gnupg_changepw_sec.asc";
+        const std::string absoluteHomeDir = std::filesystem::absolute(homeDir).string();
+        const std::string gpgBase = QuoteShellPath(gpgExe) + " --homedir " + QuoteShellPath(absoluteHomeDir) + " --batch --yes --trust-model always ";
+        std::string cmdOutput;
+        std::error_code fsError;
+
+        CPgpEngine pgp;
+        const char* userId = "ChangePassword Test <changepwtest@example.com>";
+        const char* oldPassword = "ChangePwTest-Old-1";
+        const char* newPassword = "ChangePwTest-New-2";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), oldPassword, static_cast<int>(std::strlen(oldPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = pgp.ChangePassword(oldPassword, static_cast<int>(std::strlen(oldPassword)), newPassword, static_cast<int>(std::strlen(newPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED ChangePassword status=" << status << std::endl;
+            return status;
+        }
+
+        char keyId[17];
+        pgp.GetKeyId(keyId, 17);
+
+        int pubSize = 0;
+        pgp.ExportPublicKeyArmored(0, nullptr, &pubSize);
+        std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+        int pubActualSize = 0;
+        pgp.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+        if (!WriteTesterFile(pubKeyPath, std::vector<unsigned char>(pubKey.begin(), pubKey.begin() + pubActualSize)))
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED to write public key file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+
+        int secSize = 0;
+        pgp.ExportSecretKeyArmored(0, nullptr, &secSize);
+        std::vector<char> secKey(static_cast<std::size_t>(secSize));
+        int secActualSize = 0;
+        pgp.ExportSecretKeyArmored(secSize, &secKey[0], &secActualSize);
+        if (!WriteTesterFile(secKeyPath, std::vector<unsigned char>(secKey.begin(), secKey.begin() + secActualSize)))
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED to write secret key file" << std::endl;
+            std::remove(pubKeyPath);
+            return FILE_IO_ERROR;
+        }
+
+        std::filesystem::create_directories(homeDir, fsError);
+        std::string primeOutput;
+        RunShellCommand(gpgBase + "--check-trustdb", primeOutput);
+
+        int rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(pubKeyPath), cmdOutput);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED gpg --import(pub) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::remove(pubKeyPath);
+            std::remove(secKeyPath);
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        rc = RunShellCommand(gpgBase + "--import " + QuoteShellPath(secKeyPath), cmdOutput);
+        std::remove(pubKeyPath);
+        std::remove(secKeyPath);
+        if (rc != 0)
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED gpg --import(sec) rc=" << rc << "\n" << cmdOutput << std::endl;
+            std::filesystem::remove_all(homeDir, fsError);
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* messagePath = "cryptoapi_pgp_gnupg_changepw_msg.txt";
+        const std::vector<unsigned char> messageBytes = { 'h', 'i' };
+        WriteTesterFile(messagePath, messageBytes);
+        const char* oldSigPath = "cryptoapi_pgp_gnupg_changepw_sig_old.gpg";
+        const char* newSigPath = "cryptoapi_pgp_gnupg_changepw_sig_new.gpg";
+
+        // Wrong (old) passphrase must be rejected by gpg after ChangePassword re-encrypted the
+        // secret material we just imported.
+        const std::string oldPassphraseCmd = gpgBase + "--pinentry-mode loopback --passphrase " + QuoteShellPath(std::string(oldPassword)) +
+            " --local-user " + keyId + " --output " + QuoteShellPath(std::string(oldSigPath)) + " --detach-sign " + QuoteShellPath(messagePath);
+        std::string oldOutput;
+        const int oldRc = RunShellCommand(oldPassphraseCmd, oldOutput);
+
+        // Correct (new) passphrase must succeed.
+        const std::string newPassphraseCmd = gpgBase + "--pinentry-mode loopback --passphrase " + QuoteShellPath(std::string(newPassword)) +
+            " --local-user " + keyId + " --output " + QuoteShellPath(std::string(newSigPath)) + " --detach-sign " + QuoteShellPath(messagePath);
+        std::string newOutput;
+        const int newRc = RunShellCommand(newPassphraseCmd, newOutput);
+
+        std::cout << "DIAGNOSTIC oldRc=" << oldRc << " oldOutput=[" << oldOutput << "]" << std::endl;
+        std::cout << "DIAGNOSTIC newRc=" << newRc << " newOutput=[" << newOutput << "]" << std::endl;
+
+        std::remove(messagePath);
+        std::remove(oldSigPath);
+        std::remove(newSigPath);
+        std::filesystem::remove_all(homeDir, fsError);
+
+        if (oldRc == 0)
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED gpg --detach-sign unexpectedly succeeded with the OLD passphrase after ChangePassword\n" << oldOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (newRc != 0)
+        {
+            std::cout << "RunPgpGnuPgChangePasswordInteropTest: FAILED gpg --detach-sign with the NEW passphrase rc=" << newRc << "\n" << newOutput << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpGnuPgChangePasswordInteropTest: PASSED gpg rejects the old passphrase and signs with the new one after ChangePassword" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// -- 4a (multi-UID/multi-subkey -- gpg --edit-key parity), WRAPPER (CPgpEngineWrapper, real
+// gpg.exe subprocess) side. Each --quick-add-uid-type operation needs only local gpg.exe, no
+// network -- SKIPPED only when IsGnuPgAvailable() finds no gpg at all, otherwise a hard
+// PASS/FAIL, same philosophy as every other local (non-keyserver) wrapper PGP test in this file.
+
+int CCryptoApiTester::RunPgpWrapperQuickAddUidTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperQuickAddUidTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId1 = "Alice One <alice-adduid-1@example.com>";
+        const char* userId2 = "Alice Two <alice-adduid-2@example.com>";
+        const char* password = "alice-adduid-password";
+        int status = alice.GenerateKeyPair(userId1, static_cast<int>(std::strlen(userId1)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickAddUidTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = alice.AddUserId(password, static_cast<int>(std::strlen(password)), userId2, static_cast<int>(std::strlen(userId2)), false);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickAddUidTest: FAILED AddUserId status=" << status << std::endl;
+            return status;
+        }
+
+        int listingSize = 0;
+        alice.GetKeyringListing(0, nullptr, &listingSize);
+        std::vector<char> listing(static_cast<std::size_t>(listingSize));
+        int actualListingSize = 0;
+        status = alice.GetKeyringListing(listingSize, &listing[0], &actualListingSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickAddUidTest: FAILED GetKeyringListing status=" << status << std::endl;
+            return status;
+        }
+        const std::string listingText(listing.begin(), listing.end());
+        int uidLineCount = 0;
+        std::size_t searchPos = 0;
+        while ((searchPos = listingText.find("uid:", searchPos)) != std::string::npos)
+        {
+            ++uidLineCount;
+            searchPos += 4;
+        }
+        if (uidLineCount != 2 || listingText.find("alice-adduid-1@example.com") == std::string::npos ||
+            listingText.find("alice-adduid-2@example.com") == std::string::npos)
+        {
+            std::cout << "RunPgpWrapperQuickAddUidTest: FAILED expected 2 uid: lines with both addresses, got "
+                       << uidLineCount << "\n" << listingText << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperQuickAddUidTest: PASSED real gpg confirmed 2 uid: lines after AddUserId" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperQuickRevokeUidTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperQuickRevokeUidTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId1 = "Bob One <bob-revokeuid-1@example.com>";
+        const char* userId2 = "Bob Two <bob-revokeuid-2@example.com>";
+        const char* password = "bob-revokeuid-password";
+        int status = alice.GenerateKeyPair(userId1, static_cast<int>(std::strlen(userId1)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickRevokeUidTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.AddUserId(password, static_cast<int>(std::strlen(password)), userId2, static_cast<int>(std::strlen(userId2)), false);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickRevokeUidTest: FAILED AddUserId status=" << status << std::endl;
+            return status;
+        }
+
+        status = alice.RevokeUserId(password, static_cast<int>(std::strlen(password)), userId1, static_cast<int>(std::strlen(userId1)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickRevokeUidTest: FAILED RevokeUserId status=" << status << std::endl;
+            return status;
+        }
+
+        int listingSize = 0;
+        alice.GetKeyringListing(0, nullptr, &listingSize);
+        std::vector<char> listing(static_cast<std::size_t>(listingSize));
+        int actualListingSize = 0;
+        alice.GetKeyringListing(listingSize, &listing[0], &actualListingSize);
+        const std::string listingText(listing.begin(), listing.end());
+
+        // gpg's own colon-format revoked-uid record is "uid:r:...:<uid text>:" -- field 2 ('r').
+        bool sawRevokedUid1 = false;
+        std::istringstream lineStream(listingText);
+        std::string line;
+        while (std::getline(lineStream, line))
+        {
+            if (line.rfind("uid:", 0) == 0 && line.find("bob-revokeuid-1@example.com") != std::string::npos)
+            {
+                sawRevokedUid1 = (line.find("uid:r:") == 0);
+            }
+        }
+        if (!sawRevokedUid1)
+        {
+            std::cout << "RunPgpWrapperQuickRevokeUidTest: FAILED UID 1 not marked revoked by real gpg\n" << listingText << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperQuickRevokeUidTest: PASSED real gpg confirmed UID 1 revoked after RevokeUserId" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperQuickSetPrimaryUidTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperQuickSetPrimaryUidTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId1 = "Carol One <carol-primaryuid-1@example.com>";
+        const char* userId2 = "Carol Two <carol-primaryuid-2@example.com>";
+        const char* password = "carol-primaryuid-password";
+        int status = alice.GenerateKeyPair(userId1, static_cast<int>(std::strlen(userId1)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickSetPrimaryUidTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+        status = alice.AddUserId(password, static_cast<int>(std::strlen(password)), userId2, static_cast<int>(std::strlen(userId2)), false);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickSetPrimaryUidTest: FAILED AddUserId status=" << status << std::endl;
+            return status;
+        }
+        status = alice.SetPrimaryUserId(password, static_cast<int>(std::strlen(password)), userId2, static_cast<int>(std::strlen(userId2)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickSetPrimaryUidTest: FAILED SetPrimaryUserId status=" << status << std::endl;
+            return status;
+        }
+
+        int listingSize = 0;
+        alice.GetKeyringListing(0, nullptr, &listingSize);
+        std::vector<char> listing(static_cast<std::size_t>(listingSize));
+        int actualListingSize = 0;
+        alice.GetKeyringListing(listingSize, &listing[0], &actualListingSize);
+        const std::string listingText(listing.begin(), listing.end());
+
+        // gpg always lists the PRIMARY uid: record first among a key's uid: records -- the first
+        // uid: line's own text must contain uid2's address.
+        std::istringstream lineStream(listingText);
+        std::string line;
+        bool firstUidLineHasUid2 = false;
+        bool sawFirstUid = false;
+        while (std::getline(lineStream, line))
+        {
+            if (line.rfind("uid:", 0) == 0)
+            {
+                firstUidLineHasUid2 = (line.find("carol-primaryuid-2@example.com") != std::string::npos);
+                sawFirstUid = true;
+                break;
+            }
+        }
+        if (!sawFirstUid || !firstUidLineHasUid2)
+        {
+            std::cout << "RunPgpWrapperQuickSetPrimaryUidTest: FAILED UID 2 not listed first (primary) by real gpg\n" << listingText << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperQuickSetPrimaryUidTest: PASSED real gpg confirmed UID 2 is now primary (listed first)" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperQuickAddKeyTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperQuickAddKeyTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId = "Dave <dave-addkey@example.com>";
+        const char* password = "dave-addkey-password";
+        int status = alice.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickAddKeyTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const char* usageSpec = "encrypt";
+        status = alice.AddSubkey(password, static_cast<int>(std::strlen(password)), usageSpec, static_cast<int>(std::strlen(usageSpec)), 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickAddKeyTest: FAILED AddSubkey status=" << status << std::endl;
+            return status;
+        }
+
+        int listingSize = 0;
+        alice.GetKeyringListing(0, nullptr, &listingSize);
+        std::vector<char> listing(static_cast<std::size_t>(listingSize));
+        int actualListingSize = 0;
+        alice.GetKeyringListing(listingSize, &listing[0], &actualListingSize);
+        const std::string listingText(listing.begin(), listing.end());
+        int subLineCount = 0;
+        std::istringstream lineStream(listingText);
+        std::string line;
+        while (std::getline(lineStream, line))
+        {
+            if (line.rfind("sub:", 0) == 0)
+            {
+                ++subLineCount;
+            }
+        }
+        // GenerateKeyPair's own RSA encrypt subkey (1) + this test's newly added one (1) = 2.
+        if (subLineCount != 2)
+        {
+            std::cout << "RunPgpWrapperQuickAddKeyTest: FAILED expected 2 sub: lines, got " << subLineCount << "\n" << listingText << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperQuickAddKeyTest: PASSED real gpg confirmed 2 sub: lines after AddSubkey" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperQuickSetExpireTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperQuickSetExpireTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId = "Eve <eve-setexpire@example.com>";
+        const char* password = "eve-setexpire-password";
+        int status = alice.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickSetExpireTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = alice.SetKeyExpiration(password, static_cast<int>(std::strlen(password)), 7776000u, nullptr, 0);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperQuickSetExpireTest: FAILED SetKeyExpiration status=" << status << std::endl;
+            return status;
+        }
+
+        int listingSize = 0;
+        alice.GetKeyringListing(0, nullptr, &listingSize);
+        std::vector<char> listing(static_cast<std::size_t>(listingSize));
+        int actualListingSize = 0;
+        alice.GetKeyringListing(listingSize, &listing[0], &actualListingSize);
+        const std::string listingText(listing.begin(), listing.end());
+
+        // "pub:" colon record field 7 (1-indexed; index 6) is the expiration date -- non-empty
+        // once SetKeyExpiration has set a real (non-"never") expiration.
+        bool sawExpiration = false;
+        std::istringstream lineStream(listingText);
+        std::string line;
+        while (std::getline(lineStream, line))
+        {
+            if (line.rfind("pub:", 0) == 0)
+            {
+                std::vector<std::string> fields;
+                std::istringstream fieldStream(line);
+                std::string field;
+                while (std::getline(fieldStream, field, ':'))
+                {
+                    fields.push_back(field);
+                }
+                sawExpiration = (fields.size() > 6 && !fields[6].empty());
+                break;
+            }
+        }
+        if (!sawExpiration)
+        {
+            std::cout << "RunPgpWrapperQuickSetExpireTest: FAILED pub: record shows no expiration after SetKeyExpiration\n" << listingText << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperQuickSetExpireTest: PASSED real gpg confirmed an expiration date on the primary key" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperChangePasswordTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperChangePasswordTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId = "Frank <frank-changepw@example.com>";
+        const char* oldPassword = "frank-old-password";
+        const char* newPassword = "frank-new-password";
+        int status = alice.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), oldPassword, static_cast<int>(std::strlen(oldPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperChangePasswordTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        status = alice.ChangePassword( oldPassword, static_cast<int>(std::strlen(oldPassword)),
+                                      newPassword, static_cast<int>(std::strlen(newPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperChangePasswordTest: FAILED ChangePassword status=" << status << std::endl;
+            return status;
+        }
+
+        const std::vector<unsigned char> document(32, 0x42);
+        int sigSize = 0;
+        alice.SignBuffer(oldPassword, static_cast<int>(std::strlen(oldPassword)), document.data(), static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        std::vector<unsigned char> signature(static_cast<std::size_t>(sigSize > 0 ? sigSize : 1));
+        int actualSigSize = 0;
+        const int oldPasswordStatus = alice.SignBuffer( oldPassword, static_cast<int>(std::strlen(oldPassword)),
+                                                        document.data(), static_cast<int>(document.size()),
+                                                        static_cast<int>(signature.size()), &signature[0], &actualSigSize);
+        if (oldPasswordStatus == NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperChangePasswordTest: FAILED SignBuffer unexpectedly succeeded with the OLD passphrase after ChangePassword" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        sigSize = 0;
+        alice.SignBuffer(newPassword, static_cast<int>(std::strlen(newPassword)), document.data(), static_cast<int>(document.size()), 0, nullptr, &sigSize);
+        signature.assign(static_cast<std::size_t>(sigSize), 0);
+        actualSigSize = 0;
+        const int newPasswordStatus = alice.SignBuffer( newPassword, static_cast<int>(std::strlen(newPassword)),
+                                                        document.data(), static_cast<int>(document.size()),
+                                                        static_cast<int>(signature.size()), &signature[0], &actualSigSize);
+        if (newPasswordStatus != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperChangePasswordTest: FAILED SignBuffer with the NEW passphrase status=" << newPasswordStatus << std::endl;
+            return newPasswordStatus;
+        }
+
+        std::cout << "RunPgpWrapperChangePasswordTest: PASSED SignBuffer fails with the old passphrase and succeeds with the new one after ChangePassword" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunPgpWrapperSetKeyDisabledTest(void)
+{
+    try
+    {
+        CPgpEngineWrapper alice;
+        if (!alice.IsGnuPgAvailable())
+        {
+            std::cout << "RunPgpWrapperSetKeyDisabledTest: SKIPPED (GnuPG not found)" << std::endl;
+            return NO_ERROR;
+        }
+
+        const char* userId = "Grace <grace-disabled@example.com>";
+        const char* password = "grace-disabled-password";
+        int status = alice.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperSetKeyDisabledTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        bool isDisabled = true;
+        status = alice.GetKeyDisabled(&isDisabled);
+        if (status != NO_ERROR || isDisabled)
+        {
+            std::cout << "RunPgpWrapperSetKeyDisabledTest: FAILED fresh identity unexpectedly reports disabled (status=" << status << ")" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = alice.SetKeyDisabled(true);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperSetKeyDisabledTest: FAILED SetKeyDisabled(true) status=" << status << std::endl;
+            return status;
+        }
+        isDisabled = false;
+        status = alice.GetKeyDisabled(&isDisabled);
+        if (status != NO_ERROR || !isDisabled)
+        {
+            std::cout << "RunPgpWrapperSetKeyDisabledTest: FAILED GetKeyDisabled did not report true after SetKeyDisabled(true), status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = alice.SetKeyDisabled(false);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpWrapperSetKeyDisabledTest: FAILED SetKeyDisabled(false) status=" << status << std::endl;
+            return status;
+        }
+        isDisabled = true;
+        status = alice.GetKeyDisabled(&isDisabled);
+        if (status != NO_ERROR || isDisabled)
+        {
+            std::cout << "RunPgpWrapperSetKeyDisabledTest: FAILED GetKeyDisabled did not report false after SetKeyDisabled(false), status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpWrapperSetKeyDisabledTest: PASSED SetKeyDisabled(true)/(false) round trip confirmed via real gpg" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CCryptoApiTester::RunCertificateSelfSignedTest(void)
 {
     try

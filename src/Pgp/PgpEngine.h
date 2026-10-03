@@ -5,6 +5,7 @@
 #include "Interfaces/IPgpEngine.h"
 
 #include <memory>
+#include <vector>
 
 // DLL export/import boundary for CPgpEngine as a real C++ class -- same reasoning and same macro
 // name as CryptoApi.h's own CRYPTOAPI_API (redefining it identically here is harmless: both headers
@@ -123,6 +124,49 @@ public:
                          const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
     // ============================================================================================
+    // Own-identity UID management (multi-UID support -- gpg --edit-key adduid/deluid/primary
+    // parity). GenerateKeyPair() must have succeeded first; password must match. AddUserId appends
+    // a new, non-primary UID with its own 0x13 self-certification. RevokeUserId is the deluid
+    // equivalent: it revokes (0x30 signature layered on the existing self-cert), never hard-deletes
+    // -- matches real gpg's own current behavior, since deleting a UID breaks third-party
+    // certifications on it. SetPrimaryUserId issues a fresh self-cert (with the RFC 4880 5.2.3.19
+    // Primary User ID subpacket) for the target UID and clears the flag on every other UID.
+    // ============================================================================================
+
+    int AddUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize, const bool makePrimary) override;
+    int RevokeUserId(const char* password, const int passwordSize, const int userIdIndex, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize) override;
+    int SetPrimaryUserId(const char* password, const int passwordSize, const int userIdIndex) override;
+
+    int GetUserIdCount(void) const override;
+    int GetUserId(const int userIdIndex, char* outputBuffer, const int outputBufferCapacity, int* outputBufferSize) const override;
+    int GetUserIdIsPrimary(const int userIdIndex, bool* isPrimary) const override;
+    int GetUserIdIsRevoked(const int userIdIndex, bool* isRevoked) const override;
+
+    // ============================================================================================
+    // Own-identity subkey management (multi-subkey support -- gpg --edit-key addkey/expire parity).
+    // No algorithm parameter -- a new subkey always matches this instance's own fixed key-algorithm
+    // family (GetKeyAlgorithm above). keyFlags follows RFC 4880 5.2.3.21 (0x02 sign, 0x0C encrypt,
+    // 0x20 authenticate); on an Ed25519/X25519-family instance only 0x0C is currently supported
+    // (returns NOT_IMPLEMENTED otherwise -- see IPgpEngine.h's own comment for why).
+    // ============================================================================================
+
+    int AddSubkey(const char* password, const int passwordSize, const unsigned char keyFlags, const unsigned int expirationSeconds) override;
+    int RevokeSubkey(const char* password, const int passwordSize, const int subkeyIndex, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize) override;
+
+    // subkeyIndex == -1 targets the primary key itself; otherwise an index into the own-subkey list.
+    int SetKeyExpiration(const char* password, const int passwordSize, const int subkeyIndex, const unsigned int expirationSeconds) override;
+
+    int GetSubkeyCount(void) const override;
+    int GetSubkeyKeyId(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const override;
+    int GetSubkeyFingerprint(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const override;
+    int GetSubkeyIsRevoked(const int subkeyIndex, bool* isRevoked) const override;
+    int GetSubkeyExpirationSeconds(const int subkeyIndex, unsigned int* expirationSeconds) const override;
+
+    // passwd equivalent -- re-encrypts the own master key and every own subkey's secret material
+    // under newPassword; oldPassword must match the identity's current password.
+    int ChangePassword(const char* oldPassword, const int oldPasswordSize, const char* newPassword, const int newPasswordSize) override;
+
+    // ============================================================================================
     // Peer key (the other party's public key) -- unlike GenerateKeyPair() above, this instance
     // never generates or holds a peer's PRIVATE key. Import once before EncryptBuffer/
     // EncryptStringArmored (encrypts to the peer's encryption subkey) or VerifyBuffer/
@@ -132,6 +176,14 @@ public:
     // ============================================================================================
 
     int ImportPeerPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) override;
+
+    // Peer-identity enumeration -- mirrors the own-identity getters above; populated by
+    // ImportPeerPublicKey once its parser collects every UID/subkey packet (not just the first of
+    // each) from the imported public key block.
+    int GetPeerUserIdCount(void) const override;
+    int GetPeerUserId(const int userIdIndex, char* outputBuffer, const int outputBufferCapacity, int* outputBufferSize) const override;
+    int GetPeerSubkeyCount(void) const override;
+    int GetPeerSubkeyKeyId(const int subkeyIndex, char* outputBuffer, const int outputBufferCapacity) const override;
 
     // Hex Key ID of the most recently imported peer master key; empty string before
     // ImportPeerPublicKey() succeeds.
@@ -445,6 +497,18 @@ public:
 protected:
 
 private:
+
+    // Multi-UID/multi-subkey own-identity helpers (AddUserId/RevokeUserId/SetPrimaryUserId/
+    // AddSubkey/RevokeSubkey/SetKeyExpiration/ChangePassword/Export*Armored/Decrypt* all use these).
+    // Private member functions rather than free functions in PgpEngine.cpp's anonymous namespace --
+    // they need access to impl_, which Impl's private nested-type status (below) puts off-limits to
+    // free functions even within the same .cpp file. subkeyIndex-taking overloads use an index
+    // rather than a CryptoPP-typed reference so this header still never needs CryptoPP's own headers.
+    std::vector<unsigned char> signWithOwnMasterKey(const unsigned char signatureType, const std::vector<unsigned char>& documentData, const std::vector<unsigned char>& extraHashedSubpacket) const;
+    std::vector<unsigned char> buildOwnMasterPubBody(void) const;
+    std::vector<unsigned char> buildOwnSubkeyPubBody(const int subkeyIndex) const;
+    void renderOwnKeyBlocks(std::vector<unsigned char>& publicBlockOut, std::vector<unsigned char>& secretBlockOut) const;
+    bool parseAndDecryptMessageWithAnyOwnSubkey(const std::vector<unsigned char>& message, std::vector<unsigned char>& outPlaintext, std::vector<unsigned char>* outSignaturePacket) const;
 
     // CryptoPP types are kept out of this header so callers never need CryptoPP's own headers or
     // include path; only PgpEngine.cpp does (same pattern as CCryptoPPProvider).

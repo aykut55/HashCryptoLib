@@ -348,6 +348,28 @@ public:
     virtual int RunPgpWrapperInspectionSignatureTest(void) = 0;
 
     // ============================================================================================
+    // Multi-UID / multi-subkey (prompt2.md item 4a -- gpg --edit-key parity). Native side; see
+    // CryptoApiTester.h for full per-test documentation.
+    // ============================================================================================
+
+    virtual int RunPgpNativeMultiUidTest(void) = 0;
+    virtual int RunPgpNativeMultiSubkeyTest(void) = 0;
+    virtual int RunPgpNativeSetKeyExpirationTest(void) = 0;
+    virtual int RunPgpNativePeerMultiUidSubkeyImportTest(void) = 0;
+    virtual int RunPgpGnuPgMultiUidMultiSubkeyInteropTest(void) = 0;
+    virtual int RunPgpGnuPgChangePasswordInteropTest(void) = 0;
+
+    // 4a, WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side -- see CryptoApiTester.h's own
+    // doc comments for what each exercises.
+    virtual int RunPgpWrapperQuickAddUidTest(void) = 0;
+    virtual int RunPgpWrapperQuickRevokeUidTest(void) = 0;
+    virtual int RunPgpWrapperQuickSetPrimaryUidTest(void) = 0;
+    virtual int RunPgpWrapperQuickAddKeyTest(void) = 0;
+    virtual int RunPgpWrapperQuickSetExpireTest(void) = 0;
+    virtual int RunPgpWrapperChangePasswordTest(void) = 0;
+    virtual int RunPgpWrapperSetKeyDisabledTest(void) = 0;
+
+    // ============================================================================================
     // Certificates (§25) / CMS (§29.4 gap #5) / RFC 3161 timestamping (§29.4 gap #6) -- see
     // Certificates/CertificateManager.h, CmsService.h, TimestampService.h for the engines these
     // exercise.
