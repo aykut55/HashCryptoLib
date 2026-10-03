@@ -55,6 +55,9 @@
     <Filter Include="src\Interfaces">
       <UniqueIdentifier>{9C1D2E3F-4A5B-6C7D-8E9F-0A1B2C3D4E5F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Ssh">
+      <UniqueIdentifier>{4D8E2F1A-6B3C-4E7D-9A5F-1C3E5A7D9F02}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Scripts">
       <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e61}</UniqueIdentifier>
     </Filter>
@@ -101,6 +104,12 @@
     </ClCompile>
     <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp">
       <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\ISshManager.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Ssh\SshManager.cpp">
+      <Filter>src\Ssh</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp">
       <Filter>src</Filter>
@@ -210,6 +219,9 @@
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampService.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManager.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
@@ -226,6 +238,9 @@
       <Filter>src\Scripts</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManagerDll.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\ScriptEngineTester.cpp">
@@ -286,6 +301,12 @@
     </ClInclude>
     <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h">
       <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Ssh\SshManager.h">
+      <Filter>src\Ssh</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h">
       <Filter>src</Filter>
@@ -398,6 +419,9 @@
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampService.h">
       <Filter>src\Scripts</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManager.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h">
       <Filter>src\Scripts</Filter>
     </ClInclude>
@@ -414,6 +438,9 @@
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManagerDll.h">
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptEngineTester.h">

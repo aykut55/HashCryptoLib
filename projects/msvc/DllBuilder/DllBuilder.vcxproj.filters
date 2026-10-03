@@ -52,6 +52,9 @@
     <Filter Include="src\Interfaces">
       <UniqueIdentifier>{9C1D2E3F-4A5B-6C7D-8E9F-0A1B2C3D4E5F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Ssh">
+      <UniqueIdentifier>{4D8E2F1A-6B3C-4E7D-9A5F-1C3E5A7D9F02}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp">
@@ -83,6 +86,12 @@
     </ClCompile>
     <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp">
       <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Interfaces\ISshManager.cpp">
+      <Filter>src\Interfaces</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\Ssh\SshManager.cpp">
+      <Filter>src\Ssh</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp">
       <Filter>src</Filter>
@@ -214,6 +223,12 @@
     </ClInclude>
     <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h">
       <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Ssh\SshManager.h">
+      <Filter>src\Ssh</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\CryptoApiTester.h">
       <Filter>src</Filter>

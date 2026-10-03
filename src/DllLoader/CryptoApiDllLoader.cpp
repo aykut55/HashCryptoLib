@@ -208,6 +208,26 @@ bool CCryptoApiDllLoader::LoadLibrary(void)
             FreeLibrary(hDll);
             return isLoaded;
         }
+
+        CreateSshManager = (CreateSshManagerFunc)::GetProcAddress(hDll, "CreateSshManager");
+        if (!CreateSshManager)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
+
+        DestroySshManager = (DestroySshManagerFunc)::GetProcAddress(hDll, "DestroySshManager");
+        if (!DestroySshManager)
+        {
+            isLoaded = false;
+
+            std::cerr << "GetProcAddress başarısız! Hata kodu: " << GetLastError() << std::endl;
+            FreeLibrary(hDll);
+            return isLoaded;
+        }
     }
     catch (...)
     {
@@ -458,6 +478,37 @@ void CCryptoApiDllLoader::DestroyTimestampServiceObject(ITimestampService* pTime
     {
         DestroyTimestampService(pTimestampService);
         pTimestampService = 0;
+    }
+    catch (...)
+    {
+
+    }
+}
+//---------------------------------------------------------------------------
+
+ISshManager* CCryptoApiDllLoader::GetSshManagerObject()
+{
+    ISshManager* pSshManager = 0;
+
+    try
+    {
+        pSshManager = CreateSshManager();
+    }
+    catch (...)
+    {
+
+    }
+
+    return pSshManager;
+}
+//---------------------------------------------------------------------------
+
+void CCryptoApiDllLoader::DestroySshManagerObject(ISshManager* pSshManager)
+{
+    try
+    {
+        DestroySshManager(pSshManager);
+        pSshManager = 0;
     }
     catch (...)
     {

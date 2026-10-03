@@ -7,6 +7,7 @@
 #include "CryptoApi.h"
 #include "Pgp/PgpEngine.h"
 #include "Pgp/PgpEngineWrapper.h"
+#include "Ssh/SshManager.h"
 #include "Cli/CommandLineParser.h"
 #include "Utils/Utils.h"
 
@@ -501,6 +502,15 @@ int runTestsViaCryptoApiTester()
     cryptoApiTester.RunTimestampTamperedDigestRejectionTest();
 #endif
 
+#if 1
+    // SSH (CSshManager, libssh2-backed, Plan.md §27 v1 scope).
+    cryptoApiTester.RunSshApiStateTest();
+
+    cryptoApiTester.RunSshConnectInvalidHostTest();
+
+    cryptoApiTester.RunSshLocalhostInteropTest();
+#endif
+
     return 0;
 }
 
@@ -531,6 +541,8 @@ int runTestsViaLuaScriptEngineSol()
     scriptEngineTester.RunLuaScriptProgressCallbackTest();
 
     scriptEngineTester.RunLuaScriptCertificateTest();
+
+    scriptEngineTester.RunLuaScriptSshManagerTest();
 
     return 0;
 }
@@ -563,6 +575,8 @@ int runTestsViaLuaScriptEngineLuaBridge()
 
     scriptEngineTester.RunLuaBridgeScriptCertificateTest();
 
+    scriptEngineTester.RunLuaBridgeScriptSshManagerTest();
+
     return 0;
 }
 
@@ -593,6 +607,8 @@ int runTestsViaLuaScriptEngineLuaBridgeLegacy()
     scriptEngineTester.RunLuaBridgeLegacyScriptProgressCallbackTest();
 
     scriptEngineTester.RunLuaBridgeLegacyScriptCertificateTest();
+
+    scriptEngineTester.RunLuaBridgeLegacyScriptSshManagerTest();
 
     return 0;
 }
@@ -625,6 +641,8 @@ int runTestsViaChaiScriptEngine()
 
     scriptEngineTester.RunChaiScriptCertificateTest();
 
+    scriptEngineTester.RunChaiScriptSshManagerTest();
+
     return 0;
 }
 
@@ -655,6 +673,8 @@ int runTestsViaPythonScriptEngine()
     scriptEngineTester.RunPythonScriptProgressCallbackTest();
 
     scriptEngineTester.RunPythonScriptCertificateTest();
+
+    scriptEngineTester.RunPythonScriptSshManagerTest();
 
     return 0;
 }
@@ -1533,6 +1553,171 @@ int runCliActionPgpSetKeyDisabled(const CryptoApiNS::CCommandLineParser& parser)
 }
 // -----------------------------------------------------------------------------
 
+// SSH (CSshManager, libssh2-backed, Plan.md §27 v1 scope). Unlike the pgp-* actions above, a
+// CSshManager session cannot persist across separate CLI invocations (there is no file-backed
+// "keyhome" equivalent for a live TCP/SSH connection) -- each ssh-* action below is a single
+// bundled connect -> (optional authenticate) -> operate -> disconnect call, matching
+// pgp-roundtrip's own bundled-demo shape rather than the pgp-gen-key/pgp-encrypt persistent-keyhome
+// shape.
+
+// Common setup every ssh-* action needs: -host (required), -port (default 22), -timeout
+// (milliseconds, default 10000). authenticate=false skips the credential step (only
+// ssh-fingerprint, which only needs the host-key handshake, passes false) -- otherwise -user is
+// required plus either -password or -keyfile [-pubkeyfile] [-passphrase] (public-key auth from
+// OpenSSH-format key files on local disk, same as AuthenticatePublicKey's own documented
+// contract). Returns false (with an error already printed) on failure.
+bool setUpSshConnection(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::CSshManager& sshManager, const bool authenticate)
+{
+    const std::string host = parser.GetString("host", "");
+    if (host.empty())
+    {
+        std::cerr << "-host is required" << std::endl;
+        return false;
+    }
+    const unsigned short port = static_cast<unsigned short>(parser.GetInt("port", 22));
+    const unsigned int timeoutMs = static_cast<unsigned int>(parser.GetInt("timeout", 10000));
+    const int connectStatus = sshManager.Connect(host.c_str(), static_cast<int>(host.size()), port, timeoutMs);
+    if (connectStatus != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "Connect to " << host << ":" << port << " failed, status=" << connectStatus << std::endl;
+        return false;
+    }
+
+    if (!authenticate)
+    {
+        return true;
+    }
+
+    const std::string user = parser.GetString("user", "");
+    if (user.empty())
+    {
+        std::cerr << "-user is required" << std::endl;
+        return false;
+    }
+    const std::string password = parser.GetString("password", "");
+    const std::string keyFile = parser.GetString("keyfile", "");
+    int authStatus = CryptoApiNS::UNEXPECTED_ERROR;
+    if (!keyFile.empty())
+    {
+        const std::string pubKeyFile = parser.GetString("pubkeyfile", "");
+        const std::string passphrase = parser.GetString("passphrase", "");
+        authStatus = sshManager.AuthenticatePublicKey( user.c_str(), static_cast<int>(user.size()),
+                                                      pubKeyFile.empty() ? nullptr : pubKeyFile.c_str(), static_cast<int>(pubKeyFile.size()),
+                                                      keyFile.c_str(), static_cast<int>(keyFile.size()),
+                                                      passphrase.empty() ? nullptr : passphrase.c_str(), static_cast<int>(passphrase.size()));
+    }
+    else if (!password.empty())
+    {
+        authStatus = sshManager.AuthenticatePassword(user.c_str(), static_cast<int>(user.size()), password.c_str(), static_cast<int>(password.size()));
+    }
+    else
+    {
+        std::cerr << "-password or -keyfile is required" << std::endl;
+        return false;
+    }
+    if (authStatus != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "Authentication for " << user << " failed, status=" << authStatus << std::endl;
+        return false;
+    }
+    return true;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshFingerprint(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CSshManager sshManager;
+    if (!setUpSshConnection(parser, sshManager, false))
+    {
+        return 6;
+    }
+    char fingerprintBuffer[128];
+    int fingerprintSize = 0;
+    const int status = sshManager.GetHostKeyFingerprint(sizeof(fingerprintBuffer), fingerprintBuffer, &fingerprintSize);
+    sshManager.Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "GetHostKeyFingerprint failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << std::string(fingerprintBuffer, static_cast<std::size_t>(fingerprintSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshExec(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CSshManager sshManager;
+    if (!setUpSshConnection(parser, sshManager, true))
+    {
+        return 6;
+    }
+    const std::string command = parser.GetString("command", "");
+    char stdoutBuffer[16384];
+    int stdoutSize = 0;
+    char stderrBuffer[16384];
+    int stderrSize = 0;
+    int exitStatus = -1;
+    const int status = sshManager.ExecuteCommand( command.c_str(), static_cast<int>(command.size()),
+                                                  sizeof(stdoutBuffer), stdoutBuffer, &stdoutSize,
+                                                  sizeof(stderrBuffer), stderrBuffer, &stderrSize, &exitStatus);
+    sshManager.Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ExecuteCommand failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << std::string(stdoutBuffer, static_cast<std::size_t>(stdoutSize));
+    std::cerr << std::string(stderrBuffer, static_cast<std::size_t>(stderrSize));
+    std::cerr << "exit status: " << exitStatus << std::endl;
+    return exitStatus;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshUpload(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CSshManager sshManager;
+    if (!setUpSshConnection(parser, sshManager, true))
+    {
+        return 6;
+    }
+    const std::string localPath = parser.GetString("local", "");
+    const std::string remotePath = parser.GetString("remote", "");
+    const int status = sshManager.SftpUploadFile( localPath.c_str(), static_cast<int>(localPath.size()),
+                                                  remotePath.c_str(), static_cast<int>(remotePath.size()));
+    sshManager.Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SftpUploadFile failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, uploaded " << localPath << " -> " << remotePath << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshDownload(const CryptoApiNS::CCommandLineParser& parser)
+{
+    CryptoApiNS::CSshManager sshManager;
+    if (!setUpSshConnection(parser, sshManager, true))
+    {
+        return 6;
+    }
+    const std::string remotePath = parser.GetString("remote", "");
+    const std::string localPath = parser.GetString("local", "");
+    const int status = sshManager.SftpDownloadFile( remotePath.c_str(), static_cast<int>(remotePath.size()),
+                                                    localPath.c_str(), static_cast<int>(localPath.size()));
+    sshManager.Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SftpDownloadFile failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, downloaded " << remotePath << " -> " << localPath << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
 // The exact sequence main() always ran unconditionally before the CLI existed (CCryptoApiTester's
 // full suite + all 5 script engines' own demo/test suites) -- extracted here, unchanged, so it can be
 // triggered explicitly via `-action run-tests` as well as by the original no-args fallback in main().
@@ -1651,7 +1836,13 @@ int runCliActionListActions(void)
         "\n"
         "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n"
         "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n"
-        "-keyserver varsayilani: hkps://keys.openpgp.org (verilmezse). pgp-send-key/pgp-recv-key/pgp-refresh-keys gercek ag istegi atar (dirmngr).\n";
+        "-keyserver varsayilani: hkps://keys.openpgp.org (verilmezse). pgp-send-key/pgp-recv-key/pgp-refresh-keys gercek ag istegi atar (dirmngr).\n"
+        "\n"
+        "SSH (CSshManager, libssh2 tabanli, Plan.md §27 v1 kapsami -- her aksiyon kendi icinde connect+auth+islem+disconnect yapan tek bir bagli cagri, kalici bir keyhome kavrami yok):\n"
+        "  ssh-fingerprint         -host HOST [-port PORT=22] [-timeout MS=10000]\n"
+        "  ssh-exec                -host HOST [-port PORT=22] -user USER (-password X | -keyfile YOL [-pubkeyfile YOL] [-passphrase X]) -command \"komut\" [-timeout MS]\n"
+        "  ssh-upload               -host HOST [-port PORT=22] -user USER (-password X | -keyfile YOL [...]) -local YOL -remote YOL [-timeout MS]\n"
+        "  ssh-download             -host HOST [-port PORT=22] -user USER (-password X | -keyfile YOL [...]) -remote YOL -local YOL [-timeout MS]\n";
     return 0;
 }
 // -----------------------------------------------------------------------------
@@ -1771,6 +1962,22 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
     {
         return runCliActionPgpSetKeyDisabled(parser);
     }
+    if (action == "ssh-fingerprint")
+    {
+        return runCliActionSshFingerprint(parser);
+    }
+    if (action == "ssh-exec")
+    {
+        return runCliActionSshExec(parser);
+    }
+    if (action == "ssh-upload")
+    {
+        return runCliActionSshUpload(parser);
+    }
+    if (action == "ssh-download")
+    {
+        return runCliActionSshDownload(parser);
+    }
     if (action == "run-tests")
     {
         return runAllTests();
@@ -1786,7 +1993,8 @@ int runCliAction(const CryptoApiNS::CCommandLineParser& parser)
                  "pgp-refresh-keys, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
                  "pgp-sign-encrypt, pgp-decrypt-verify, pgp-add-uid, pgp-revoke-uid, "
                  "pgp-set-primary-uid, pgp-add-key, pgp-set-expire, pgp-change-password, "
-                 "pgp-set-key-disabled, run-tests, list-actions (run -action "
+                 "pgp-set-key-disabled, ssh-fingerprint, ssh-exec, ssh-upload, ssh-download, "
+                 "run-tests, list-actions (run -action "
                  "list-actions for full usage)" << std::endl;
     return 2;
 }

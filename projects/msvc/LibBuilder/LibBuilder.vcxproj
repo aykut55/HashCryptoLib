@@ -118,6 +118,15 @@
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
+  <!-- libssh2 (3rdParty\libssh21111), same reasoning as the libgcrypt block above: only the
+       include path is needed here to compile Src/Ssh/SshManager.cpp; no lib is linked by a
+       static-library build. Platform-independent (unlike the libgcrypt block), so its own
+       ItemDefinitionGroup. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\libssh21111\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -187,6 +196,8 @@
     <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h" />
+    <ClInclude Include="..\..\..\src\Ssh\SshManager.h" />
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
@@ -230,6 +241,8 @@
     <ClCompile Include="..\..\..\src\Interfaces\ICertificateManager.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ICmsService.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ISshManager.cpp" />
+    <ClCompile Include="..\..\..\src\Ssh\SshManager.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />

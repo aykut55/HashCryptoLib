@@ -42,6 +42,7 @@
 #include "../ScriptCertificateManagerDll.h"
 #include "../ScriptCmsServiceDll.h"
 #include "../ScriptTimestampServiceDll.h"
+#include "../ScriptSshManagerDll.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -54,6 +55,7 @@
 #include "../ScriptCertificateManager.h"
 #include "../ScriptCmsService.h"
 #include "../ScriptTimestampService.h"
+#include "../ScriptSshManager.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
@@ -459,6 +461,24 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptTimestampService::RequestTimestampFromTsa), "RequestTimestampFromTsa");
     chai_.add(chaiscript::fun(&CScriptTimestampService::VerifyTimestampResponse), "VerifyTimestampResponse");
     chai_.add(chaiscript::fun(&CScriptTimestampService::GetTimestampInfoText), "GetTimestampInfoText");
+
+    chai_.add(chaiscript::user_type<CScriptSshManager>(), "SshManager");
+    chai_.add(chaiscript::constructor<CScriptSshManager()>(), "SshManager");
+    chai_.add(chaiscript::fun(&CScriptSshManager::Connect), "Connect");
+    chai_.add(chaiscript::fun(&CScriptSshManager::Disconnect), "Disconnect");
+    chai_.add(chaiscript::fun(&CScriptSshManager::IsConnected), "IsConnected");
+    chai_.add(chaiscript::fun(&CScriptSshManager::GetHostKeyFingerprint), "GetHostKeyFingerprint");
+    chai_.add(chaiscript::fun(&CScriptSshManager::CheckKnownHost), "CheckKnownHost");
+    chai_.add(chaiscript::fun(&CScriptSshManager::AddKnownHost), "AddKnownHost");
+    chai_.add(chaiscript::fun(&CScriptSshManager::AuthenticatePassword), "AuthenticatePassword");
+    chai_.add(chaiscript::fun(&CScriptSshManager::AuthenticatePublicKey), "AuthenticatePublicKey");
+    chai_.add(chaiscript::fun(&CScriptSshManager::IsAuthenticated), "IsAuthenticated");
+    chai_.add(chaiscript::fun(&CScriptSshManager::ExecuteCommand), "ExecuteCommand");
+    chai_.add(chaiscript::fun(&CScriptSshManager::GetLastExecStderr), "GetLastExecStderr");
+    chai_.add(chaiscript::fun(&CScriptSshManager::GetLastExecExitStatus), "GetLastExecExitStatus");
+    chai_.add(chaiscript::fun(&CScriptSshManager::SftpUploadFile), "SftpUploadFile");
+    chai_.add(chaiscript::fun(&CScriptSshManager::SftpDownloadFile), "SftpDownloadFile");
+    chai_.add(chaiscript::fun(&CScriptSshManager::GetLastErrorMessage), "GetLastErrorMessage");
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -518,6 +538,16 @@ void CChaiScriptEngine::registerBindings(void)
     chai_.add(chaiscript::fun(&CScriptTimestampServiceDll::CreateTimestampRequest), "CreateTimestampRequest");
     chai_.add(chaiscript::fun(&CScriptTimestampServiceDll::RequestTimestampFromTsa), "RequestTimestampFromTsa");
     chai_.add(chaiscript::fun(&CScriptTimestampServiceDll::GetTimestampInfoText), "GetTimestampInfoText");
+
+    chai_.add(chaiscript::user_type<CScriptSshManagerDll>(), "SshManagerDll");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::Connect), "Connect");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::Disconnect), "Disconnect");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::GetHostKeyFingerprint), "GetHostKeyFingerprint");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::AuthenticatePassword), "AuthenticatePassword");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::ExecuteCommand), "ExecuteCommand");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::GetLastExecStderr), "GetLastExecStderr");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::GetLastExecExitStatus), "GetLastExecExitStatus");
+    chai_.add(chaiscript::fun(&CScriptSshManagerDll::GetLastErrorMessage), "GetLastErrorMessage");
 }
 // -----------------------------------------------------------------------------
 
@@ -604,6 +634,19 @@ void CChaiScriptEngine::SetDllTimestampService(CScriptTimestampServiceDll* servi
     try
     {
         chai_.add_global(chaiscript::var(service), "timestampService");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CChaiScriptEngine::SetDllSshManager(CScriptSshManagerDll* manager)
+{
+    try
+    {
+        chai_.add_global(chaiscript::var(manager), "sshManager");
     }
     catch (...)
     {

@@ -936,6 +936,22 @@ Testler: TLS 1.2/1.3 capability, uyumsuz minimum sürüm, geçerli/geçersiz hos
 
 ## 27. SSH
 
+**Durum (2026-10-03): v1 TAMAMLANDI.** Aşağıdaki §27.2'nin ince taneli `SshService`/`SshClient`/
+`SshSession`/`SshChannel`/`SftpClient` sınıf tablosu, kullanıcı kararıyla TEK bir bağımsız
+`CSshManager` sınıfına toplandı (`CCertificateManager`/`CPgpEngine`'in kendi "tek flat facade"
+emsaliyle aynı) — `ICryptoProvider`'a bağlanmadı, `src/Ssh/SshManager.h/.cpp` + `src/Interfaces/
+ISshManager.h/.cpp`, libssh2 (`3rdParty/libssh21111`, OpenSSL crypto backend) ile. Kapsanan: Connect/
+Disconnect, host-key fingerprint (SHA-256) + `CheckKnownHost`/`AddKnownHost` (gerçek
+`libssh2_knownhost_*`), parola/public-key authentication, `ExecuteCommand` (blocking exec),
+`SftpUploadFile`/`SftpDownloadFile`. DLL (`DllBuilder`/`DllRunner`) ve statik LIB
+(`LibBuilder`/`LibRunner`) üzerinden de erişilebilir (Certificates/CMS/Timestamp ile aynı
+`CryptoApiFactory`/`CCryptoApiDllLoader` kablolaması), 4 CLI aksiyonu (`ssh-fingerprint`/
+`ssh-exec`/`ssh-upload`/`ssh-download`, 3 runner'ın hepsinde) eklendi. 4 konfigürasyon temiz
+derlendi, 3 yeni test (biri gerçek bir sshd gerektiriyor, SKIPPED — bu ortamda yerel sshd yok).
+Detaylar: proje hafızası `project_ssh_csshmanager_v1_done`. Aşağıdaki §27.2-27.7 orijinal tasarım
+taslağı hâlâ referans olarak duruyor (port forwarding, agent, SFTP dizin işlemleri, SCP gibi
+sonraki capability'ler için), ama v1'in kendisi artık yukarıdaki dar kapsamla sınırlı.
+
 ### 27.1 Amaç ve ilk kapsam
 
 SSH, TLS'den bağımsız protokol ve güven modelidir. İlk hedef SSH2 istemci bağlantısı, server host key doğrulama, public key/parola authentication, command/session kanalları ve SFTP'dir. SSH1 desteklenmez. Interactive shell/PTY, agent, port forwarding ve SSH server sonraki açık capability'ler olarak planlanır.
@@ -1103,17 +1119,23 @@ kopyalanmadı/alıntılanmadı, sadece method/enum adları yetenek listesi çık
 - V3 (eski format) imza üretimi — düşük değerli, biz her zaman v4 üretiyoruz.
 
 **Orta öncelik — kalıcı keyring/yönetim** (ikimizde de gerçek bir keyring kavramı yok):
-Şifreli keystore dosyası, userId/keyId ile arama yapılabilen çoklu-anahtar barındırma, var olan
-kimliğe sonradan subkey ekleme, üretim sonrası expiration değiştirme/temizleme, çoklu User ID
-yönetimi, **key signing/web-of-trust** (`SignPublicKey`, trust seviyeleri), User ID'ye özel imza
-iptali, var olan bir revocation sertifikasının sebebini okuma (biz sadece üretebiliyoruz, okuyamı-
-yoruz), var olan secret key'in parolasını değiştirme, JPEG foto-ID paketleri, KBX (GnuPG keybox)
-import, ElGamal/DH-DSS anahtar üretimi.
+- ✅ **TAMAMLANDI (2026-10-03, bkz. 4a/`pgp-multi-uid-subkey-plan.md`):** var olan kimliğe sonradan
+  subkey ekleme (`AddSubkey`), üretim sonrası expiration değiştirme (`SetKeyExpiration`), çoklu
+  User ID yönetimi (`AddUserId`/`RevokeUserId`/`SetPrimaryUserId`), var olan secret key'in
+  parolasını değiştirme (`ChangePassword`) — hem native (`CPgpEngine`) hem wrapper
+  (`CPgpEngineWrapper`) tarafında, gerçek gpg interop ile doğrulandı.
+- Hâlâ açık: şifreli keystore dosyası, userId/keyId ile arama yapılabilen çoklu-anahtar barındırma
+  (tek kimlik/homedir sınırı aynı kaldı — 4a bunu genişletmedi, sadece TEK kimliğin içindeki
+  UID/subkey/parola mutasyonunu ekledi), **key signing/web-of-trust** (`SignPublicKey`, trust
+  seviyeleri — bkz. prompt2.md madde 4f, bilinçli olarak 4a'dan ayrı tutuldu), User ID'ye özel imza
+  iptali (`revsig`/`delsig` — 4a'nın da bilinçli olarak kapsam dışı tuttuğu, deluid'den farklı bir
+  özellik), var olan bir revocation sertifikasının sebebini okuma (biz sadece üretebiliyoruz,
+  okuyamıyoruz), JPEG foto-ID paketleri, KBX (GnuPG keybox) import, ElGamal/DH-DSS anahtar üretimi.
 
 **Düşük öncelik — sadece ergonomik sarmalayıcılar, yeni bir kriptografik yetenek değil:**
-Tek çağrıda sign+encrypt / decrypt+verify (şu an iki ayrı çağrı + elle payload birleştirme
-gerekiyor, AliceBob testlerindeki desen), imzalı içerikten imzayı çıkarmadan sadece metni alma,
-klasör/toplu dosya şifreleme.
+- ✅ **TAMAMLANDI (2026-09-27, bkz. 4g):** Tek çağrıda sign+encrypt / decrypt+verify
+  (`EncryptAndSignBuffer`/`DecryptAndVerifyBuffer` + string varyantları, hem native hem wrapper).
+- Hâlâ açık: imzalı içerikten imzayı çıkarmadan sadece metni alma, klasör/toplu dosya şifreleme.
 
 Listeye dahil edilmeyenler: .NET'e özgü API-şekli farkları (async/await, Stream vs buffer,
 IDisposable) — dil özelliği, yetenek farkı değil.

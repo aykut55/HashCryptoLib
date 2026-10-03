@@ -6,6 +6,7 @@
 #include "../ScriptCertificateManagerDll.h"
 #include "../ScriptCmsServiceDll.h"
 #include "../ScriptTimestampServiceDll.h"
+#include "../ScriptSshManagerDll.h"
 #include "../ScriptProgressCallback.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
@@ -19,6 +20,7 @@
 #include "../ScriptCertificateManager.h"
 #include "../ScriptCmsService.h"
 #include "../ScriptTimestampService.h"
+#include "../ScriptSshManager.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
@@ -300,6 +302,26 @@ void CLuaScriptEngineLuaBridgeLegacy::registerBindings(void)
             .addFunction("VerifyTimestampResponse", &CScriptTimestampService::VerifyTimestampResponse)
             .addFunction("GetTimestampInfoText", &CScriptTimestampService::GetTimestampInfoText)
         .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptSshManager>("SshManager")
+            .addConstructor<void (*)()>()
+            .addFunction("Connect", &CScriptSshManager::Connect)
+            .addFunction("Disconnect", &CScriptSshManager::Disconnect)
+            .addFunction("IsConnected", &CScriptSshManager::IsConnected)
+            .addFunction("GetHostKeyFingerprint", &CScriptSshManager::GetHostKeyFingerprint)
+            .addFunction("CheckKnownHost", &CScriptSshManager::CheckKnownHost)
+            .addFunction("AddKnownHost", &CScriptSshManager::AddKnownHost)
+            .addFunction("AuthenticatePassword", &CScriptSshManager::AuthenticatePassword)
+            .addFunction("AuthenticatePublicKey", &CScriptSshManager::AuthenticatePublicKey)
+            .addFunction("IsAuthenticated", &CScriptSshManager::IsAuthenticated)
+            .addFunction("ExecuteCommand", &CScriptSshManager::ExecuteCommand)
+            .addFunction("GetLastExecStderr", &CScriptSshManager::GetLastExecStderr)
+            .addFunction("GetLastExecExitStatus", &CScriptSshManager::GetLastExecExitStatus)
+            .addFunction("SftpUploadFile", &CScriptSshManager::SftpUploadFile)
+            .addFunction("SftpDownloadFile", &CScriptSshManager::SftpDownloadFile)
+            .addFunction("GetLastErrorMessage", &CScriptSshManager::GetLastErrorMessage)
+        .endClass();
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -371,6 +393,18 @@ void CLuaScriptEngineLuaBridgeLegacy::registerBindings(void)
             .addFunction("CreateTimestampRequest", &CScriptTimestampServiceDll::CreateTimestampRequest)
             .addFunction("RequestTimestampFromTsa", &CScriptTimestampServiceDll::RequestTimestampFromTsa)
             .addFunction("GetTimestampInfoText", &CScriptTimestampServiceDll::GetTimestampInfoText)
+        .endClass();
+
+    luabridge::getGlobalNamespace(luaState_)
+        .beginClass<CScriptSshManagerDll>("SshManagerDll")
+            .addFunction("Connect", &CScriptSshManagerDll::Connect)
+            .addFunction("Disconnect", &CScriptSshManagerDll::Disconnect)
+            .addFunction("GetHostKeyFingerprint", &CScriptSshManagerDll::GetHostKeyFingerprint)
+            .addFunction("AuthenticatePassword", &CScriptSshManagerDll::AuthenticatePassword)
+            .addFunction("ExecuteCommand", &CScriptSshManagerDll::ExecuteCommand)
+            .addFunction("GetLastExecStderr", &CScriptSshManagerDll::GetLastExecStderr)
+            .addFunction("GetLastExecExitStatus", &CScriptSshManagerDll::GetLastExecExitStatus)
+            .addFunction("GetLastErrorMessage", &CScriptSshManagerDll::GetLastErrorMessage)
         .endClass();
 }
 // -----------------------------------------------------------------------------
@@ -465,6 +499,20 @@ void CLuaScriptEngineLuaBridgeLegacy::SetDllTimestampService(CScriptTimestampSer
     {
         luabridge::push(luaState_, service);
         lua_setglobal(luaState_, "timestampService");
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineLuaBridgeLegacy::SetDllSshManager(CScriptSshManagerDll* manager)
+{
+    try
+    {
+        luabridge::push(luaState_, manager);
+        lua_setglobal(luaState_, "sshManager");
     }
     catch (...)
     {

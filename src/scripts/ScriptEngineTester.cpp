@@ -5,8 +5,10 @@
 #include "LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
 #include "ChaiScript/ChaiScriptEngine.h"
 #include "PythonScript/PythonScriptEngine.h"
+#include "ScriptSshManager.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <iostream>
@@ -2256,6 +2258,79 @@ int CScriptEngineTester::RunLuaScriptCertificateTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CScriptEngineTester::RunLuaScriptSshManagerTest(void)
+{
+    try
+    {
+        // Probe for a real SSH server on the standard port before attempting anything else --
+        // SKIPPED (not FAILED) if none is listening, same philosophy as
+        // CCryptoApiTester::RunSshLocalhostInteropTest and this test's own 4 sibling mirrors.
+        CScriptSshManager probeManager;
+        const bool probeConnected = probeManager.Connect("127.0.0.1", 22, 1500);
+        if (probeConnected)
+        {
+            probeManager.Disconnect();
+        }
+        if (!probeConnected)
+        {
+            std::cout << "RunLuaScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) no local SSH server on 127.0.0.1:22" << std::endl;
+            return NO_ERROR;
+        }
+
+        char* envUserRaw = nullptr;
+        char* envPasswordRaw = nullptr;
+        _dupenv_s(&envUserRaw, nullptr, "CRYPTOAPI_SSH_TEST_USER");
+        _dupenv_s(&envPasswordRaw, nullptr, "CRYPTOAPI_SSH_TEST_PASSWORD");
+        const std::string envUser = (envUserRaw != nullptr) ? envUserRaw : std::string();
+        const std::string envPassword = (envPasswordRaw != nullptr) ? envPasswordRaw : std::string();
+        free(envUserRaw);
+        free(envPasswordRaw);
+        if (envUser.empty() || envPassword.empty())
+        {
+            std::cout << "RunLuaScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) local sshd found on 127.0.0.1:22 "
+                          "but CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD not set" << std::endl;
+            return NO_ERROR;
+        }
+
+        CLuaScriptEngineSol luaEngine;
+        const std::string script =
+            "local ssh = SshManager.new()\n"
+            "local connected = ssh:Connect(\"127.0.0.1\", 22, 1500)\n"
+            "local authed = false\n"
+            "local output = \"\"\n"
+            "if connected then\n"
+            "    ssh:AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\")\n"
+            "    authed = ssh:IsAuthenticated()\n"
+            "    if authed then\n"
+            "        output = ssh:ExecuteCommand(\"echo cryptoapi-scripttest-ssh\")\n"
+            "    end\n"
+            "    ssh:Disconnect()\n"
+            "end\n"
+            "ok = connected and authed and (#output > 0)\n";
+
+        luaEngine.RunString(script);
+        if (!luaEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunLuaScriptSshManagerTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaScriptSshManagerTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunLuaScriptSshManagerTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunLuaScriptSshManagerTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CScriptEngineTester::RunLuaBridgeScriptCertificateTest(void)
 {
     try
@@ -2300,6 +2375,79 @@ int CScriptEngineTester::RunLuaBridgeScriptCertificateTest(void)
     catch (...)
     {
         std::cout << "RunLuaBridgeScriptCertificateTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunLuaBridgeScriptSshManagerTest(void)
+{
+    try
+    {
+        // Probe for a real SSH server on the standard port before attempting anything else --
+        // SKIPPED (not FAILED) if none is listening, same philosophy as
+        // CCryptoApiTester::RunSshLocalhostInteropTest and this test's own 4 sibling mirrors.
+        CScriptSshManager probeManager;
+        const bool probeConnected = probeManager.Connect("127.0.0.1", 22, 1500);
+        if (probeConnected)
+        {
+            probeManager.Disconnect();
+        }
+        if (!probeConnected)
+        {
+            std::cout << "RunLuaBridgeScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) no local SSH server on 127.0.0.1:22" << std::endl;
+            return NO_ERROR;
+        }
+
+        char* envUserRaw = nullptr;
+        char* envPasswordRaw = nullptr;
+        _dupenv_s(&envUserRaw, nullptr, "CRYPTOAPI_SSH_TEST_USER");
+        _dupenv_s(&envPasswordRaw, nullptr, "CRYPTOAPI_SSH_TEST_PASSWORD");
+        const std::string envUser = (envUserRaw != nullptr) ? envUserRaw : std::string();
+        const std::string envPassword = (envPasswordRaw != nullptr) ? envPasswordRaw : std::string();
+        free(envUserRaw);
+        free(envPasswordRaw);
+        if (envUser.empty() || envPassword.empty())
+        {
+            std::cout << "RunLuaBridgeScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) local sshd found on 127.0.0.1:22 "
+                          "but CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD not set" << std::endl;
+            return NO_ERROR;
+        }
+
+        CLuaScriptEngineLuaBridge luaEngine;
+        const std::string script =
+            "local ssh = SshManager()\n"
+            "local connected = ssh:Connect(\"127.0.0.1\", 22, 1500)\n"
+            "local authed = false\n"
+            "local output = \"\"\n"
+            "if connected then\n"
+            "    ssh:AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\")\n"
+            "    authed = ssh:IsAuthenticated()\n"
+            "    if authed then\n"
+            "        output = ssh:ExecuteCommand(\"echo cryptoapi-scripttest-ssh\")\n"
+            "    end\n"
+            "    ssh:Disconnect()\n"
+            "end\n"
+            "ok = connected and authed and (#output > 0)\n";
+
+        luaEngine.RunString(script);
+        if (!luaEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunLuaBridgeScriptSshManagerTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaBridgeScriptSshManagerTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunLuaBridgeScriptSshManagerTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunLuaBridgeScriptSshManagerTest: FAILED unknown exception" << std::endl;
         return UNEXPECTED_ERROR;
     }
 }
@@ -2354,6 +2502,79 @@ int CScriptEngineTester::RunLuaBridgeLegacyScriptCertificateTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CScriptEngineTester::RunLuaBridgeLegacyScriptSshManagerTest(void)
+{
+    try
+    {
+        // Probe for a real SSH server on the standard port before attempting anything else --
+        // SKIPPED (not FAILED) if none is listening, same philosophy as
+        // CCryptoApiTester::RunSshLocalhostInteropTest and this test's own 4 sibling mirrors.
+        CScriptSshManager probeManager;
+        const bool probeConnected = probeManager.Connect("127.0.0.1", 22, 1500);
+        if (probeConnected)
+        {
+            probeManager.Disconnect();
+        }
+        if (!probeConnected)
+        {
+            std::cout << "RunLuaBridgeLegacyScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) no local SSH server on 127.0.0.1:22" << std::endl;
+            return NO_ERROR;
+        }
+
+        char* envUserRaw = nullptr;
+        char* envPasswordRaw = nullptr;
+        _dupenv_s(&envUserRaw, nullptr, "CRYPTOAPI_SSH_TEST_USER");
+        _dupenv_s(&envPasswordRaw, nullptr, "CRYPTOAPI_SSH_TEST_PASSWORD");
+        const std::string envUser = (envUserRaw != nullptr) ? envUserRaw : std::string();
+        const std::string envPassword = (envPasswordRaw != nullptr) ? envPasswordRaw : std::string();
+        free(envUserRaw);
+        free(envPasswordRaw);
+        if (envUser.empty() || envPassword.empty())
+        {
+            std::cout << "RunLuaBridgeLegacyScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) local sshd found on 127.0.0.1:22 "
+                          "but CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD not set" << std::endl;
+            return NO_ERROR;
+        }
+
+        CLuaScriptEngineLuaBridgeLegacy luaEngine;
+        const std::string script =
+            "local ssh = SshManager()\n"
+            "local connected = ssh:Connect(\"127.0.0.1\", 22, 1500)\n"
+            "local authed = false\n"
+            "local output = \"\"\n"
+            "if connected then\n"
+            "    ssh:AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\")\n"
+            "    authed = ssh:IsAuthenticated()\n"
+            "    if authed then\n"
+            "        output = ssh:ExecuteCommand(\"echo cryptoapi-scripttest-ssh\")\n"
+            "    end\n"
+            "    ssh:Disconnect()\n"
+            "end\n"
+            "ok = connected and authed and (#output > 0)\n";
+
+        luaEngine.RunString(script);
+        if (!luaEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunLuaBridgeLegacyScriptSshManagerTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunLuaBridgeLegacyScriptSshManagerTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunLuaBridgeLegacyScriptSshManagerTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunLuaBridgeLegacyScriptSshManagerTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CScriptEngineTester::RunChaiScriptCertificateTest(void)
 {
     try
@@ -2400,6 +2621,79 @@ int CScriptEngineTester::RunChaiScriptCertificateTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CScriptEngineTester::RunChaiScriptSshManagerTest(void)
+{
+    try
+    {
+        // Probe for a real SSH server on the standard port before attempting anything else --
+        // SKIPPED (not FAILED) if none is listening, same philosophy as
+        // CCryptoApiTester::RunSshLocalhostInteropTest and this test's own 4 sibling mirrors.
+        CScriptSshManager probeManager;
+        const bool probeConnected = probeManager.Connect("127.0.0.1", 22, 1500);
+        if (probeConnected)
+        {
+            probeManager.Disconnect();
+        }
+        if (!probeConnected)
+        {
+            std::cout << "RunChaiScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) no local SSH server on 127.0.0.1:22" << std::endl;
+            return NO_ERROR;
+        }
+
+        char* envUserRaw = nullptr;
+        char* envPasswordRaw = nullptr;
+        _dupenv_s(&envUserRaw, nullptr, "CRYPTOAPI_SSH_TEST_USER");
+        _dupenv_s(&envPasswordRaw, nullptr, "CRYPTOAPI_SSH_TEST_PASSWORD");
+        const std::string envUser = (envUserRaw != nullptr) ? envUserRaw : std::string();
+        const std::string envPassword = (envPasswordRaw != nullptr) ? envPasswordRaw : std::string();
+        free(envUserRaw);
+        free(envPasswordRaw);
+        if (envUser.empty() || envPassword.empty())
+        {
+            std::cout << "RunChaiScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) local sshd found on 127.0.0.1:22 "
+                          "but CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD not set" << std::endl;
+            return NO_ERROR;
+        }
+
+        CChaiScriptEngine chaiEngine;
+        const std::string script =
+            "var ssh = SshManager();\n"
+            "var connected = ssh.Connect(\"127.0.0.1\", 22, 1500);\n"
+            "var authed = false;\n"
+            "var output = \"\";\n"
+            "if (connected) {\n"
+            "    ssh.AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\");\n"
+            "    authed = ssh.IsAuthenticated();\n"
+            "    if (authed) {\n"
+            "        output = ssh.ExecuteCommand(\"echo cryptoapi-scripttest-ssh\");\n"
+            "    }\n"
+            "    ssh.Disconnect();\n"
+            "}\n"
+            "global ok = connected && authed && (output.size() > 0);\n";
+
+        chaiEngine.RunString(script);
+        if (!chaiEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunChaiScriptSshManagerTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunChaiScriptSshManagerTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunChaiScriptSshManagerTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunChaiScriptSshManagerTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CScriptEngineTester::RunPythonScriptCertificateTest(void)
 {
     try
@@ -2440,6 +2734,77 @@ int CScriptEngineTester::RunPythonScriptCertificateTest(void)
     catch (...)
     {
         std::cout << "RunPythonScriptCertificateTest: FAILED unknown exception" << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CScriptEngineTester::RunPythonScriptSshManagerTest(void)
+{
+    try
+    {
+        // Probe for a real SSH server on the standard port before attempting anything else --
+        // SKIPPED (not FAILED) if none is listening, same philosophy as
+        // CCryptoApiTester::RunSshLocalhostInteropTest and this test's own 4 sibling mirrors.
+        CScriptSshManager probeManager;
+        const bool probeConnected = probeManager.Connect("127.0.0.1", 22, 1500);
+        if (probeConnected)
+        {
+            probeManager.Disconnect();
+        }
+        if (!probeConnected)
+        {
+            std::cout << "RunPythonScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) no local SSH server on 127.0.0.1:22" << std::endl;
+            return NO_ERROR;
+        }
+
+        char* envUserRaw = nullptr;
+        char* envPasswordRaw = nullptr;
+        _dupenv_s(&envUserRaw, nullptr, "CRYPTOAPI_SSH_TEST_USER");
+        _dupenv_s(&envPasswordRaw, nullptr, "CRYPTOAPI_SSH_TEST_PASSWORD");
+        const std::string envUser = (envUserRaw != nullptr) ? envUserRaw : std::string();
+        const std::string envPassword = (envPasswordRaw != nullptr) ? envPasswordRaw : std::string();
+        free(envUserRaw);
+        free(envPasswordRaw);
+        if (envUser.empty() || envPassword.empty())
+        {
+            std::cout << "RunPythonScriptSshManagerTest: SKIPPED (NOT a pass -- real SSH interop not exercised) local sshd found on 127.0.0.1:22 "
+                          "but CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD not set" << std::endl;
+            return NO_ERROR;
+        }
+
+        CPythonScriptEngine pythonEngine;
+        const std::string script =
+            "ssh = SshManager()\n"
+            "connected = ssh.Connect(\"127.0.0.1\", 22, 1500)\n"
+            "authed = False\n"
+            "output = \"\"\n"
+            "if connected:\n"
+            "    ssh.AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\")\n"
+            "    authed = ssh.IsAuthenticated()\n"
+            "    if authed:\n"
+            "        output = ssh.ExecuteCommand(\"echo cryptoapi-scripttest-ssh\")\n"
+            "    ssh.Disconnect()\n"
+            "ok = connected and authed and (len(output) > 0)\n";
+
+        pythonEngine.RunString(script);
+        if (!pythonEngine.GetGlobalBool("ok"))
+        {
+            std::cout << "RunPythonScriptSshManagerTest: FAILED" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPythonScriptSshManagerTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cout << "RunPythonScriptSshManagerTest: FAILED exception " << ex.what() << std::endl;
+        return UNEXPECTED_ERROR;
+    }
+    catch (...)
+    {
+        std::cout << "RunPythonScriptSshManagerTest: FAILED unknown exception" << std::endl;
         return UNEXPECTED_ERROR;
     }
 }

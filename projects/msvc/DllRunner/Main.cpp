@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 
 // ChaiScriptEngine.h pulls in <chaiscript/chaiscript.hpp>, which transitively includes
@@ -44,6 +45,7 @@
 #include "Scripts/ScriptCertificateManagerDll.h"
 #include "Scripts/ScriptCmsServiceDll.h"
 #include "Scripts/ScriptTimestampServiceDll.h"
+#include "Scripts/ScriptSshManagerDll.h"
 #include "Scripts/LuaScript/LuaScriptEngineSol.h"
 #include "Scripts/LuaScript/LuaScriptEngineLuaBridge.h"
 #include "Scripts/LuaScript/LuaScriptEngineLuaBridgeLegacy.h"
@@ -870,6 +872,160 @@ int runCliActionPgpSetKeyDisabled(const CryptoApiNS::CCommandLineParser& parser,
 }
 // -----------------------------------------------------------------------------
 
+// SSH (CSshManager, libssh2-backed, Plan.md §27 v1 scope), DLL-hosted variant -- same shape as
+// AppBuilder/Main.cpp's own copy of these functions, dispatching through ISshManager* obtained via
+// CCryptoApiDllLoader instead of an in-process CSshManager. Each action is a single bundled
+// connect -> (optional authenticate) -> operate -> disconnect call, since a session cannot persist
+// across separate CLI invocations the way a pgp-* keyhome does.
+
+bool setUpSshConnection(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ISshManager* pSshManager, const bool authenticate)
+{
+    const std::string host = parser.GetString("host", "");
+    if (host.empty())
+    {
+        std::cerr << "-host is required" << std::endl;
+        return false;
+    }
+    const unsigned short port = static_cast<unsigned short>(parser.GetInt("port", 22));
+    const unsigned int timeoutMs = static_cast<unsigned int>(parser.GetInt("timeout", 10000));
+    const int connectStatus = pSshManager->Connect(host.c_str(), static_cast<int>(host.size()), port, timeoutMs);
+    if (connectStatus != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "Connect to " << host << ":" << port << " failed, status=" << connectStatus << std::endl;
+        return false;
+    }
+
+    if (!authenticate)
+    {
+        return true;
+    }
+
+    const std::string user = parser.GetString("user", "");
+    if (user.empty())
+    {
+        std::cerr << "-user is required" << std::endl;
+        return false;
+    }
+    const std::string password = parser.GetString("password", "");
+    const std::string keyFile = parser.GetString("keyfile", "");
+    int authStatus = CryptoApiNS::UNEXPECTED_ERROR;
+    if (!keyFile.empty())
+    {
+        const std::string pubKeyFile = parser.GetString("pubkeyfile", "");
+        const std::string passphrase = parser.GetString("passphrase", "");
+        authStatus = pSshManager->AuthenticatePublicKey( user.c_str(), static_cast<int>(user.size()),
+                                                        pubKeyFile.empty() ? nullptr : pubKeyFile.c_str(), static_cast<int>(pubKeyFile.size()),
+                                                        keyFile.c_str(), static_cast<int>(keyFile.size()),
+                                                        passphrase.empty() ? nullptr : passphrase.c_str(), static_cast<int>(passphrase.size()));
+    }
+    else if (!password.empty())
+    {
+        authStatus = pSshManager->AuthenticatePassword(user.c_str(), static_cast<int>(user.size()), password.c_str(), static_cast<int>(password.size()));
+    }
+    else
+    {
+        std::cerr << "-password or -keyfile is required" << std::endl;
+        return false;
+    }
+    if (authStatus != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "Authentication for " << user << " failed, status=" << authStatus << std::endl;
+        return false;
+    }
+    return true;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshFingerprint(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ISshManager* pSshManager)
+{
+    if (!setUpSshConnection(parser, pSshManager, false))
+    {
+        return 6;
+    }
+    char fingerprintBuffer[128];
+    int fingerprintSize = 0;
+    const int status = pSshManager->GetHostKeyFingerprint(sizeof(fingerprintBuffer), fingerprintBuffer, &fingerprintSize);
+    pSshManager->Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "GetHostKeyFingerprint failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << std::string(fingerprintBuffer, static_cast<std::size_t>(fingerprintSize)) << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshExec(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ISshManager* pSshManager)
+{
+    if (!setUpSshConnection(parser, pSshManager, true))
+    {
+        return 6;
+    }
+    const std::string command = parser.GetString("command", "");
+    char stdoutBuffer[16384];
+    int stdoutSize = 0;
+    char stderrBuffer[16384];
+    int stderrSize = 0;
+    int exitStatus = -1;
+    const int status = pSshManager->ExecuteCommand( command.c_str(), static_cast<int>(command.size()),
+                                                   sizeof(stdoutBuffer), stdoutBuffer, &stdoutSize,
+                                                   sizeof(stderrBuffer), stderrBuffer, &stderrSize, &exitStatus);
+    pSshManager->Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "ExecuteCommand failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << std::string(stdoutBuffer, static_cast<std::size_t>(stdoutSize));
+    std::cerr << std::string(stderrBuffer, static_cast<std::size_t>(stderrSize));
+    std::cerr << "exit status: " << exitStatus << std::endl;
+    return exitStatus;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshUpload(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ISshManager* pSshManager)
+{
+    if (!setUpSshConnection(parser, pSshManager, true))
+    {
+        return 6;
+    }
+    const std::string localPath = parser.GetString("local", "");
+    const std::string remotePath = parser.GetString("remote", "");
+    const int status = pSshManager->SftpUploadFile( localPath.c_str(), static_cast<int>(localPath.size()),
+                                                   remotePath.c_str(), static_cast<int>(remotePath.size()));
+    pSshManager->Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SftpUploadFile failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, uploaded " << localPath << " -> " << remotePath << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
+int runCliActionSshDownload(const CryptoApiNS::CCommandLineParser& parser, CryptoApiNS::ISshManager* pSshManager)
+{
+    if (!setUpSshConnection(parser, pSshManager, true))
+    {
+        return 6;
+    }
+    const std::string remotePath = parser.GetString("remote", "");
+    const std::string localPath = parser.GetString("local", "");
+    const int status = pSshManager->SftpDownloadFile( remotePath.c_str(), static_cast<int>(remotePath.size()),
+                                                     localPath.c_str(), static_cast<int>(localPath.size()));
+    pSshManager->Disconnect();
+    if (status != CryptoApiNS::NO_ERROR)
+    {
+        std::cerr << "SftpDownloadFile failed, status=" << status << std::endl;
+        return 1;
+    }
+    std::cout << "OK, downloaded " << remotePath << " -> " << localPath << std::endl;
+    return 0;
+}
+// -----------------------------------------------------------------------------
+
 // Defined at the bottom of this file (it's the exact sequence main() always ran unconditionally
 // before the CLI existed -- DLL load, native ICryptoApiTester suite, all 5 script engines' own
 // demo/test suites). Forward-declared here so runCliMode's "run-tests" action can reach it without
@@ -924,7 +1080,13 @@ int runCliActionListActions(void)
         "\n"
         "-keyhome varsayilani: .\\pgp-keyhome (verilmezse). [] iceki argumanlar opsiyonel (kendi varsayilanlari var).\n"
         "-cipher (ornek: AES256, AES192, AES, 3DES) her pgp-* aksiyonuna verilebilir (--personal-cipher-preferences), sadece encrypt/encrypt-symmetric'i etkiler.\n"
-        "-keyserver varsayilani: hkps://keys.openpgp.org (verilmezse). pgp-send-key/pgp-recv-key/pgp-refresh-keys gercek ag istegi atar (dirmngr).\n";
+        "-keyserver varsayilani: hkps://keys.openpgp.org (verilmezse). pgp-send-key/pgp-recv-key/pgp-refresh-keys gercek ag istegi atar (dirmngr).\n"
+        "\n"
+        "SSH (ISshManager, DLL uzerinden, libssh2 tabanli, Plan.md §27 v1 kapsami -- her aksiyon kendi icinde connect+auth+islem+disconnect yapan tek bir bagli cagri, kalici bir keyhome kavrami yok):\n"
+        "  ssh-fingerprint         -host HOST [-port PORT=22] [-timeout MS=10000]\n"
+        "  ssh-exec                -host HOST [-port PORT=22] -user USER (-password X | -keyfile YOL [-pubkeyfile YOL] [-passphrase X]) -command \"komut\" [-timeout MS]\n"
+        "  ssh-upload               -host HOST [-port PORT=22] -user USER (-password X | -keyfile YOL [...]) -local YOL -remote YOL [-timeout MS]\n"
+        "  ssh-download             -host HOST [-port PORT=22] -user USER (-password X | -keyfile YOL [...]) -remote YOL -local YOL [-timeout MS]\n";
     return 0;
 }
 // -----------------------------------------------------------------------------
@@ -1020,6 +1182,18 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
             dllLoader.DestroyPgpEngineWrapperObject(pWrapper);
         }
     }
+    else if (action == "ssh-fingerprint" || action == "ssh-exec" || action == "ssh-upload" || action == "ssh-download")
+    {
+        CryptoApiNS::ISshManager* pSshManager = dllLoader.GetSshManagerObject();
+        if (pSshManager != nullptr)
+        {
+            if (action == "ssh-fingerprint") { result = runCliActionSshFingerprint(parser, pSshManager); }
+            else if (action == "ssh-exec") { result = runCliActionSshExec(parser, pSshManager); }
+            else if (action == "ssh-upload") { result = runCliActionSshUpload(parser, pSshManager); }
+            else { result = runCliActionSshDownload(parser, pSshManager); }
+            dllLoader.DestroySshManagerObject(pSshManager);
+        }
+    }
     else
     {
         std::cerr << "Unknown or missing -action. Supported actions: version, hash, encrypt-string, "
@@ -1028,7 +1202,8 @@ int runCliMode(const CryptoApiNS::CCommandLineParser& parser)
                      "pgp-refresh-keys, pgp-encrypt, pgp-decrypt, pgp-sign, pgp-verify, "
                      "pgp-sign-encrypt, pgp-decrypt-verify, pgp-add-uid, pgp-revoke-uid, "
                      "pgp-set-primary-uid, pgp-add-key, pgp-set-expire, pgp-change-password, "
-                     "pgp-set-key-disabled, run-tests, list-actions (run -action "
+                     "pgp-set-key-disabled, ssh-fingerprint, ssh-exec, ssh-upload, ssh-download, "
+                     "run-tests, list-actions (run -action "
                      "list-actions for full usage)" << std::endl;
     }
 
@@ -1267,6 +1442,13 @@ int runAllTests()
                         pCryptoApiTester->RunTimestampVerifyTest();
 
                         pCryptoApiTester->RunTimestampTamperedDigestRejectionTest();
+
+                        // SSH (CSshManager, libssh2-backed, Plan.md §27 v1 scope).
+                        pCryptoApiTester->RunSshApiStateTest();
+
+                        pCryptoApiTester->RunSshConnectInvalidHostTest();
+
+                        pCryptoApiTester->RunSshLocalhostInteropTest();
 
                         pCryptoApiDllLoader->DestroyCryptoApiTesterObject(pCryptoApiTester);
                     }
@@ -2547,6 +2729,164 @@ int runAllTests()
             if (pScriptTimestampService)
             {
                 pCryptoApiDllLoader->DestroyTimestampServiceObject(pScriptTimestampService);
+            }
+
+            // Scripting via the DLL, continued: SSH facade (CScriptSshManagerDll) over the SAME
+            // loaded CryptoAPI.dll, same reduced-surface pattern CScriptSshManagerDll.h documents
+            // (8 of CScriptSshManager's 15 methods -- no SFTP, no public-key auth, no host-key
+            // pinning, "minimum needed for a meaningful demo"). Same pre-injected-global convention
+            // as certificateManager/cmsService/timestampService above (SetDllSshManager ->
+            // "sshManager"). Unlike those three, this demo needs a REAL SSH server to do anything
+            // meaningful, so it probes 127.0.0.1:22 first and reads CRYPTOAPI_SSH_TEST_USER/
+            // CRYPTOAPI_SSH_TEST_PASSWORD from the environment -- same SKIPPED-not-FAILED philosophy
+            // as RunSshLocalhostInteropTest (see CryptoApiTester.cpp) when neither is available.
+            CryptoApiNS::ISshManager* pScriptSshManager = pCryptoApiDllLoader->GetSshManagerObject();
+
+            if (pScriptSshManager)
+            {
+                std::cout << std::endl;
+
+                CryptoApiNS::CScriptSshManagerDll scriptSshManager(pScriptSshManager);
+
+                bool probeConnected = false;
+                try
+                {
+                    probeConnected = scriptSshManager.Connect("127.0.0.1", 22, 1500);
+                }
+                catch (...)
+                {
+                    probeConnected = false;
+                }
+                if (probeConnected)
+                {
+                    scriptSshManager.Disconnect();
+                }
+
+                char* envUserRaw = nullptr;
+                char* envPasswordRaw = nullptr;
+                _dupenv_s(&envUserRaw, nullptr, "CRYPTOAPI_SSH_TEST_USER");
+                _dupenv_s(&envPasswordRaw, nullptr, "CRYPTOAPI_SSH_TEST_PASSWORD");
+                const std::string envUser = (envUserRaw != nullptr) ? envUserRaw : std::string();
+                const std::string envPassword = (envPasswordRaw != nullptr) ? envPasswordRaw : std::string();
+                free(envUserRaw);
+                free(envPasswordRaw);
+
+                if (!probeConnected)
+                {
+                    std::cout << "DLL-hosted scripting SSH: SKIPPED (NOT a pass -- real SSH interop not exercised) no local SSH server on 127.0.0.1:22" << std::endl;
+                }
+                else if (envUser.empty() || envPassword.empty())
+                {
+                    std::cout << "DLL-hosted scripting SSH: SKIPPED (NOT a pass -- real SSH interop not exercised) local sshd found on 127.0.0.1:22 "
+                                  "but CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD not set" << std::endl;
+                }
+                else
+                {
+                    const std::string luaSshScript =
+                        "local connected = sshManager:Connect(\"127.0.0.1\", 22, 1500)\n"
+                        "local authed = false\n"
+                        "local output = \"\"\n"
+                        "if connected then\n"
+                        "    sshManager:AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\")\n"
+                        "    authed = sshManager:IsAuthenticated()\n"
+                        "    if authed then\n"
+                        "        output = sshManager:ExecuteCommand(\"echo cryptoapi-dllscript-ssh-test\")\n"
+                        "    end\n"
+                        "    sshManager:Disconnect()\n"
+                        "end\n"
+                        "ok = connected and authed and (#output > 0)\n";
+
+                    try
+                    {
+                        CryptoApiNS::CLuaScriptEngineSol luaEngine;
+                        luaEngine.SetDllSshManager(&scriptSshManager);
+                        luaEngine.RunString(luaSshScript);
+                        std::cout << "DLL-hosted scripting SSH (sol2): " << (luaEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting SSH (sol2): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    try
+                    {
+                        CryptoApiNS::CLuaScriptEngineLuaBridge luaBridgeEngine;
+                        luaBridgeEngine.SetDllSshManager(&scriptSshManager);
+                        luaBridgeEngine.RunString(luaSshScript);
+                        std::cout << "DLL-hosted scripting SSH (LuaBridge3): " << (luaBridgeEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting SSH (LuaBridge3): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    try
+                    {
+                        CryptoApiNS::CLuaScriptEngineLuaBridgeLegacy luaBridgeLegacyEngine;
+                        luaBridgeLegacyEngine.SetDllSshManager(&scriptSshManager);
+                        luaBridgeLegacyEngine.RunString(luaSshScript);
+                        std::cout << "DLL-hosted scripting SSH (LuaBridge 2.10): " << (luaBridgeLegacyEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting SSH (LuaBridge 2.10): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    const std::string chaiSshScript =
+                        "var connected = sshManager.Connect(\"127.0.0.1\", 22, 1500);\n"
+                        "var authed = false;\n"
+                        "var output = \"\";\n"
+                        "if (connected) {\n"
+                        "    sshManager.AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\");\n"
+                        "    authed = sshManager.IsAuthenticated();\n"
+                        "    if (authed) {\n"
+                        "        output = sshManager.ExecuteCommand(\"echo cryptoapi-dllscript-ssh-test\");\n"
+                        "    }\n"
+                        "    sshManager.Disconnect();\n"
+                        "}\n"
+                        "global ok = connected && authed && (output.size() > 0);\n";
+
+                    try
+                    {
+                        CryptoApiNS::CChaiScriptEngine chaiEngine;
+                        chaiEngine.SetDllSshManager(&scriptSshManager);
+                        chaiEngine.RunString(chaiSshScript);
+                        std::cout << "DLL-hosted scripting SSH (ChaiScript): " << (chaiEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting SSH (ChaiScript): FAILED exception " << ex.what() << std::endl;
+                    }
+
+                    const std::string pythonSshScript =
+                        "connected = sshManager.Connect(\"127.0.0.1\", 22, 1500)\n"
+                        "authed = False\n"
+                        "output = \"\"\n"
+                        "if connected:\n"
+                        "    sshManager.AuthenticatePassword(\"" + envUser + "\", \"" + envPassword + "\")\n"
+                        "    authed = sshManager.IsAuthenticated()\n"
+                        "    if authed:\n"
+                        "        output = sshManager.ExecuteCommand(\"echo cryptoapi-dllscript-ssh-test\")\n"
+                        "    sshManager.Disconnect()\n"
+                        "ok = connected and authed and (len(output) > 0)\n";
+
+                    try
+                    {
+                        CryptoApiNS::CPythonScriptEngine pythonEngine;
+                        pythonEngine.SetDllSshManager(&scriptSshManager);
+                        pythonEngine.RunString(pythonSshScript);
+                        std::cout << "DLL-hosted scripting SSH (Python): " << (pythonEngine.GetGlobalBool("ok") ? "PASSED" : "FAILED") << std::endl;
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        std::cout << "DLL-hosted scripting SSH (Python): FAILED exception " << ex.what() << std::endl;
+                    }
+                }
+            }
+
+            if (pScriptSshManager)
+            {
+                pCryptoApiDllLoader->DestroySshManagerObject(pScriptSshManager);
             }
         }
 

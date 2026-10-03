@@ -211,6 +211,14 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\DllLoader\CryptoApiDllLoader.h" />
     <ClInclude Include="..\..\..\src\Cli\CommandLineParser.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptException.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h" />
@@ -218,6 +226,7 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCmsServiceDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManagerDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h" />
@@ -235,6 +244,7 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCmsServiceDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManagerDll.cpp" />
     <!-- sol2's usertype/overload registration is template-heavy; /bigobj avoids hitting the COFF
          section-count limit, same precedent as AppBuilder.vcxproj's own identical entry. -->
     <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">

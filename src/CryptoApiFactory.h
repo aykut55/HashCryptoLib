@@ -8,6 +8,7 @@
 #include "Certificates/CertificateManager.h"
 #include "Certificates/CmsService.h"
 #include "Certificates/TimestampService.h"
+#include "Ssh/SshManager.h"
 
 // extern "C" DLL entry points resolved by CCryptoApiDllLoader via GetProcAddress (see
 // DllLoader/CryptoApiDllLoader.h) -- not part of the CryptoApiNS namespace since C linkage cannot
@@ -46,5 +47,10 @@ extern "C" CRYPTOAPI_API void						  DestroyCmsService(CryptoApiNS::ICmsService*
 
 extern "C" CRYPTOAPI_API CryptoApiNS::ITimestampService* CreateTimestampService(void);
 extern "C" CRYPTOAPI_API void						  DestroyTimestampService(CryptoApiNS::ITimestampService* pTimestampService);
+
+// Same reasoning, for CSshManager/ISshManager. Always default-constructs; CSshManager declares no
+// other constructor.
+extern "C" CRYPTOAPI_API CryptoApiNS::ISshManager* CreateSshManager(void);
+extern "C" CRYPTOAPI_API void					  DestroySshManager(CryptoApiNS::ISshManager* pSshManager);
 
 #endif

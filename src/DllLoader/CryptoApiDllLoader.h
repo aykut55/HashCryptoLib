@@ -24,6 +24,7 @@
 #include "Interfaces/ICertificateManager.h"
 #include "Interfaces/ICmsService.h"
 #include "Interfaces/ITimestampService.h"
+#include "Interfaces/ISshManager.h"
 //---------------------------------------------------------------------------
 
 namespace CryptoApiNS
@@ -45,6 +46,8 @@ class CCryptoApiDllLoader
     typedef void                 (*DestroyCmsServiceFunc)(ICmsService*);
     typedef ITimestampService*  (*CreateTimestampServiceFunc)();
     typedef void                 (*DestroyTimestampServiceFunc)(ITimestampService*);
+    typedef ISshManager*        (*CreateSshManagerFunc)();
+    typedef void                 (*DestroySshManagerFunc)(ISshManager*);
 
 public:
     virtual ~CCryptoApiDllLoader();
@@ -75,6 +78,9 @@ public:
     ITimestampService*   GetTimestampServiceObject();                                                    // Instance
     void                 DestroyTimestampServiceObject(ITimestampService* pTimestampService);            // Same reasoning as DestroyCryptoApiObject above.
 
+    ISshManager*         GetSshManagerObject();                                                           // Instance
+    void                 DestroySshManagerObject(ISshManager* pSshManager);                               // Same reasoning as DestroyCryptoApiObject above.
+
     void*             GetProcAddress(const char* functionName);                             // Resolves functionName's address in the DLL loaded by LoadLibrary() above; returns nullptr if
                                                                                             // LoadLibrary() has not succeeded yet, or the DLL has no export by that exact name.
 protected:
@@ -96,6 +102,8 @@ private:
     DestroyCmsServiceFunc DestroyCmsService;
     CreateTimestampServiceFunc CreateTimestampService;
     DestroyTimestampServiceFunc DestroyTimestampService;
+    CreateSshManagerFunc CreateSshManager;
+    DestroySshManagerFunc DestroySshManager;
     bool isLoaded;
     bool isUnloaded;
 };

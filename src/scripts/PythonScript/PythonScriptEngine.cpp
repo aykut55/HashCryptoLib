@@ -107,6 +107,7 @@ namespace py = pybind11;
 #include "../ScriptCertificateManagerDll.h"
 #include "../ScriptCmsServiceDll.h"
 #include "../ScriptTimestampServiceDll.h"
+#include "../ScriptSshManagerDll.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -119,6 +120,7 @@ namespace py = pybind11;
 #include "../ScriptCertificateManager.h"
 #include "../ScriptCmsService.h"
 #include "../ScriptTimestampService.h"
+#include "../ScriptSshManager.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
@@ -536,6 +538,25 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
             .def("VerifyTimestampResponse", &CScriptTimestampService::VerifyTimestampResponse)
             .def("GetTimestampInfoText", &CScriptTimestampService::GetTimestampInfoText)
             ;
+
+        py::class_<CScriptSshManager>(m, "SshManager")
+            .def(py::init<>())
+            .def("Connect", &CScriptSshManager::Connect)
+            .def("Disconnect", &CScriptSshManager::Disconnect)
+            .def("IsConnected", &CScriptSshManager::IsConnected)
+            .def("GetHostKeyFingerprint", &CScriptSshManager::GetHostKeyFingerprint)
+            .def("CheckKnownHost", &CScriptSshManager::CheckKnownHost)
+            .def("AddKnownHost", &CScriptSshManager::AddKnownHost)
+            .def("AuthenticatePassword", &CScriptSshManager::AuthenticatePassword)
+            .def("AuthenticatePublicKey", &CScriptSshManager::AuthenticatePublicKey)
+            .def("IsAuthenticated", &CScriptSshManager::IsAuthenticated)
+            .def("ExecuteCommand", &CScriptSshManager::ExecuteCommand)
+            .def("GetLastExecStderr", &CScriptSshManager::GetLastExecStderr)
+            .def("GetLastExecExitStatus", &CScriptSshManager::GetLastExecExitStatus)
+            .def("SftpUploadFile", &CScriptSshManager::SftpUploadFile)
+            .def("SftpDownloadFile", &CScriptSshManager::SftpDownloadFile)
+            .def("GetLastErrorMessage", &CScriptSshManager::GetLastErrorMessage)
+            ;
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -601,6 +622,17 @@ PYBIND11_EMBEDDED_MODULE(cryptoapi_native, m)
         .def("CreateTimestampRequest", &CScriptTimestampServiceDll::CreateTimestampRequest)
         .def("RequestTimestampFromTsa", &CScriptTimestampServiceDll::RequestTimestampFromTsa)
         .def("GetTimestampInfoText", &CScriptTimestampServiceDll::GetTimestampInfoText)
+        ;
+
+    py::class_<CScriptSshManagerDll>(m, "SshManagerDll")
+        .def("Connect", &CScriptSshManagerDll::Connect)
+        .def("Disconnect", &CScriptSshManagerDll::Disconnect)
+        .def("GetHostKeyFingerprint", &CScriptSshManagerDll::GetHostKeyFingerprint)
+        .def("AuthenticatePassword", &CScriptSshManagerDll::AuthenticatePassword)
+        .def("ExecuteCommand", &CScriptSshManagerDll::ExecuteCommand)
+        .def("GetLastExecStderr", &CScriptSshManagerDll::GetLastExecStderr)
+        .def("GetLastExecExitStatus", &CScriptSshManagerDll::GetLastExecExitStatus)
+        .def("GetLastErrorMessage", &CScriptSshManagerDll::GetLastErrorMessage)
         ;
 } // this closes the PYBIND11_EMBEDDED_MODULE function body opened at "PYBIND11_EMBEDDED_MODULE(
   // cryptoapi_native, m)\n{" above -- namespace CryptoApiNS itself, opened at the top of this
@@ -831,6 +863,19 @@ void CPythonScriptEngine::SetDllTimestampService(CScriptTimestampServiceDll* ser
 }
 // -----------------------------------------------------------------------------
 
+void CPythonScriptEngine::SetDllSshManager(CScriptSshManagerDll* manager)
+{
+    try
+    {
+        py::globals()["sshManager"] = py::cast(manager, py::return_value_policy::reference);
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
 } // namespace CryptoApiNS
 
 #else // !CRYPTOAPI_PYTHON_AVAILABLE
@@ -842,6 +887,7 @@ void CPythonScriptEngine::SetDllTimestampService(CScriptTimestampServiceDll* ser
 #include "../ScriptCertificateManagerDll.h"
 #include "../ScriptCmsServiceDll.h"
 #include "../ScriptTimestampServiceDll.h"
+#include "../ScriptSshManagerDll.h"
 
 namespace CryptoApiNS
 {
@@ -935,6 +981,12 @@ void CPythonScriptEngine::SetDllCmsService(CScriptCmsServiceDll* service)
 void CPythonScriptEngine::SetDllTimestampService(CScriptTimestampServiceDll* service)
 {
     (void)service;
+}
+// -----------------------------------------------------------------------------
+
+void CPythonScriptEngine::SetDllSshManager(CScriptSshManagerDll* manager)
+{
+    (void)manager;
 }
 // -----------------------------------------------------------------------------
 

@@ -14,6 +14,7 @@ class CScriptPgpEngineWrapperDll;
 class CScriptCertificateManagerDll;
 class CScriptCmsServiceDll;
 class CScriptTimestampServiceDll;
+class CScriptSshManagerDll;
 
 // Third scripting binding library over the same CScriptCryptoApi/CScriptPgpEngine/
 // CScriptPgpEngineWrapper facade layer the Lua engines use -- see registerBindings() in the .cpp
@@ -57,6 +58,7 @@ public:
     void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
     void SetDllCmsService(CScriptCmsServiceDll* service);
     void SetDllTimestampService(CScriptTimestampServiceDll* service);
+    void SetDllSshManager(CScriptSshManagerDll* manager);
 
 protected:
 

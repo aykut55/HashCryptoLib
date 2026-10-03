@@ -119,6 +119,8 @@
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <Link>
       <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libgcrypt-20-msvc.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -129,6 +131,15 @@
 xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\libgcryptbundle11241\bin\libgpg-error-0.dll" "$(OutDir)"
 call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(TargetName)" "CryptoAPI" "DELETE"</Command>
     </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- libssh2 (3rdParty\libssh21111, built by Ssh2.vcxproj below, OpenSSL crypto backend,
+       reuses the openssl402 include path already on the shared line above). Src/Ssh/SshManager.cpp
+       is the only file in this project that includes libssh2's own public headers. Platform-
+       independent (unlike the libgcrypt block above), so its own ItemDefinitionGroup. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\libssh21111\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
   </ItemDefinitionGroup>
   <!-- Win32 has no libgcrypt block above (it's x64-only), so it needs its own PostBuildEvent just
        for the product-named (CryptoAPI.*) copy step. -->
@@ -208,6 +219,8 @@ call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(
     <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h" />
+    <ClInclude Include="..\..\..\src\Ssh\SshManager.h" />
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
@@ -252,6 +265,8 @@ call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(
     <ClCompile Include="..\..\..\src\Interfaces\ICertificateManager.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ICmsService.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ISshManager.cpp" />
+    <ClCompile Include="..\..\..\src\Ssh\SshManager.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
@@ -297,6 +312,9 @@ call "$(ProjectDir)..\..\..\src\scripts\batch\rename_output.bat" "$(OutDir)" "$(
          intentionally not wired in). -->
     <ProjectReference Include="..\..\..\3rdParty\cryptopp890\cryptlib.vcxproj">
       <Project>{c39f4b46-6e89-4074-902e-ca57073044d2}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\..\3rdParty\libssh21111\Ssh2.vcxproj">
+      <Project>{9c1d4e7a-2b6f-4a3c-8e5d-1f7a9c3b6d20}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\..\3rdParty\openssl402\openssl.vcxproj">
       <Project>{5e6a1e2d-8c3f-4d4a-9b1e-2f7a6c9d0e11}</Project>

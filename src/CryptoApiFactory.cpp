@@ -181,3 +181,29 @@ void DestroyTimestampService(CryptoApiNS::ITimestampService* pTimestampService)
     }
 }
 // -----------------------------------------------------------------------------
+
+CryptoApiNS::ISshManager* CreateSshManager(void)
+{
+    try
+    {
+        return new CryptoApiNS::CSshManager();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+// -----------------------------------------------------------------------------
+
+void DestroySshManager(CryptoApiNS::ISshManager* pSshManager)
+{
+    try
+    {
+        delete pSshManager;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------

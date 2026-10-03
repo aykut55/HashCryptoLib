@@ -434,6 +434,12 @@ public:
 
     virtual int RunTimestampTamperedDigestRejectionTest(void) = 0;
 
+    // SSH (CSshManager, libssh2-backed) -- see CryptoApiTester.h's own doc comments for what each
+    // exercises.
+    virtual int RunSshApiStateTest(void) = 0;
+    virtual int RunSshConnectInvalidHostTest(void) = 0;
+    virtual int RunSshLocalhostInteropTest(void) = 0;
+
 protected:
 
 private:

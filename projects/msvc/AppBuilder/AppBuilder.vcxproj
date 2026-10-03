@@ -98,6 +98,14 @@
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\scripts\lua547\src;$(ProjectDir)..\..\..\3rdParty\scripts\sol330;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
+  <!-- libssh2 (3rdParty\libssh21111, built by Ssh2.vcxproj below, OpenSSL crypto backend,
+       reuses the openssl402 include path already on the shared line above). Src/Ssh/SshManager.cpp
+       is the only file in this project that includes libssh2's own public headers. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\..\3rdParty\libssh21111\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <!-- LuaBridge3 (3rdParty\scripts\luaBridge30\Distribution\LuaBridge\LuaBridge.h, amalgamated) and
        classic LuaBridge 2.10 (3rdParty\scripts\luaBridge210\Source\LuaBridge\LuaBridge.h, plain
        header set) both publish a header at the SAME relative path "LuaBridge/LuaBridge.h": adding
@@ -255,6 +263,8 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h" />
+    <ClInclude Include="..\..\..\src\Ssh\SshManager.h" />
     <ClInclude Include="..\..\..\src\CryptoApiFactory.h" />
     <ClInclude Include="..\..\..\src\CryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Utils\Utils.h" />
@@ -296,12 +306,14 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManager.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCmsService.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampService.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManager.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCmsServiceDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManagerDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptEngineTester.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
@@ -318,6 +330,8 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Interfaces\ICertificateManager.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ICmsService.cpp" />
     <ClCompile Include="..\..\..\src\Interfaces\ITimestampService.cpp" />
+    <ClCompile Include="..\..\..\src\Interfaces\ISshManager.cpp" />
+    <ClCompile Include="..\..\..\src\Ssh\SshManager.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiFactory.cpp" />
     <ClCompile Include="..\..\..\src\CryptoApiTester.cpp" />
     <ClCompile Include="..\..\..\src\Utils\Utils.cpp" />
@@ -356,12 +370,14 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManager.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCmsService.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampService.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManager.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCmsServiceDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManagerDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptEngineTester.cpp" />
     <!-- sol2's usertype/overload registration for CryptoApi/PgpEngine/PgpEngineWrapper's many
          methods generates a large number of sections; /bigobj avoids hitting the COFF section-count
@@ -421,6 +437,11 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
          pattern as cryptlib.vcxproj above. -->
     <ProjectReference Include="..\..\..\3rdParty\scripts\lua547\Lua547.vcxproj">
       <Project>{7f3e9a2c-4b1d-4e6a-9c8f-2d5b6a7e1f30}</Project>
+    </ProjectReference>
+    <!-- Builds Ssh2.lib automatically (if missing/stale) and links it in, same auto-linking
+         pattern as cryptlib.vcxproj/Lua547.vcxproj above. -->
+    <ProjectReference Include="..\..\..\3rdParty\libssh21111\Ssh2.vcxproj">
+      <Project>{9c1d4e7a-2b6f-4a3c-8e5d-1f7a9c3b6d20}</Project>
     </ProjectReference>
     <!-- Makefile-type project (see 3rdParty\openssl402\openssl.vcxproj); this only orders the
          build so libcrypto.lib exists first. It does not auto-link like a normal ProjectReference

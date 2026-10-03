@@ -14,6 +14,7 @@ class CScriptPgpEngineWrapperDll;
 class CScriptCertificateManagerDll;
 class CScriptCmsServiceDll;
 class CScriptTimestampServiceDll;
+class CScriptSshManagerDll;
 
 // Owns one sol2 Lua state and exposes CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper
 // (plus their algorithm enums) to it -- see registerBindings() in the .cpp for the exact binding
@@ -60,6 +61,7 @@ public:
     void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
     void SetDllCmsService(CScriptCmsServiceDll* service);
     void SetDllTimestampService(CScriptTimestampServiceDll* service);
+    void SetDllSshManager(CScriptSshManagerDll* manager);
 
     // Second, independently-named DLL-hosted ICryptoApi global ("cryptoApiBob") -- grown on demand
     // (2026-09-26) so a script can exercise a real two-party key-agreement exchange against two

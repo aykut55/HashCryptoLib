@@ -25,6 +25,9 @@
     <Filter Include="src\Utils">
       <UniqueIdentifier>{6F4AB120-A99D-4B03-9157-3CC920F76719}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Interfaces">
+      <UniqueIdentifier>{3D8E1A2B-7C4F-4E6A-8B9D-2F1C3A4E5B61}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Scripts">
       <UniqueIdentifier>{1a2b3c4d-5e6f-4718-9203-1a2b3c4d5e71}</UniqueIdentifier>
     </Filter>
@@ -72,6 +75,9 @@
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.cpp">
       <Filter>src\Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManagerDll.cpp">
+      <Filter>src\Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">
       <Filter>src\Scripts\LuaScript</Filter>
     </ClCompile>
@@ -98,6 +104,30 @@
     <ClInclude Include="..\..\..\src\Utils\Utils.h">
       <Filter>src\Utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h">
+      <Filter>src\Interfaces</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptException.h">
       <Filter>src\Scripts</Filter>
     </ClInclude>
@@ -117,6 +147,9 @@
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.h">
+      <Filter>src\Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManagerDll.h">
       <Filter>src\Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h">

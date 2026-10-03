@@ -17,6 +17,7 @@ class CScriptPgpEngineWrapperDll;
 class CScriptCertificateManagerDll;
 class CScriptCmsServiceDll;
 class CScriptTimestampServiceDll;
+class CScriptSshManagerDll;
 
 // Classic LuaBridge (2.10, github.com/vinniefalco/LuaBridge) counterpart to
 // CLuaScriptEngineLuaBridge (LuaBridge3) -- same purpose (compare a third, older binding library
@@ -70,6 +71,7 @@ public:
     void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
     void SetDllCmsService(CScriptCmsServiceDll* service);
     void SetDllTimestampService(CScriptTimestampServiceDll* service);
+    void SetDllSshManager(CScriptSshManagerDll* manager);
 
 protected:
 

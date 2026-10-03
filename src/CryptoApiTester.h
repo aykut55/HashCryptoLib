@@ -1138,6 +1138,26 @@ public:
     // timestamped -- expects TIMESTAMP_VERIFICATION_TAMPERED_DIGEST.
     int RunTimestampTamperedDigestRejectionTest(void) override;
 
+    // ============================================================================================
+    // SSH (CSshManager, libssh2-backed, Plan.md §27 v1 scope).
+    // ============================================================================================
+
+    // Internal-only (no network needed): every Connect-requiring/auth-requiring method on a fresh
+    // instance correctly returns INVALID_ARGUMENT, Disconnect()/GetLastErrorMessage() on a
+    // never-connected instance behave as documented (no-op / empty).
+    int RunSshApiStateTest(void) override;
+
+    // Connects to 127.0.0.1 on a port nothing listens on (deterministic TCP RST, no real network
+    // dependency) -- asserts Connect fails and IsConnected stays false.
+    int RunSshConnectInvalidHostTest(void) override;
+
+    // Flagship real-interop test: SKIPPED (not FAILED) if nothing listens on 127.0.0.1:22, or if
+    // CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD aren't set, same philosophy as the
+    // RFC3161/keyserver network tests above -- otherwise exercises a full Connect + host-key
+    // fingerprint + password auth + ExecuteCommand + SFTP upload/download round trip against a
+    // real local sshd.
+    int RunSshLocalhostInteropTest(void) override;
+
 protected:
 
 private:

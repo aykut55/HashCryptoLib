@@ -17,6 +17,7 @@ class CScriptPgpEngineWrapperDll;
 class CScriptCertificateManagerDll;
 class CScriptCmsServiceDll;
 class CScriptTimestampServiceDll;
+class CScriptSshManagerDll;
 
 // LuaBridge3 counterpart to CLuaScriptEngine -- exposes the exact same script-facing surface
 // (CScriptCryptoApi/CScriptPgpEngine/CScriptPgpEngineWrapper usertypes, the same 14 algorithm
@@ -62,6 +63,7 @@ public:
     void SetDllCertificateManager(CScriptCertificateManagerDll* manager);
     void SetDllCmsService(CScriptCmsServiceDll* service);
     void SetDllTimestampService(CScriptTimestampServiceDll* service);
+    void SetDllSshManager(CScriptSshManagerDll* manager);
 
 protected:
 

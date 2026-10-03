@@ -6,6 +6,7 @@
 #include "../ScriptCertificateManagerDll.h"
 #include "../ScriptCmsServiceDll.h"
 #include "../ScriptTimestampServiceDll.h"
+#include "../ScriptSshManagerDll.h"
 
 // DLL_RUNNER (defined by DllRunner.vcxproj's PreprocessorDefinitions) skips every include/
 // registration below that would otherwise pull in CCryptoApi/CPgpEngine/CPgpEngineWrapper's own
@@ -20,6 +21,7 @@
 #include "../ScriptCertificateManager.h"
 #include "../ScriptCmsService.h"
 #include "../ScriptTimestampService.h"
+#include "../ScriptSshManager.h"
 
 #include "Providers/ProviderTypes.h"
 #include "Pgp/PgpEngine.h"
@@ -483,6 +485,28 @@ void CLuaScriptEngineSol::registerBindings(void)
         "VerifyTimestampResponse", &CScriptTimestampService::VerifyTimestampResponse,
         "GetTimestampInfoText", &CScriptTimestampService::GetTimestampInfoText
     );
+
+    // SshHostKeyCheckResult values are passed/returned as plain int here (see
+    // CScriptSshManager.h's own header comment, same reasoning as the four Certificate enums
+    // above).
+    luaState_.new_usertype<CScriptSshManager>("SshManager",
+        sol::constructors<CScriptSshManager()>(),
+        "Connect", &CScriptSshManager::Connect,
+        "Disconnect", &CScriptSshManager::Disconnect,
+        "IsConnected", &CScriptSshManager::IsConnected,
+        "GetHostKeyFingerprint", &CScriptSshManager::GetHostKeyFingerprint,
+        "CheckKnownHost", &CScriptSshManager::CheckKnownHost,
+        "AddKnownHost", &CScriptSshManager::AddKnownHost,
+        "AuthenticatePassword", &CScriptSshManager::AuthenticatePassword,
+        "AuthenticatePublicKey", &CScriptSshManager::AuthenticatePublicKey,
+        "IsAuthenticated", &CScriptSshManager::IsAuthenticated,
+        "ExecuteCommand", &CScriptSshManager::ExecuteCommand,
+        "GetLastExecStderr", &CScriptSshManager::GetLastExecStderr,
+        "GetLastExecExitStatus", &CScriptSshManager::GetLastExecExitStatus,
+        "SftpUploadFile", &CScriptSshManager::SftpUploadFile,
+        "SftpDownloadFile", &CScriptSshManager::SftpDownloadFile,
+        "GetLastErrorMessage", &CScriptSshManager::GetLastErrorMessage
+    );
 #endif // !DLL_RUNNER
 
     // DLL-hosted facades (CScriptCryptoApiDll/CScriptPgpEngineDll/CScriptPgpEngineWrapperDll) --
@@ -553,6 +577,18 @@ void CLuaScriptEngineSol::registerBindings(void)
         "CreateTimestampRequest", &CScriptTimestampServiceDll::CreateTimestampRequest,
         "RequestTimestampFromTsa", &CScriptTimestampServiceDll::RequestTimestampFromTsa,
         "GetTimestampInfoText", &CScriptTimestampServiceDll::GetTimestampInfoText
+    );
+
+    luaState_.new_usertype<CScriptSshManagerDll>("SshManagerDll",
+        sol::no_constructor,
+        "Connect", &CScriptSshManagerDll::Connect,
+        "Disconnect", &CScriptSshManagerDll::Disconnect,
+        "GetHostKeyFingerprint", &CScriptSshManagerDll::GetHostKeyFingerprint,
+        "AuthenticatePassword", &CScriptSshManagerDll::AuthenticatePassword,
+        "ExecuteCommand", &CScriptSshManagerDll::ExecuteCommand,
+        "GetLastExecStderr", &CScriptSshManagerDll::GetLastExecStderr,
+        "GetLastExecExitStatus", &CScriptSshManagerDll::GetLastExecExitStatus,
+        "GetLastErrorMessage", &CScriptSshManagerDll::GetLastErrorMessage
     );
 }
 // -----------------------------------------------------------------------------
@@ -640,6 +676,19 @@ void CLuaScriptEngineSol::SetDllTimestampService(CScriptTimestampServiceDll* ser
     try
     {
         luaState_["timestampService"] = service;
+    }
+    catch (...)
+    {
+
+    }
+}
+// -----------------------------------------------------------------------------
+
+void CLuaScriptEngineSol::SetDllSshManager(CScriptSshManagerDll* manager)
+{
+    try
+    {
+        luaState_["sshManager"] = manager;
     }
     catch (...)
     {

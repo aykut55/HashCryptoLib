@@ -7,6 +7,7 @@
 #include "Certificates/CertificateManager.h"
 #include "Certificates/CmsService.h"
 #include "Certificates/TimestampService.h"
+#include "Ssh/SshManager.h"
 #include "Providers/CryptoProviderRegistry.h"
 #include "Utils/Utils.h"
 
@@ -39,6 +40,7 @@
 #include <chrono>
 #include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -25776,6 +25778,247 @@ int CCryptoApiTester::RunTimestampTamperedDigestRejectionTest(void)
         }
 
         std::cout << "RunTimestampTamperedDigestRejectionTest: PASSED" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// -- SSH (CSshManager, libssh2-backed) -- Plan.md §27's v1 scope: connect/host-key/auth/exec/SFTP.
+// RunSshLocalhostInteropTest is the flagship real-interop test (SKIPPED, not FAILED, if nothing
+// listens on 127.0.0.1:22 -- same philosophy as the RFC3161/keyserver network tests above); the
+// other two need no server at all and always run as hard PASS/FAIL.
+
+int CCryptoApiTester::RunSshApiStateTest(void)
+{
+    try
+    {
+        CSshManager sshManager;
+        if (sshManager.IsConnected())
+        {
+            std::cout << "RunSshApiStateTest: FAILED fresh instance unexpectedly reports IsConnected" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        if (sshManager.IsAuthenticated())
+        {
+            std::cout << "RunSshApiStateTest: FAILED fresh instance unexpectedly reports IsAuthenticated" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        char fingerprintBuffer[128];
+        int fingerprintSize = 0;
+        int status = sshManager.GetHostKeyFingerprint(sizeof(fingerprintBuffer), fingerprintBuffer, &fingerprintSize);
+        if (status != INVALID_ARGUMENT)
+        {
+            std::cout << "RunSshApiStateTest: FAILED GetHostKeyFingerprint before Connect status=" << status << " (expected INVALID_ARGUMENT)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* fakeUser = "nobody";
+        const char* fakePassword = "irrelevant";
+        status = sshManager.AuthenticatePassword(fakeUser, static_cast<int>(std::strlen(fakeUser)), fakePassword, static_cast<int>(std::strlen(fakePassword)));
+        if (status != INVALID_ARGUMENT)
+        {
+            std::cout << "RunSshApiStateTest: FAILED AuthenticatePassword before Connect status=" << status << " (expected INVALID_ARGUMENT)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* fakeCommand = "echo hi";
+        char stdoutBuffer[256];
+        int stdoutSize = 0;
+        char stderrBuffer[256];
+        int stderrSize = 0;
+        int exitStatus = -1;
+        status = sshManager.ExecuteCommand( fakeCommand, static_cast<int>(std::strlen(fakeCommand)),
+                                           sizeof(stdoutBuffer), stdoutBuffer, &stdoutSize,
+                                           sizeof(stderrBuffer), stderrBuffer, &stderrSize, &exitStatus);
+        if (status != INVALID_ARGUMENT)
+        {
+            std::cout << "RunSshApiStateTest: FAILED ExecuteCommand before auth status=" << status << " (expected INVALID_ARGUMENT)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // Disconnect() on an instance that never connected is a documented no-op, not an error --
+        // same idempotent-teardown convention CPgpEngineWrapper's own DeleteOwnIdentity etc. follow.
+        status = sshManager.Disconnect();
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunSshApiStateTest: FAILED Disconnect on never-connected instance status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        char errorBuffer[256];
+        int errorSize = 0;
+        status = sshManager.GetLastErrorMessage(sizeof(errorBuffer), errorBuffer, &errorSize);
+        if (status != NO_ERROR || errorSize != 0)
+        {
+            std::cout << "RunSshApiStateTest: FAILED GetLastErrorMessage on fresh instance status=" << status << " size=" << errorSize << " (expected empty)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunSshApiStateTest: PASSED every pre-Connect/pre-auth method correctly rejected, Disconnect/GetLastErrorMessage behave as documented" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunSshConnectInvalidHostTest(void)
+{
+    try
+    {
+        CSshManager sshManager;
+        // Port 1 ("tcpmux") on loopback is vanishingly unlikely to have a real listener on any
+        // test machine -- the OS itself replies with an immediate TCP RST (connection actively
+        // refused), so this needs no network access and completes almost instantly regardless of
+        // the timeoutMs value passed.
+        const char* host = "127.0.0.1";
+        const int status = sshManager.Connect(host, static_cast<int>(std::strlen(host)), 1, 2000);
+        if (status == NO_ERROR)
+        {
+            std::cout << "RunSshConnectInvalidHostTest: FAILED Connect to 127.0.0.1:1 unexpectedly succeeded" << std::endl;
+            sshManager.Disconnect();
+            return UNEXPECTED_ERROR;
+        }
+        if (sshManager.IsConnected())
+        {
+            std::cout << "RunSshConnectInvalidHostTest: FAILED IsConnected is true after a failed Connect" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunSshConnectInvalidHostTest: PASSED Connect to a refusing port correctly failed (status=" << status << ")" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CCryptoApiTester::RunSshLocalhostInteropTest(void)
+{
+    try
+    {
+        // Probe for a real SSH server on the standard port before attempting anything else --
+        // SKIPPED (not FAILED) if none is listening, same philosophy as the RFC3161/keyserver
+        // network tests above. Reads the test machine's own expected credentials from environment
+        // variables (never hardcoded) so this can be wired up against a real local sshd (e.g.
+        // Windows' own optional OpenSSH Server feature) without committing any secret.
+        CSshManager probeManager;
+        const char* host = "127.0.0.1";
+        int status = probeManager.Connect(host, static_cast<int>(std::strlen(host)), 22, 1500);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunSshLocalhostInteropTest: SKIPPED (NOT a pass -- real SSH interop not exercised) no local SSH server on 127.0.0.1:22" << std::endl;
+            return NO_ERROR;
+        }
+
+        char fingerprintBuffer[128];
+        int fingerprintSize = 0;
+        status = probeManager.GetHostKeyFingerprint(sizeof(fingerprintBuffer), fingerprintBuffer, &fingerprintSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED GetHostKeyFingerprint status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string fingerprintHex(fingerprintBuffer, static_cast<std::size_t>(fingerprintSize));
+        if (fingerprintHex.size() != 64)
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED fingerprint length=" << fingerprintHex.size() << " (expected 64 hex chars)" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // _dupenv_s, not std::getenv -- this project's own /sdl compiler setting bans getenv
+        // outright (MSVC's SDL banned-API list, independent of _CRT_SECURE_NO_WARNINGS), so every
+        // other environment-variable read in this codebase already uses the secure-CRT form.
+        char* envUserRaw = nullptr;
+        char* envPasswordRaw = nullptr;
+        _dupenv_s(&envUserRaw, nullptr, "CRYPTOAPI_SSH_TEST_USER");
+        _dupenv_s(&envPasswordRaw, nullptr, "CRYPTOAPI_SSH_TEST_PASSWORD");
+        const std::string envUser = (envUserRaw != nullptr) ? envUserRaw : std::string();
+        const std::string envPassword = (envPasswordRaw != nullptr) ? envPasswordRaw : std::string();
+        free(envUserRaw);
+        free(envPasswordRaw);
+        if (envUser.empty() || envPassword.empty())
+        {
+            std::cout << "RunSshLocalhostInteropTest: SKIPPED (NOT a pass -- real SSH interop not exercised) local sshd found on 127.0.0.1:22 "
+                          "but CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD not set" << std::endl;
+            return NO_ERROR;
+        }
+
+        status = probeManager.AuthenticatePassword(envUser.c_str(), static_cast<int>(envUser.size()), envPassword.c_str(), static_cast<int>(envPassword.size()));
+        if (status != NO_ERROR || !probeManager.IsAuthenticated())
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED AuthenticatePassword status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* command = "echo cryptoapi-ssh-test";
+        char stdoutBuffer[256];
+        int stdoutSize = 0;
+        char stderrBuffer[256];
+        int stderrSize = 0;
+        int exitStatus = -1;
+        status = probeManager.ExecuteCommand( command, static_cast<int>(std::strlen(command)),
+                                             sizeof(stdoutBuffer), stdoutBuffer, &stdoutSize,
+                                             sizeof(stderrBuffer), stderrBuffer, &stderrSize, &exitStatus);
+        if (status != NO_ERROR || exitStatus != 0)
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED ExecuteCommand status=" << status << " exitStatus=" << exitStatus << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+        const std::string stdoutText(stdoutBuffer, static_cast<std::size_t>(stdoutSize));
+        if (stdoutText.find("cryptoapi-ssh-test") == std::string::npos)
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED unexpected stdout=\"" << stdoutText << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // SFTP round trip: upload a small known buffer, then download it back and compare.
+        const std::string localUploadPath = "cryptoapi_ssh_test_upload.bin";
+        const std::string remotePath = "cryptoapi_ssh_test_remote.bin";
+        const std::string localDownloadPath = "cryptoapi_ssh_test_download.bin";
+        const std::string payload = "CryptoAPI SSH SFTP round-trip test payload";
+        {
+            std::ofstream uploadFile(localUploadPath, std::ios::binary | std::ios::trunc);
+            uploadFile << payload;
+        }
+        status = probeManager.SftpUploadFile( localUploadPath.c_str(), static_cast<int>(localUploadPath.size()),
+                                             remotePath.c_str(), static_cast<int>(remotePath.size()));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED SftpUploadFile status=" << status << std::endl;
+            std::remove(localUploadPath.c_str());
+            return UNEXPECTED_ERROR;
+        }
+        status = probeManager.SftpDownloadFile( remotePath.c_str(), static_cast<int>(remotePath.size()),
+                                               localDownloadPath.c_str(), static_cast<int>(localDownloadPath.size()));
+        std::remove(localUploadPath.c_str());
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED SftpDownloadFile status=" << status << std::endl;
+            std::remove(localDownloadPath.c_str());
+            return UNEXPECTED_ERROR;
+        }
+
+        std::ifstream downloadFile(localDownloadPath, std::ios::binary);
+        const std::string downloadedPayload((std::istreambuf_iterator<char>(downloadFile)), std::istreambuf_iterator<char>());
+        std::remove(localDownloadPath.c_str());
+        if (downloadedPayload != payload)
+        {
+            std::cout << "RunSshLocalhostInteropTest: FAILED SFTP round-trip payload mismatch, got \"" << downloadedPayload << "\"" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        probeManager.Disconnect();
+        std::cout << "RunSshLocalhostInteropTest: PASSED connect+host-key-fingerprint+password-auth+exec+SFTP round trip against a real local sshd" << std::endl;
         return NO_ERROR;
     }
     catch (...)

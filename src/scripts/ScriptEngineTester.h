@@ -46,6 +46,13 @@ public:
     // for why algorithm/mode parameters are plain ints here rather than named enum constants.
     int RunLuaScriptCertificateTest(void);
 
+    // SSH (CSshManager via CScriptSshManager) connect+authenticate+exec round trip via sol2.
+    // Needs a REAL SSH server to do anything meaningful, so this probes 127.0.0.1:22 first and
+    // reads CRYPTOAPI_SSH_TEST_USER/CRYPTOAPI_SSH_TEST_PASSWORD from the environment -- SKIPPED
+    // (NOT a pass), not FAILED, when neither is available, same philosophy as
+    // CCryptoApiTester::RunSshLocalhostInteropTest.
+    int RunLuaScriptSshManagerTest(void);
+
     int RunLuaBridgeScriptHashTest(void);
     int RunLuaBridgeScriptEncryptDecryptTest(void);
     int RunLuaBridgeScriptAsymmetricTest(void);
@@ -62,6 +69,9 @@ public:
     // LuaBridge3 mirror of RunLuaScriptCertificateTest -- manual string.byte table building
     // instead of ToBytes(), same reasoning as every other RunLuaBridgeScript*Test.
     int RunLuaBridgeScriptCertificateTest(void);
+
+    // LuaBridge3 mirror of RunLuaScriptSshManagerTest.
+    int RunLuaBridgeScriptSshManagerTest(void);
 
     int RunLuaBridgeLegacyScriptHashTest(void);
     int RunLuaBridgeLegacyScriptEncryptDecryptTest(void);
@@ -83,6 +93,9 @@ public:
     // TimestampService registration block).
     int RunLuaBridgeLegacyScriptCertificateTest(void);
 
+    // LuaBridge 2.10 mirror of RunLuaScriptSshManagerTest.
+    int RunLuaBridgeLegacyScriptSshManagerTest(void);
+
     int RunChaiScriptHashTest(void);
     int RunChaiScriptEncryptDecryptTest(void);
     int RunChaiScriptAsymmetricTest(void);
@@ -99,6 +112,9 @@ public:
     // ChaiScript mirror of RunLuaScriptCertificateTest.
     int RunChaiScriptCertificateTest(void);
 
+    // ChaiScript mirror of RunLuaScriptSshManagerTest.
+    int RunChaiScriptSshManagerTest(void);
+
     int RunPythonScriptHashTest(void);
     int RunPythonScriptEncryptDecryptTest(void);
     int RunPythonScriptAsymmetricTest(void);
@@ -114,6 +130,9 @@ public:
 
     // pybind11 mirror of RunLuaScriptCertificateTest.
     int RunPythonScriptCertificateTest(void);
+
+    // pybind11 mirror of RunLuaScriptSshManagerTest.
+    int RunPythonScriptSshManagerTest(void);
 
 protected:
 

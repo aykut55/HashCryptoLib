@@ -133,7 +133,7 @@
   <ItemDefinitionGroup>
     <Link>
       <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\3rdParty\cryptopp890\$(Platform)\Output\$(Configuration);$(ProjectDir)..\..\..\3rdParty\openssl402\_libs\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>cryptlib.lib;libcrypto.lib;Lua547.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;winhttp.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>cryptlib.lib;libcrypto.lib;Lua547.lib;Ssh2.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib;winhttp.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <!-- Same LNK4099 (missing OpenSSL PDB) silencing as AppBuilder/DllBuilder. -->
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
@@ -165,6 +165,12 @@
          this same project). -->
     <ProjectReference Include="..\..\..\3rdParty\scripts\lua547\Lua547.vcxproj">
       <Project>{7f3e9a2c-4b1d-4e6a-9c8f-2d5b6a7e1f30}</Project>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+    <!-- Build-ordering + explicit AdditionalDependencies entry (Ssh2.lib above), same
+         LinkLibraryDependencies=false style as this project's other references. -->
+    <ProjectReference Include="..\..\..\3rdParty\libssh21111\Ssh2.vcxproj">
+      <Project>{9c1d4e7a-2b6f-4a3c-8e5d-1f7a9c3b6d20}</Project>
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
   </ItemGroup>
@@ -270,8 +276,13 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
   <ItemGroup>
     <ClInclude Include="..\..\..\src\Cli\CommandLineParser.h" />
     <ClInclude Include="..\..\..\src\Interfaces\ICryptoApi.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICryptoApiTester.h" />
     <ClInclude Include="..\..\..\src\Interfaces\IPgpEngine.h" />
     <ClInclude Include="..\..\..\src\Interfaces\IPgpEngineWrapper.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICertificateManager.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ICmsService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ITimestampService.h" />
+    <ClInclude Include="..\..\..\src\Interfaces\ISshManager.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptException.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApi.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngine.h" />
@@ -279,12 +290,14 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManager.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCmsService.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampService.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManager.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCryptoApiDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptCmsServiceDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.h" />
+    <ClInclude Include="..\..\..\src\Scripts\ScriptSshManagerDll.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridge.h" />
     <ClInclude Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineLuaBridgeLegacy.h" />
@@ -305,12 +318,14 @@ xcopy /Y /D /Q "$(ProjectDir)..\..\..\3rdParty\scripts\python312\bin\python312.z
     <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManager.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCmsService.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampService.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManager.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCryptoApiDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptPgpEngineWrapperDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCertificateManagerDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptCmsServiceDll.cpp" />
     <ClCompile Include="..\..\..\src\Scripts\ScriptTimestampServiceDll.cpp" />
+    <ClCompile Include="..\..\..\src\Scripts\ScriptSshManagerDll.cpp" />
     <!-- sol2's usertype/overload registration is template-heavy; /bigobj avoids hitting the COFF
          section-count limit, same precedent as AppBuilder.vcxproj/DllRunner.vcxproj's own entry. -->
     <ClCompile Include="..\..\..\src\Scripts\LuaScript\LuaScriptEngineSol.cpp">
