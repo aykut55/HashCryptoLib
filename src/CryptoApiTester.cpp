@@ -23221,6 +23221,262 @@ int CCryptoApiTester::RunPgpGnuPgChangePasswordInteropTest(void)
 }
 // -----------------------------------------------------------------------------
 
+int CCryptoApiTester::RunPgpNativeSignSubkeyTest(void)
+{
+    try
+    {
+        // --- Part 1: RSA family -- a sign-flagged (0x02) subkey must actually be used by
+        // SignBuffer (issuer Key ID == subkey's, not master's), and a peer's VerifyBuffer must
+        // still verify it via selectPeerVerificationKeyMaterial's issuer-based subkey lookup. ---
+        {
+            CPgpEngine alice;
+            const char* userId = "Sign Subkey RSA <signsubkeyrsa@example.com>";
+            const char* password = "SignSubkeyRsaTest-1";
+            int status = alice.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED GenerateKeyPair(RSA) status=" << status << std::endl;
+                return status;
+            }
+
+            status = alice.AddSubkey(password, static_cast<int>(std::strlen(password)), 0x02, 0);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED AddSubkey(RSA, sign) status=" << status << std::endl;
+                return status;
+            }
+
+            // GenerateKeyPair already seeds ownSubkeys with ONE entry (its own default encrypt
+            // subkey, mirroring the flat ownSubkeyKeyId field) -- the new sign subkey AddSubkey
+            // just appended is therefore the LAST index, not 0.
+            const int rsaSignSubkeyIndex = alice.GetSubkeyCount() - 1;
+            if (rsaSignSubkeyIndex < 1)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED GetSubkeyCount(RSA)=" << (rsaSignSubkeyIndex + 1) << " expected >= 2" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+            char masterKeyId[17];
+            alice.GetKeyId(masterKeyId, sizeof(masterKeyId));
+            char subkeyKeyId[17];
+            alice.GetSubkeyKeyId(rsaSignSubkeyIndex, subkeyKeyId, sizeof(subkeyKeyId));
+            if (std::strcmp(masterKeyId, subkeyKeyId) == 0)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED RSA master and sign-subkey unexpectedly share a Key ID" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            const unsigned char plaintext[] = "sign-subkey RSA round trip";
+            unsigned char sigPacket[4096];
+            int sigPacketSize = 0;
+            status = alice.SignBuffer(password, static_cast<int>(std::strlen(password)), plaintext, static_cast<int>(sizeof(plaintext) - 1), sizeof(sigPacket), sigPacket, &sigPacketSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED SignBuffer(RSA) status=" << status << std::endl;
+                return status;
+            }
+
+            char issuerRecords[256];
+            int issuerRecordsSize = 0;
+            int issuerCount = 0;
+            status = alice.ListSigningKeyIds(sigPacket, sigPacketSize, sizeof(issuerRecords), issuerRecords, &issuerRecordsSize, &issuerCount);
+            if (status != NO_ERROR || issuerCount != 1 || std::strcmp(issuerRecords, subkeyKeyId) != 0)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED SignBuffer(RSA) did not embed the sign subkey as issuer (issuer=" << issuerRecords << " expected=" << subkeyKeyId << ")" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            CPgpEngine bob;
+            const char* bobUserId = "Sign Subkey RSA Bob <signsubkeyrsabob@example.com>";
+            const char* bobPassword = "SignSubkeyRsaBobTest-1";
+            status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED GenerateKeyPair(bob RSA) status=" << status << std::endl;
+                return status;
+            }
+
+            int pubSize = 0;
+            alice.ExportPublicKeyArmored(0, nullptr, &pubSize);
+            std::vector<char> pubKey(static_cast<std::size_t>(pubSize));
+            int pubActualSize = 0;
+            alice.ExportPublicKeyArmored(pubSize, &pubKey[0], &pubActualSize);
+            status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&pubKey[0]), pubActualSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED ImportPeerPublicKey(RSA) status=" << status << std::endl;
+                return status;
+            }
+
+            bool verified = false;
+            status = bob.VerifyBuffer(plaintext, static_cast<int>(sizeof(plaintext) - 1), sigPacket, sigPacketSize, &verified);
+            if (status != NO_ERROR || !verified)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED VerifyBuffer(RSA) did not verify a sign-subkey signature, status=" << status << " verified=" << verified << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        // --- Part 2: Ed25519 family -- AddSubkey(0x02) must now produce a genuine Ed25519 key
+        // (previously NOT_IMPLEMENTED) and SignBuffer/ClearSignString/EncryptAndSignBuffer must all
+        // route through it; the peer's Verify*/DecryptAndVerifyBuffer must still succeed. Also
+        // confirms AddSubkey(0x20, authenticate) is still (unchanged, intentionally) NOT_IMPLEMENTED. ---
+        {
+            CPgpEngine alice(PGP_KEY_ALGORITHM_ED25519_X25519);
+            const char* userId = "Sign Subkey Ed25519 <signsubkeyed25519@example.com>";
+            const char* password = "SignSubkeyEdTest-1";
+            int status = alice.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED GenerateKeyPair(Ed25519) status=" << status << std::endl;
+                return status;
+            }
+
+            status = alice.AddSubkey(password, static_cast<int>(std::strlen(password)), 0x20, 0);
+            if (status != NOT_IMPLEMENTED)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED AddSubkey(Ed25519, authenticate) expected NOT_IMPLEMENTED, got status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            status = alice.AddSubkey(password, static_cast<int>(std::strlen(password)), 0x02, 0);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED AddSubkey(Ed25519, sign) status=" << status << std::endl;
+                return status;
+            }
+
+            // Same ownSubkeys indexing note as the RSA part above -- GenerateKeyPair already
+            // seeded index 0 with its own default X25519 encrypt subkey.
+            const int edSignSubkeyIndex = alice.GetSubkeyCount() - 1;
+            if (edSignSubkeyIndex < 1)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED GetSubkeyCount(Ed25519)=" << (edSignSubkeyIndex + 1) << " expected >= 2" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+            char masterKeyId[17];
+            alice.GetKeyId(masterKeyId, sizeof(masterKeyId));
+            char subkeyKeyId[17];
+            alice.GetSubkeyKeyId(edSignSubkeyIndex, subkeyKeyId, sizeof(subkeyKeyId));
+            if (std::strcmp(masterKeyId, subkeyKeyId) == 0)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED Ed25519 master and sign-subkey unexpectedly share a Key ID" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            const unsigned char plaintext[] = "sign-subkey Ed25519 round trip";
+            unsigned char sigPacket[4096];
+            int sigPacketSize = 0;
+            status = alice.SignBuffer(password, static_cast<int>(std::strlen(password)), plaintext, static_cast<int>(sizeof(plaintext) - 1), sizeof(sigPacket), sigPacket, &sigPacketSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED SignBuffer(Ed25519) status=" << status << std::endl;
+                return status;
+            }
+
+            char issuerRecords[256];
+            int issuerRecordsSize = 0;
+            int issuerCount = 0;
+            status = alice.ListSigningKeyIds(sigPacket, sigPacketSize, sizeof(issuerRecords), issuerRecords, &issuerRecordsSize, &issuerCount);
+            if (status != NO_ERROR || issuerCount != 1 || std::strcmp(issuerRecords, subkeyKeyId) != 0)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED SignBuffer(Ed25519) did not embed the sign subkey as issuer (issuer=" << issuerRecords << " expected=" << subkeyKeyId << ")" << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            CPgpEngine bob(PGP_KEY_ALGORITHM_ED25519_X25519);
+            const char* bobUserId = "Sign Subkey Ed25519 Bob <signsubkeyed25519bob@example.com>";
+            const char* bobPassword = "SignSubkeyEdBobTest-1";
+            status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED GenerateKeyPair(bob Ed25519) status=" << status << std::endl;
+                return status;
+            }
+
+            int alicePubSize = 0;
+            alice.ExportPublicKeyArmored(0, nullptr, &alicePubSize);
+            std::vector<char> alicePubKey(static_cast<std::size_t>(alicePubSize));
+            int alicePubActualSize = 0;
+            alice.ExportPublicKeyArmored(alicePubSize, &alicePubKey[0], &alicePubActualSize);
+            status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePubKey[0]), alicePubActualSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED ImportPeerPublicKey(Ed25519) status=" << status << std::endl;
+                return status;
+            }
+
+            bool verified = false;
+            status = bob.VerifyBuffer(plaintext, static_cast<int>(sizeof(plaintext) - 1), sigPacket, sigPacketSize, &verified);
+            if (status != NO_ERROR || !verified)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED VerifyBuffer(Ed25519) did not verify a sign-subkey signature, status=" << status << " verified=" << verified << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            // ClearSignString -- also routes through the new subkey; round-tripped via bob's
+            // VerifyClearSignedString (exercises selectPeerVerificationKeyMaterial from that call site).
+            char clearSigned[4096];
+            int clearSignedSize = 0;
+            const char* clearSignInput = "sign-subkey Ed25519 clearsign";
+            status = alice.ClearSignString(password, static_cast<int>(std::strlen(password)), clearSignInput, static_cast<int>(std::strlen(clearSignInput)), sizeof(clearSigned), clearSigned, &clearSignedSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED ClearSignString(Ed25519) status=" << status << std::endl;
+                return status;
+            }
+            bool clearVerified = false;
+            status = bob.VerifyClearSignedString(clearSigned, clearSignedSize, &clearVerified);
+            if (status != NO_ERROR || !clearVerified)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED VerifyClearSignedString(Ed25519) did not verify a sign-subkey clearsign, status=" << status << " verified=" << clearVerified << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            // EncryptAndSignBuffer/DecryptAndVerifyBuffer -- also routes through the new subkey for
+            // the embedded One-Pass-Sig/Signature pair; needs alice to have imported bob's own key too.
+            int bobPubSize = 0;
+            bob.ExportPublicKeyArmored(0, nullptr, &bobPubSize);
+            std::vector<char> bobPubKey(static_cast<std::size_t>(bobPubSize));
+            int bobPubActualSize = 0;
+            bob.ExportPublicKeyArmored(bobPubSize, &bobPubKey[0], &bobPubActualSize);
+            status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPubKey[0]), bobPubActualSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+                return status;
+            }
+
+            unsigned char combined[4096];
+            int combinedSize = 0;
+            status = alice.EncryptAndSignBuffer(password, static_cast<int>(std::strlen(password)), plaintext, static_cast<int>(sizeof(plaintext) - 1), sizeof(combined), combined, &combinedSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED EncryptAndSignBuffer(Ed25519) status=" << status << std::endl;
+                return status;
+            }
+
+            unsigned char decrypted[4096];
+            int decryptedSize = 0;
+            bool combinedVerified = false;
+            status = bob.DecryptAndVerifyBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), combined, combinedSize, sizeof(decrypted), decrypted, &decryptedSize, &combinedVerified);
+            if (status != NO_ERROR || !combinedVerified || decryptedSize != static_cast<int>(sizeof(plaintext) - 1) ||
+                std::memcmp(decrypted, plaintext, static_cast<std::size_t>(decryptedSize)) != 0)
+            {
+                std::cout << "RunPgpNativeSignSubkeyTest: FAILED DecryptAndVerifyBuffer(Ed25519) status=" << status << " verified=" << combinedVerified << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        std::cout << "RunPgpNativeSignSubkeyTest: PASSED RSA and Ed25519 sign-subkeys are both actually used by Sign/ClearSign/EncryptAndSign and verified via issuer-based peer-subkey lookup" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 // -- 4a (multi-UID/multi-subkey -- gpg --edit-key parity), WRAPPER (CPgpEngineWrapper, real
 // gpg.exe subprocess) side. Each --quick-add-uid-type operation needs only local gpg.exe, no
 // network -- SKIPPED only when IsGnuPgAvailable() finds no gpg at all, otherwise a hard

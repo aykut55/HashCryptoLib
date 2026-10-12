@@ -359,6 +359,10 @@ public:
     virtual int RunPgpGnuPgMultiUidMultiSubkeyInteropTest(void) = 0;
     virtual int RunPgpGnuPgChangePasswordInteropTest(void) = 0;
 
+    // 4a takip -- real Ed25519 sign-subkey (not X25519) + sign-subkey actually preferred by
+    // SignBuffer/ClearSignString/EncryptAndSignBuffer over the master key; see CryptoApiTester.h.
+    virtual int RunPgpNativeSignSubkeyTest(void) = 0;
+
     // 4a, WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side -- see CryptoApiTester.h's own
     // doc comments for what each exercises.
     virtual int RunPgpWrapperQuickAddUidTest(void) = 0;

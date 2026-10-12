@@ -103,15 +103,19 @@ struct PgpOwnUserId
 // (multi-subkey support -- gpg --edit-key addkey/expire parity, see AddSubkey/RevokeSubkey/
 // SetKeyExpiration below). Only the fields matching this engine instance's fixed keyAlgorithm
 // family are ever populated/used (see CPgpEngine::Impl::keyAlgorithm) -- for an Ed25519/X25519-
-// family instance a subkey is always X25519 (encrypt-only) in this version, see AddSubkey's own
-// comment for why. secretPacketBody is the encrypted (not cleartext) tag-7 body, cached the same
-// way ownMasterSecretPacketBody below is.
+// family instance a subkey is either X25519 (encrypt, keyFlags==0x0C) or Ed25519 (sign,
+// keyFlags==0x02), distinguished by isEd25519Sign since both share the same coarse
+// PGP_KEY_ALGORITHM_ED25519_X25519 family value (see AddSubkey's own comment). secretPacketBody is
+// the encrypted (not cleartext) tag-7 body, cached the same way ownMasterSecretPacketBody below is.
 struct PgpOwnSubkey
 {
     CryptoPP::RSA::PrivateKey rsaPrivateKey;
     CryptoPP::RSA::PublicKey  rsaPublicKey;
     unsigned char x25519PrivateKey[32];
     unsigned char x25519PublicKey[32];
+    unsigned char ed25519PrivateKey[32];               // populated only when isEd25519Sign (Ed25519-family sign subkey)
+    unsigned char ed25519PublicKey[32];
+    bool isEd25519Sign;                                // true selects ed25519Private/PublicKey over x25519 in an Ed25519-family instance; meaningless for RSA-family (always rsaPrivateKey/rsaPublicKey there)
     unsigned char keyId[8];
     unsigned char fingerprint[20];
     std::uint32_t creationTime;
@@ -122,10 +126,12 @@ struct PgpOwnSubkey
     std::vector<unsigned char> revocationSigPacket;    // signature type 0x28, empty if !isRevoked
     std::vector<unsigned char> secretPacketBody;       // encrypted tag-7 body, cached
 
-    PgpOwnSubkey() : creationTime(0), expirationSeconds(0), keyFlags(0), isRevoked(false)
+    PgpOwnSubkey() : isEd25519Sign(false), creationTime(0), expirationSeconds(0), keyFlags(0), isRevoked(false)
     {
         std::memset(x25519PrivateKey, 0, 32);
         std::memset(x25519PublicKey, 0, 32);
+        std::memset(ed25519PrivateKey, 0, 32);
+        std::memset(ed25519PublicKey, 0, 32);
         std::memset(keyId, 0, 8);
         std::memset(fingerprint, 0, 20);
     }
@@ -150,6 +156,8 @@ struct PgpPeerSubkey
     PgpKeyAlgorithm algorithm;
     CryptoPP::RSA::PublicKey rsaKey;
     unsigned char x25519Key[32];
+    unsigned char ed25519Key[32];       // populated only when isEd25519 (peer's Ed25519 sign subkey, algorithm octet 22)
+    bool isEd25519;                     // distinguishes an Ed25519 (EdDSA, sign) subkey from an X25519 (ECDH, encrypt) one -- both share algorithm==PGP_KEY_ALGORITHM_ED25519_X25519
     unsigned char keyId[8];
     unsigned char fingerprint[20];
     std::uint32_t creationTime;
@@ -159,10 +167,11 @@ struct PgpPeerSubkey
     std::uint32_t expirationSeconds;    // from the subkey's own 0x18 binding sig if present; 0 if absent/never
     bool isRevoked;
 
-    PgpPeerSubkey() : algorithm(PGP_KEY_ALGORITHM_RSA), creationTime(0), haveKeyFlags(false), keyFlags(0),
+    PgpPeerSubkey() : algorithm(PGP_KEY_ALGORITHM_RSA), isEd25519(false), creationTime(0), haveKeyFlags(false), keyFlags(0),
                        haveExpiration(false), expirationSeconds(0), isRevoked(false)
     {
         std::memset(x25519Key, 0, 32);
+        std::memset(ed25519Key, 0, 32);
         std::memset(keyId, 0, 8);
         std::memset(fingerprint, 0, 20);
     }
@@ -2373,6 +2382,37 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
     {
         return false;
     }
+}
+// -----------------------------------------------------------------------------
+
+// Picks which of this identity's own keys should actually produce a NEW signature: the most-
+// recently-added, non-revoked, sign-capable (keyFlags & 0x02) entry in ownSubkeys if one exists
+// (gpg --edit-key addkey sign-subkey parity -- SignBuffer/ClearSignString/EncryptAndSignBuffer/
+// EncryptAndSignStringArmored all route through this so a subkey added via AddSubkey(sign) is
+// actually used for new signatures, not just exportable/revocable), else the master key itself
+// (this instance's pre-existing, single-key behavior, unchanged). A free function rather than a
+// CPgpEngine member (see PgpEngine.h's own comment on why shared impl_-touching logic usually
+// lives in member functions instead) because every field it needs is passed in explicitly by its
+// (member-function) callers, sidestepping the need for impl_ access here.
+void selectActiveSigningKeyMaterial(const std::vector<PgpOwnSubkey>& ownSubkeys,
+                                     const CryptoPP::RSA::PrivateKey& masterRsaKey, const unsigned char masterEd25519Key[32], const unsigned char masterKeyId[8],
+                                     CryptoPP::RSA::PrivateKey& outRsaKey, unsigned char outEd25519Key[32], unsigned char outKeyId[8])
+{
+    for (std::size_t i = ownSubkeys.size(); i > 0; --i)
+    {
+        const PgpOwnSubkey& subkey = ownSubkeys[i - 1];
+        if (subkey.isRevoked || (subkey.keyFlags & 0x02) == 0)
+        {
+            continue;
+        }
+        outRsaKey = subkey.rsaPrivateKey;
+        std::memcpy(outEd25519Key, subkey.ed25519PrivateKey, 32);
+        std::memcpy(outKeyId, subkey.keyId, 8);
+        return;
+    }
+    outRsaKey = masterRsaKey;
+    std::memcpy(outEd25519Key, masterEd25519Key, 32);
+    std::memcpy(outKeyId, masterKeyId, 8);
 }
 // -----------------------------------------------------------------------------
 
@@ -5428,12 +5468,29 @@ bool parsePeerPublicKeyBlock(const std::vector<unsigned char>& binary, ParsedPee
                     std::memcpy(newSubkey.keyId, keyId, 8);
                     std::memcpy(newSubkey.fingerprint, fingerprint, 20);
                 }
+                else if (algo == PGP_ALGO_EDDSA)
+                {
+                    // Peer's Ed25519 (EdDSA) SIGN subkey -- same family enum value as the ECDH/
+                    // X25519 branch above (PGP_KEY_ALGORITHM_ED25519_X25519 is coarse), isEd25519
+                    // is what actually distinguishes the two for selectPeerVerificationKeyMaterial.
+                    unsigned char point[32];
+                    unsigned char keyId[8];
+                    if (!parseEd25519PublicKeyPacketBody(body, point, keyId))
+                    {
+                        currentOwnerKind = OWNER_NONE;
+                        continue;
+                    }
+                    newSubkey.algorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
+                    newSubkey.isEd25519 = true;
+                    std::memcpy(newSubkey.ed25519Key, point, 32);
+                    std::memcpy(newSubkey.keyId, keyId, 8);
+                }
                 else
                 {
                     currentOwnerKind = OWNER_NONE;
                     continue;
                 }
-                if (newSubkey.algorithm == PGP_KEY_ALGORITHM_RSA)
+                if (newSubkey.algorithm == PGP_KEY_ALGORITHM_RSA || newSubkey.isEd25519)
                 {
                     unsigned char fingerprintScratch[20];
                     unsigned char keyIdScratch[8];
@@ -5754,6 +5811,81 @@ bool inspectSignaturePacketBody(const std::vector<unsigned char>& body, PgpInspe
     {
         return false;
     }
+}
+// -----------------------------------------------------------------------------
+
+// Packet-framed convenience wrapper over inspectSignaturePacketBody's own issuer-key-id
+// extraction, for call sites (VerifyBuffer/VerifyClearSignedString/DecryptAndVerify*) holding a
+// full tag-2 packet (header+body) rather than a bare body.
+bool findIssuerKeyIdOfSignaturePacket(const std::vector<unsigned char>& signaturePacketBytes, unsigned char keyIdOut[8])
+{
+    try
+    {
+        std::size_t pos = 0;
+        unsigned char tag = 0;
+        std::size_t bodyLength = 0;
+        if (!readPacketHeader(signaturePacketBytes, pos, tag, bodyLength) || tag != PGP_TAG_SIGNATURE || pos + bodyLength > signaturePacketBytes.size())
+        {
+            return false;
+        }
+        const std::vector<unsigned char> body(signaturePacketBytes.begin() + pos, signaturePacketBytes.begin() + pos + bodyLength);
+        PgpInspectedSignature inspected;
+        if (!inspectSignaturePacketBody(body, inspected) || !inspected.haveIssuerKeyId)
+        {
+            return false;
+        }
+        std::memcpy(keyIdOut, inspected.issuerKeyId, 8);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Verify-side counterpart to selectActiveSigningKeyMaterial above -- determines which of the
+// peer's public keys (master, or one of the peer's own sign-capable subkeys collected by
+// parsePeerPublicKeyBlock) actually produced a given signature packet, by reading its own embedded
+// Issuer Key ID/Fingerprint subpacket. Falls back to the peer's master key when the issuer can't be
+// read or doesn't match anything known, preserving this engine's pre-multi-subkey verify behavior
+// exactly (every pre-existing VerifyBuffer/VerifyClearSignedString/DecryptAndVerify* call site keeps
+// working unchanged for a master-signed message). An X25519 (ECDH) peer subkey is never selected
+// here even on a keyId match -- it cannot sign, so such a match would indicate a hash collision,
+// not a real signer; falling through to the master key is the safer choice.
+void selectPeerVerificationKeyMaterial(const std::vector<unsigned char>& signaturePacketBytes,
+                                        const PgpKeyAlgorithm masterAlgorithm, const CryptoPP::RSA::PublicKey& masterRsaKey, const unsigned char masterEd25519Key[32], const unsigned char masterKeyId[8],
+                                        const std::vector<PgpPeerSubkey>& peerSubkeys,
+                                        PgpKeyAlgorithm& outAlgorithm, CryptoPP::RSA::PublicKey& outRsaKey, unsigned char outEd25519Key[32])
+{
+    unsigned char issuerKeyId[8];
+    if (findIssuerKeyIdOfSignaturePacket(signaturePacketBytes, issuerKeyId) && std::memcmp(issuerKeyId, masterKeyId, 8) != 0)
+    {
+        for (std::size_t i = 0; i < peerSubkeys.size(); ++i)
+        {
+            const PgpPeerSubkey& subkey = peerSubkeys[i];
+            if (std::memcmp(subkey.keyId, issuerKeyId, 8) != 0)
+            {
+                continue;
+            }
+            if (subkey.algorithm == PGP_KEY_ALGORITHM_RSA)
+            {
+                outAlgorithm = PGP_KEY_ALGORITHM_RSA;
+                outRsaKey = subkey.rsaKey;
+                return;
+            }
+            if (subkey.isEd25519)
+            {
+                outAlgorithm = PGP_KEY_ALGORITHM_ED25519_X25519;
+                std::memcpy(outEd25519Key, subkey.ed25519Key, 32);
+                return;
+            }
+            break;
+        }
+    }
+    outAlgorithm = masterAlgorithm;
+    outRsaKey = masterRsaKey;
+    std::memcpy(outEd25519Key, masterEd25519Key, 32);
 }
 // -----------------------------------------------------------------------------
 
@@ -6104,13 +6236,17 @@ std::vector<unsigned char> CPgpEngine::buildOwnMasterPubBody(void) const
 
 // Recomputes one own-subkey's public-key-packet body from its stored PgpOwnSubkey fields (indexed
 // into impl_->ownSubkeys), same approach as buildOwnMasterPubBody above (RSA subkeys use the
-// master's own RSA family; an Ed25519-family instance's subkeys are always X25519 in this version
-// -- see AddSubkey's comment). Caller-validated index -- no bounds check here.
+// master's own RSA family; an Ed25519-family instance's subkeys are X25519 or Ed25519 depending on
+// isEd25519Sign -- see AddSubkey's comment). Caller-validated index -- no bounds check here.
 std::vector<unsigned char> CPgpEngine::buildOwnSubkeyPubBody(const int subkeyIndex) const
 {
     const PgpOwnSubkey& subkey = impl_->ownSubkeys[static_cast<std::size_t>(subkeyIndex)];
-    return (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-        buildRsaPublicKeyPacketBody(subkey.creationTime, subkey.rsaPublicKey.GetModulus(), subkey.rsaPublicKey.GetPublicExponent()) :
+    if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA)
+    {
+        return buildRsaPublicKeyPacketBody(subkey.creationTime, subkey.rsaPublicKey.GetModulus(), subkey.rsaPublicKey.GetPublicExponent());
+    }
+    return subkey.isEd25519Sign ?
+        buildEd25519PublicKeyPacketBody(subkey.creationTime, subkey.ed25519PublicKey) :
         buildX25519PublicKeyPacketBody(subkey.creationTime, subkey.x25519PublicKey);
 }
 // -----------------------------------------------------------------------------
@@ -6895,11 +7031,12 @@ int CPgpEngine::AddSubkey(const char* password, const int passwordSize, const un
         {
             return INVALID_ARGUMENT;
         }
-        if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_ED25519_X25519 && keyFlags != 0x0C)
+        if (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_ED25519_X25519 && keyFlags != 0x0C && keyFlags != 0x02)
         {
-            // Ed25519-family engines only ever generate an X25519 (ECDH, encrypt-only) subkey
-            // today -- a sign/auth subkey there needs a separate Ed25519 (not X25519) subkey code
-            // path this engine does not yet have. See IPgpEngine.h's own comment.
+            // Ed25519-family engines support an X25519 (ECDH, encrypt-only, keyFlags==0x0C) or an
+            // Ed25519 (EdDSA, sign-only, keyFlags==0x02) subkey -- an authenticate (0x20) subkey
+            // there would need a third code path this engine does not yet have. See IPgpEngine.h's
+            // own comment.
             return NOT_IMPLEMENTED;
         }
 
@@ -6920,6 +7057,19 @@ int CPgpEngine::AddSubkey(const char* password, const int passwordSize, const un
             newSubkey.rsaPublicKey = CryptoPP::RSA::PublicKey(newSubkey.rsaPrivateKey);
             subkeyPubBody = buildRsaPublicKeyPacketBody(creationTime, newSubkey.rsaPublicKey.GetModulus(), newSubkey.rsaPublicKey.GetPublicExponent());
             newSubkey.secretPacketBody = encryptSecretKeyMaterial(subkeyPubBody, buildRsaSecretKeyCleartext(newSubkey.rsaPrivateKey), password, passwordSize);
+        }
+        else if (keyFlags == 0x02)
+        {
+            // Ed25519 (EdDSA) sign subkey -- same raw-scalar generation GenerateKeyPair's own
+            // Ed25519 MASTER-key path uses (see its own comment), just for a subkey this time.
+            CryptoPP::AutoSeededRandomPool rng;
+            CryptoPP::ed25519PrivateKey edPriv;
+            edPriv.GenerateRandom(rng, CryptoPP::g_nullNameValuePairs);
+            std::memcpy(newSubkey.ed25519PrivateKey, edPriv.GetPrivateKeyBytePtr(), 32);
+            std::memcpy(newSubkey.ed25519PublicKey, edPriv.GetPublicKeyBytePtr(), 32);
+            newSubkey.isEd25519Sign = true;
+            subkeyPubBody = buildEd25519PublicKeyPacketBody(creationTime, newSubkey.ed25519PublicKey);
+            newSubkey.secretPacketBody = encryptSecretKeyMaterial(subkeyPubBody, buildEd25519SecretKeyCleartext(newSubkey.ed25519PrivateKey), password, passwordSize);
         }
         else
         {
@@ -7240,7 +7390,8 @@ int CPgpEngine::ChangePassword(const char* oldPassword, const int oldPasswordSiz
             const PgpOwnSubkey& subkey = impl_->ownSubkeys[i];
             const std::vector<unsigned char> subkeyPubBody = buildOwnSubkeyPubBody(static_cast<int>(i));
             const std::vector<unsigned char> subkeyCleartext = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-                buildRsaSecretKeyCleartext(subkey.rsaPrivateKey) : buildX25519SecretKeyCleartext(subkey.x25519PrivateKey);
+                buildRsaSecretKeyCleartext(subkey.rsaPrivateKey) :
+                (subkey.isEd25519Sign ? buildEd25519SecretKeyCleartext(subkey.ed25519PrivateKey) : buildX25519SecretKeyCleartext(subkey.x25519PrivateKey));
             newSubkeySecretBodies[i] = encryptSecretKeyMaterial(subkeyPubBody, subkeyCleartext, newPassword, newPasswordSize);
             if (newSubkeySecretBodies[i].empty())
             {
@@ -7642,9 +7793,15 @@ int CPgpEngine::EncryptAndSignBuffer(const char* password, const int passwordSiz
             recipients.push_back(impl_->additionalRecipients[i]);
         }
 
+        CryptoPP::RSA::PrivateKey signingRsaKey;
+        unsigned char signingEd25519Key[32];
+        unsigned char signingKeyId[8];
+        selectActiveSigningKeyMaterial(impl_->ownSubkeys, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey, impl_->ownMasterKeyId,
+                                        signingRsaKey, signingEd25519Key, signingKeyId);
+
         std::vector<unsigned char> message;
-        if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey,
-                                                        impl_->ownMasterKeyId, inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
+        if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, signingRsaKey, signingEd25519Key,
+                                                        signingKeyId, inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -7703,10 +7860,16 @@ int CPgpEngine::EncryptAndSignStringArmored(const char* password, const int pass
             recipients.push_back(impl_->additionalRecipients[i]);
         }
 
+        CryptoPP::RSA::PrivateKey signingRsaKey;
+        unsigned char signingEd25519Key[32];
+        unsigned char signingKeyId[8];
+        selectActiveSigningKeyMaterial(impl_->ownSubkeys, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey, impl_->ownMasterKeyId,
+                                        signingRsaKey, signingEd25519Key, signingKeyId);
+
         const unsigned char* inputBytes = reinterpret_cast<const unsigned char*>(inputString);
         std::vector<unsigned char> message;
-        if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey,
-                                                        impl_->ownMasterKeyId, inputBytes, static_cast<std::size_t>(inputStringSize), message))
+        if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, signingRsaKey, signingEd25519Key,
+                                                        signingKeyId, inputBytes, static_cast<std::size_t>(inputStringSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -7839,10 +8002,16 @@ int CPgpEngine::DecryptAndVerifyBuffer(const char* password, const int passwordS
             return INVALID_DATA;
         }
 
+        PgpKeyAlgorithm verifyAlgorithm;
+        CryptoPP::RSA::PublicKey verifyRsaKey;
+        unsigned char verifyEd25519Key[32];
+        selectPeerVerificationKeyMaterial(sigPacketBytes, impl_->peerMasterAlgorithm, impl_->peerMasterPublicKey, impl_->peerEd25519PublicKey, impl_->peerMasterKeyId, impl_->peerSubkeys,
+                                           verifyAlgorithm, verifyRsaKey, verifyEd25519Key);
+
         bool verified = false;
-        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-            verifySignaturePacket(impl_->peerMasterPublicKey, plaintext, sigPacketBytes, &verified) :
-            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, plaintext, sigPacketBytes, &verified);
+        const bool technicalOk = (verifyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(verifyRsaKey, plaintext, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(verifyEd25519Key, plaintext, sigPacketBytes, &verified);
         if (!technicalOk)
         {
             return INVALID_DATA;
@@ -7897,10 +8066,16 @@ int CPgpEngine::DecryptAndVerifyStringArmored(const char* password, const int pa
             return INVALID_DATA;
         }
 
+        PgpKeyAlgorithm verifyAlgorithm;
+        CryptoPP::RSA::PublicKey verifyRsaKey;
+        unsigned char verifyEd25519Key[32];
+        selectPeerVerificationKeyMaterial(sigPacketBytes, impl_->peerMasterAlgorithm, impl_->peerMasterPublicKey, impl_->peerEd25519PublicKey, impl_->peerMasterKeyId, impl_->peerSubkeys,
+                                           verifyAlgorithm, verifyRsaKey, verifyEd25519Key);
+
         bool verified = false;
-        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-            verifySignaturePacket(impl_->peerMasterPublicKey, plaintext, sigPacketBytes, &verified) :
-            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, plaintext, sigPacketBytes, &verified);
+        const bool technicalOk = (verifyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(verifyRsaKey, plaintext, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(verifyEd25519Key, plaintext, sigPacketBytes, &verified);
         if (!technicalOk)
         {
             return INVALID_DATA;
@@ -7940,9 +8115,16 @@ int CPgpEngine::SignBuffer(const char* password, const int passwordSize, const u
         }
 
         const std::vector<unsigned char> documentData(inputBuffer, inputBuffer + inputBufferSize);
+
+        CryptoPP::RSA::PrivateKey signingRsaKey;
+        unsigned char signingEd25519Key[32];
+        unsigned char signingKeyId[8];
+        selectActiveSigningKeyMaterial(impl_->ownSubkeys, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey, impl_->ownMasterKeyId,
+                                        signingRsaKey, signingEd25519Key, signingKeyId);
+
         const std::vector<unsigned char> sigPacket = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-            buildSignaturePacket(impl_->ownMasterPrivateKey, 0x00, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId) :
-            buildEd25519SignaturePacket(impl_->ownEd25519PrivateKey, 0x00, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId);
+            buildSignaturePacket(signingRsaKey, 0x00, documentData, std::vector<unsigned char>(), signingKeyId) :
+            buildEd25519SignaturePacket(signingEd25519Key, 0x00, documentData, std::vector<unsigned char>(), signingKeyId);
         if (sigPacket.empty())
         {
             return UNEXPECTED_ERROR;
@@ -7976,10 +8158,16 @@ int CPgpEngine::VerifyBuffer(const unsigned char* inputBuffer, const int inputBu
         const std::vector<unsigned char> documentData(inputBuffer, inputBuffer + inputBufferSize);
         const std::vector<unsigned char> sigPacketBytes(signatureBuffer, signatureBuffer + signatureBufferSize);
 
+        PgpKeyAlgorithm verifyAlgorithm;
+        CryptoPP::RSA::PublicKey verifyRsaKey;
+        unsigned char verifyEd25519Key[32];
+        selectPeerVerificationKeyMaterial(sigPacketBytes, impl_->peerMasterAlgorithm, impl_->peerMasterPublicKey, impl_->peerEd25519PublicKey, impl_->peerMasterKeyId, impl_->peerSubkeys,
+                                           verifyAlgorithm, verifyRsaKey, verifyEd25519Key);
+
         bool verified = false;
-        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-            verifySignaturePacket(impl_->peerMasterPublicKey, documentData, sigPacketBytes, &verified) :
-            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, documentData, sigPacketBytes, &verified);
+        const bool technicalOk = (verifyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(verifyRsaKey, documentData, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(verifyEd25519Key, documentData, sigPacketBytes, &verified);
         if (!technicalOk)
         {
             return INVALID_DATA;
@@ -8025,9 +8213,15 @@ int CPgpEngine::ClearSignString(const char* password, const int passwordSize, co
             }
         }
 
+        CryptoPP::RSA::PrivateKey signingRsaKey;
+        unsigned char signingEd25519Key[32];
+        unsigned char signingKeyId[8];
+        selectActiveSigningKeyMaterial(impl_->ownSubkeys, impl_->ownMasterPrivateKey, impl_->ownEd25519PrivateKey, impl_->ownMasterKeyId,
+                                        signingRsaKey, signingEd25519Key, signingKeyId);
+
         const std::vector<unsigned char> sigPacket = (impl_->keyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-            buildSignaturePacket(impl_->ownMasterPrivateKey, 0x01, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId) :
-            buildEd25519SignaturePacket(impl_->ownEd25519PrivateKey, 0x01, documentData, std::vector<unsigned char>(), impl_->ownMasterKeyId);
+            buildSignaturePacket(signingRsaKey, 0x01, documentData, std::vector<unsigned char>(), signingKeyId) :
+            buildEd25519SignaturePacket(signingEd25519Key, 0x01, documentData, std::vector<unsigned char>(), signingKeyId);
         if (sigPacket.empty())
         {
             return UNEXPECTED_ERROR;
@@ -8156,10 +8350,16 @@ int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int
             return INVALID_DATA;
         }
 
+        PgpKeyAlgorithm verifyAlgorithm;
+        CryptoPP::RSA::PublicKey verifyRsaKey;
+        unsigned char verifyEd25519Key[32];
+        selectPeerVerificationKeyMaterial(sigPacketBytes, impl_->peerMasterAlgorithm, impl_->peerMasterPublicKey, impl_->peerEd25519PublicKey, impl_->peerMasterKeyId, impl_->peerSubkeys,
+                                           verifyAlgorithm, verifyRsaKey, verifyEd25519Key);
+
         bool verified = false;
-        const bool technicalOk = (impl_->peerMasterAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
-            verifySignaturePacket(impl_->peerMasterPublicKey, documentData, sigPacketBytes, &verified) :
-            verifyEd25519SignaturePacket(impl_->peerEd25519PublicKey, documentData, sigPacketBytes, &verified);
+        const bool technicalOk = (verifyAlgorithm == PGP_KEY_ALGORITHM_RSA) ?
+            verifySignaturePacket(verifyRsaKey, documentData, sigPacketBytes, &verified) :
+            verifyEd25519SignaturePacket(verifyEd25519Key, documentData, sigPacketBytes, &verified);
         if (!technicalOk)
         {
             return INVALID_DATA;

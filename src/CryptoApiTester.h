@@ -942,6 +942,18 @@ public:
     // (via --pinentry-mode loopback --passphrase-fd 0 on a --sign) while passphrase A is rejected.
     int RunPgpGnuPgChangePasswordInteropTest(void) override;
 
+    // Internal-only (4a takip): two independent checks in one test. (1) RSA-family engine
+    // GenerateKeyPair's, then AddSubkey(keyFlags=0x02, sign-only) -- asserts SignBuffer now embeds
+    // the SUBKEY's own Key ID as issuer (via ListSigningKeyIds on the produced detached signature,
+    // compared against GetSubkeyKeyId), not the master's, and that a peer's VerifyBuffer still
+    // verifies it (exercising selectPeerVerificationKeyMaterial's issuer-based peer-subkey lookup).
+    // (2) Ed25519-family engine's AddSubkey(0x02) now succeeds (previously NOT_IMPLEMENTED) and
+    // produces a genuine Ed25519 (not X25519) key; SignBuffer/ClearSignString/EncryptAndSignBuffer
+    // all route through the new subkey, and the peer's VerifyBuffer/VerifyClearSignedString/
+    // DecryptAndVerifyBuffer all still succeed. Also asserts AddSubkey(0x20, authenticate) on the
+    // Ed25519-family engine still returns NOT_IMPLEMENTED (unchanged, intentionally out of scope).
+    int RunPgpNativeSignSubkeyTest(void) override;
+
     // ============================================================================================
     // 4a (multi-UID/multi-subkey -- gpg --edit-key adduid/deluid/addkey/expire/primary/passwd
     // parity), WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side. Each delegates to one of

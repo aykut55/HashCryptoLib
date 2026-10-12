@@ -1393,6 +1393,11 @@ int runAllTests()
 
                         pCryptoApiTester->RunPgpWrapperSetKeyDisabledTest();
 
+                        // 4a takip: real Ed25519 sign-subkey (not X25519) + sign-subkey actually
+                        // preferred by SignBuffer/ClearSignString/EncryptAndSignBuffer over the
+                        // master key, native side only.
+                        pCryptoApiTester->RunPgpNativeSignSubkeyTest();
+
                         pCryptoApiTester->RunCertificateSelfSignedTest();
 
                         pCryptoApiTester->RunCertificateDerPemRoundtripTest();

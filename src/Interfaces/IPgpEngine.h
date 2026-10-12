@@ -112,10 +112,12 @@ public:
     // -- Own-identity subkey management (multi-subkey support, gpg --edit-key addkey/expire parity) --
     // No algorithm parameter -- a new subkey always matches this instance's own fixed key-algorithm
     // family (see GetKeyAlgorithm above). keyFlags follows RFC 4880 5.2.3.21: 0x02 sign, 0x0C
-    // encrypt, 0x20 authenticate. On an Ed25519/X25519-family instance only 0x0C (encrypt, producing
-    // an additional X25519 subkey) is currently supported -- any other flags value returns
-    // NOT_IMPLEMENTED, since a sign/auth subkey there would need a separate Ed25519 (not X25519)
-    // subkey code path this engine does not yet have.
+    // encrypt, 0x20 authenticate. On an Ed25519/X25519-family instance, 0x0C produces an additional
+    // X25519 (ECDH, encrypt) subkey and 0x02 a genuine Ed25519 (EdDSA, sign) subkey, both actually
+    // usable (SignBuffer/ClearSignString/EncryptAndSignBuffer prefer the newest non-revoked
+    // sign-capable subkey over the master key once one exists) -- any other flags value (e.g. 0x20
+    // authenticate) still returns NOT_IMPLEMENTED, since that would need a third subkey code path
+    // this engine does not yet have.
     virtual int AddSubkey(const char* password, const int passwordSize, const unsigned char keyFlags, const unsigned int expirationSeconds) = 0;
 
     virtual int RevokeSubkey(const char* password, const int passwordSize, const int subkeyIndex, const unsigned char reasonCode, const char* reasonText, const int reasonTextSize) = 0;
