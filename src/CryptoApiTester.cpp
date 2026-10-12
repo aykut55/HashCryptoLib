@@ -23477,6 +23477,299 @@ int CCryptoApiTester::RunPgpNativeSignSubkeyTest(void)
 }
 // -----------------------------------------------------------------------------
 
+// Internal-only: sdk-known-limitations.md's "encrypt tarafında simetrik algoritma seçimi yok" gap.
+// AES-128/192/256 are selected via SetSymmetricCipherPreference and round-tripped via
+// EncryptBuffer/DecryptBuffer and EncryptAndSignBuffer/DecryptAndVerifyBuffer -- DecryptBuffer
+// already dispatched on all three key sizes before this (real foreign senders, e.g. GnuPG's own
+// AES-128 default, could already produce them); this closes the matching ENCRYPT-side gap. Also
+// asserts an out-of-range preference value is rejected with INVALID_ARGUMENT.
+int CCryptoApiTester::RunPgpSymmetricCipherPreferenceTest(void)
+{
+    try
+    {
+        CPgpEngine alice;
+        const char* userId = "Symmetric Cipher Pref <symcipherpref@example.com>";
+        const char* password = "SymCipherPrefTest-1";
+        int status = alice.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED GenerateKeyPair(alice) status=" << status << std::endl;
+            return status;
+        }
+        if (alice.GetSymmetricCipherPreference() != PGP_SYMMETRIC_AES256)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED default preference is not PGP_SYMMETRIC_AES256" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        CPgpEngine bob;
+        const char* bobUserId = "Symmetric Cipher Pref Bob <symcipherprefbob@example.com>";
+        const char* bobPassword = "SymCipherPrefBobTest-1";
+        status = bob.GenerateKeyPair(bobUserId, static_cast<int>(std::strlen(bobUserId)), bobPassword, static_cast<int>(std::strlen(bobPassword)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED GenerateKeyPair(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        int bobPubSize = 0;
+        bob.ExportPublicKeyArmored(0, nullptr, &bobPubSize);
+        std::vector<char> bobPubKey(static_cast<std::size_t>(bobPubSize));
+        int bobPubActualSize = 0;
+        bob.ExportPublicKeyArmored(bobPubSize, &bobPubKey[0], &bobPubActualSize);
+        status = alice.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&bobPubKey[0]), bobPubActualSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED alice ImportPeerPublicKey(bob) status=" << status << std::endl;
+            return status;
+        }
+
+        const PgpSymmetricAlgorithm algorithms[3] = { PGP_SYMMETRIC_AES128, PGP_SYMMETRIC_AES192, PGP_SYMMETRIC_AES256 };
+        const unsigned char plaintext[] = "symmetric cipher preference round trip";
+        for (int i = 0; i < 3; ++i)
+        {
+            status = alice.SetSymmetricCipherPreference(algorithms[i]);
+            if (status != NO_ERROR || alice.GetSymmetricCipherPreference() != algorithms[i])
+            {
+                std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED SetSymmetricCipherPreference(" << algorithms[i] << ") status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+
+            unsigned char ciphertext[4096];
+            int ciphertextSize = 0;
+            status = alice.EncryptBuffer(plaintext, static_cast<int>(sizeof(plaintext) - 1), sizeof(ciphertext), ciphertext, &ciphertextSize);
+            if (status != NO_ERROR)
+            {
+                std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED EncryptBuffer(" << algorithms[i] << ") status=" << status << std::endl;
+                return status;
+            }
+
+            unsigned char decrypted[4096];
+            int decryptedSize = 0;
+            status = bob.DecryptBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), ciphertext, ciphertextSize, sizeof(decrypted), decrypted, &decryptedSize);
+            if (status != NO_ERROR || decryptedSize != static_cast<int>(sizeof(plaintext) - 1) ||
+                std::memcmp(decrypted, plaintext, static_cast<std::size_t>(decryptedSize)) != 0)
+            {
+                std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED EncryptBuffer/DecryptBuffer round trip for algorithm=" << algorithms[i] << " status=" << status << std::endl;
+                return UNEXPECTED_ERROR;
+            }
+        }
+
+        // EncryptAndSignBuffer/DecryptAndVerifyBuffer path (needs bob to have alice's own identity too).
+        int alicePubSize = 0;
+        alice.ExportPublicKeyArmored(0, nullptr, &alicePubSize);
+        std::vector<char> alicePubKey(static_cast<std::size_t>(alicePubSize));
+        int alicePubActualSize = 0;
+        alice.ExportPublicKeyArmored(alicePubSize, &alicePubKey[0], &alicePubActualSize);
+        status = bob.ImportPeerPublicKey(reinterpret_cast<const unsigned char*>(&alicePubKey[0]), alicePubActualSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED bob ImportPeerPublicKey(alice) status=" << status << std::endl;
+            return status;
+        }
+
+        status = alice.SetSymmetricCipherPreference(PGP_SYMMETRIC_AES128);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED SetSymmetricCipherPreference(AES128) status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char combined[4096];
+        int combinedSize = 0;
+        status = alice.EncryptAndSignBuffer(password, static_cast<int>(std::strlen(password)), plaintext, static_cast<int>(sizeof(plaintext) - 1), sizeof(combined), combined, &combinedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED EncryptAndSignBuffer(AES128) status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char decryptedCombined[4096];
+        int decryptedCombinedSize = 0;
+        bool verified = false;
+        status = bob.DecryptAndVerifyBuffer(bobPassword, static_cast<int>(std::strlen(bobPassword)), combined, combinedSize, sizeof(decryptedCombined), decryptedCombined, &decryptedCombinedSize, &verified);
+        if (status != NO_ERROR || !verified || decryptedCombinedSize != static_cast<int>(sizeof(plaintext) - 1) ||
+            std::memcmp(decryptedCombined, plaintext, static_cast<std::size_t>(decryptedCombinedSize)) != 0)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED EncryptAndSignBuffer/DecryptAndVerifyBuffer(AES128) status=" << status << " verified=" << verified << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        // File-streaming path (EncryptFile/DecryptFile) with a non-default preference -- exercises
+        // encryptFileStreaming's own session-key-length dispatch, not just the buffer path's.
+        status = alice.SetSymmetricCipherPreference(PGP_SYMMETRIC_AES192);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED SetSymmetricCipherPreference(AES192) status=" << status << std::endl;
+            return status;
+        }
+        const char* inputFilePath = "cryptoapi_pgp_symcipherpref_in.bin";
+        const char* encryptedFilePath = "cryptoapi_pgp_symcipherpref_enc.pgp";
+        const char* decryptedFilePath = "cryptoapi_pgp_symcipherpref_out.bin";
+        const std::vector<unsigned char> fileContent(plaintext, plaintext + sizeof(plaintext) - 1);
+        if (!WriteTesterFile(inputFilePath, fileContent))
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED to write input file" << std::endl;
+            return FILE_IO_ERROR;
+        }
+        status = alice.EncryptFile(inputFilePath, encryptedFilePath, nullptr, nullptr);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED EncryptFile(AES192) status=" << status << std::endl;
+            std::remove(inputFilePath);
+            return status;
+        }
+        status = bob.DecryptFile(bobPassword, static_cast<int>(std::strlen(bobPassword)), encryptedFilePath, decryptedFilePath, nullptr, nullptr);
+        std::vector<unsigned char> decryptedFileContent;
+        const bool readOk = status == NO_ERROR && ReadTesterFile(decryptedFilePath, decryptedFileContent);
+        std::remove(inputFilePath);
+        std::remove(encryptedFilePath);
+        std::remove(decryptedFilePath);
+        if (!readOk || decryptedFileContent.size() != fileContent.size() || std::memcmp(decryptedFileContent.data(), fileContent.data(), fileContent.size()) != 0)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED EncryptFile/DecryptFile(AES192) round trip, status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = alice.SetSymmetricCipherPreference(static_cast<PgpSymmetricAlgorithm>(123));
+        if (status != INVALID_ARGUMENT)
+        {
+            std::cout << "RunPgpSymmetricCipherPreferenceTest: FAILED SetSymmetricCipherPreference(invalid) expected INVALID_ARGUMENT, got status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpSymmetricCipherPreferenceTest: PASSED AES-128/192/256 all round-trip via EncryptBuffer, EncryptAndSignBuffer, and EncryptFile" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Internal-only: sdk-known-limitations.md's "var olan bir revocation sertifikasının sebebini okuma
+// yok" gap. Generates a standalone armored revocation certificate (RevokeKeyArmored) with a
+// specific reason code+text, then reads it back via GetRevocationReason and asserts both match.
+// Also checks INVALID_ARGUMENT/INVALID_DATA on null/garbage input.
+int CCryptoApiTester::RunPgpRevocationReasonReadTest(void)
+{
+    try
+    {
+        CPgpEngine pgp;
+        const char* userId = "Revocation Reason <revreason@example.com>";
+        const char* password = "RevReasonTest-1";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpRevocationReasonReadTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const unsigned char reasonCode = 0x02; // RFC 4880 5.2.3.23: "key is superseded"
+        const char* reasonText = "replaced by a new key, see our website";
+        char revocationCert[4096];
+        int revocationCertSize = 0;
+        status = pgp.RevokeKeyArmored(password, static_cast<int>(std::strlen(password)), reasonCode, reasonText, static_cast<int>(std::strlen(reasonText)), sizeof(revocationCert), revocationCert, &revocationCertSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpRevocationReasonReadTest: FAILED RevokeKeyArmored status=" << status << std::endl;
+            return status;
+        }
+
+        unsigned char readReasonCode = 0;
+        char readReasonText[256];
+        int readReasonTextSize = 0;
+        status = pgp.GetRevocationReason(revocationCert, revocationCertSize, &readReasonCode, sizeof(readReasonText), readReasonText, &readReasonTextSize);
+        if (status != NO_ERROR || readReasonCode != reasonCode || std::strcmp(readReasonText, reasonText) != 0)
+        {
+            std::cout << "RunPgpRevocationReasonReadTest: FAILED GetRevocationReason status=" << status
+                       << " readReasonCode=" << static_cast<int>(readReasonCode) << " readReasonText=[" << readReasonText << "]" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        const char* garbage = "-----BEGIN PGP PUBLIC KEY BLOCK-----\r\nnot a real armored block\r\n-----END PGP PUBLIC KEY BLOCK-----\r\n";
+        status = pgp.GetRevocationReason(garbage, static_cast<int>(std::strlen(garbage)), &readReasonCode, sizeof(readReasonText), readReasonText, &readReasonTextSize);
+        if (status != INVALID_DATA)
+        {
+            std::cout << "RunPgpRevocationReasonReadTest: FAILED GetRevocationReason(garbage) expected INVALID_DATA, got status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpRevocationReasonReadTest: PASSED reason code/text round-tripped through a standalone armored revocation certificate" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Internal-only: sdk-known-limitations.md's "imzalı içerikten imzayı çıkarmadan sadece metni alma
+// (ergonomik sarmalayıcı) yok" gap. ExtractClearSignedText must return the exact same canonical
+// text VerifyClearSignedString itself hashes, without needing a peer key imported or any signature
+// checked at all -- verified two ways: byte-for-byte against the original (dash-free, single-line)
+// input, and that it still succeeds even when peerKeyImported is false (unlike VerifyClearSignedString).
+int CCryptoApiTester::RunPgpExtractClearSignedTextTest(void)
+{
+    try
+    {
+        CPgpEngine pgp;
+        const char* userId = "Extract ClearSigned <extractclearsigned@example.com>";
+        const char* password = "ExtractClearSignedTest-1";
+        int status = pgp.GenerateKeyPair(userId, static_cast<int>(std::strlen(userId)), password, static_cast<int>(std::strlen(password)));
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpExtractClearSignedTextTest: FAILED GenerateKeyPair status=" << status << std::endl;
+            return status;
+        }
+
+        const char* originalText = "this is the original clear-signed message";
+        char clearSigned[4096];
+        int clearSignedSize = 0;
+        status = pgp.ClearSignString(password, static_cast<int>(std::strlen(password)), originalText, static_cast<int>(std::strlen(originalText)), sizeof(clearSigned), clearSigned, &clearSignedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpExtractClearSignedTextTest: FAILED ClearSignString status=" << status << std::endl;
+            return status;
+        }
+
+        // No peer key imported at all -- ExtractClearSignedText must not need one (unlike
+        // VerifyClearSignedString, which would return INVALID_ARGUMENT here).
+        char extracted[4096];
+        int extractedSize = 0;
+        status = pgp.ExtractClearSignedText(clearSigned, clearSignedSize, sizeof(extracted), extracted, &extractedSize);
+        if (status != NO_ERROR)
+        {
+            std::cout << "RunPgpExtractClearSignedTextTest: FAILED ExtractClearSignedText status=" << status << std::endl;
+            return status;
+        }
+
+        const std::string extractedStr(extracted, static_cast<std::size_t>(extractedSize));
+        if (extractedStr != originalText)
+        {
+            std::cout << "RunPgpExtractClearSignedTextTest: FAILED extracted=[" << extractedStr << "] expected=[" << originalText << "]" << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        status = pgp.ExtractClearSignedText("not a clearsigned block", 24, sizeof(extracted), extracted, &extractedSize);
+        if (status != INVALID_DATA)
+        {
+            std::cout << "RunPgpExtractClearSignedTextTest: FAILED ExtractClearSignedText(garbage) expected INVALID_DATA, got status=" << status << std::endl;
+            return UNEXPECTED_ERROR;
+        }
+
+        std::cout << "RunPgpExtractClearSignedTextTest: PASSED extracted text matches the original byte-for-byte, no peer key needed" << std::endl;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 // -- 4a (multi-UID/multi-subkey -- gpg --edit-key parity), WRAPPER (CPgpEngineWrapper, real
 // gpg.exe subprocess) side. Each --quick-add-uid-type operation needs only local gpg.exe, no
 // network -- SKIPPED only when IsGnuPgAvailable() finds no gpg at all, otherwise a hard

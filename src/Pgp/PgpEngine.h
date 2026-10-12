@@ -123,6 +123,10 @@ public:
                          const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
                          const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) override;
 
+    int GetRevocationReason( const char* revocationCertArmored, const int revocationCertArmoredSize,
+                            unsigned char* reasonCode,
+                            const int reasonTextOutputBufferCapacity, char* reasonTextOutputBuffer, int* reasonTextOutputBufferSize) const override;
+
     // ============================================================================================
     // Own-identity UID management (multi-UID support -- gpg --edit-key adduid/deluid/primary
     // parity). GenerateKeyPair() must have succeeded first; password must match. AddUserId appends
@@ -206,6 +210,12 @@ public:
     // algorithms may be mixed freely in the same call sequence. Encrypt* keeps working exactly as
     // before (single PKESK, to the ImportPeerPublicKey peer only) when this is never called.
     int ImportAdditionalRecipientPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) override;
+
+    // Default (before this is ever called) is PGP_SYMMETRIC_AES256 -- this engine's original fixed
+    // behavior. See IPgpEngine.h's own doc comment for which Encrypt*/EncryptAndSign* methods this
+    // affects, and why Decrypt*/DecryptAndVerify* don't need a matching preference of their own.
+    int SetSymmetricCipherPreference(const PgpSymmetricAlgorithm algorithm) override;
+    PgpSymmetricAlgorithm GetSymmetricCipherPreference(void) const override;
 
     // ============================================================================================
     // Encrypt (to the imported peer's encryption subkey, plus any ImportAdditionalRecipientPublicKey
@@ -306,6 +316,9 @@ public:
     // ImportPeerPublicKey() must have succeeded first. Same NO_ERROR/*isValid convention as
     // VerifyBuffer above.
     int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid) override;
+
+    int ExtractClearSignedText( const char* clearSignedString, const int clearSignedStringSize,
+                               const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const override;
 
     // ============================================================================================
     // File-based streaming variants -- unlike EncryptBuffer/SignBuffer above (which hold the

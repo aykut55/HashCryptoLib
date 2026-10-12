@@ -30,6 +30,19 @@ enum PgpFileCompressionAlgorithm
     PGP_FILE_COMPRESSION_ALGORITHM_ZLIB = 2
 };
 
+// RFC 4880 section 9.3 symmetric-key algorithm registry entries SetSymmetricCipherPreference below
+// can select -- deliberately limited to this engine's own already-16-byte-block ciphers (AES in
+// all 3 key sizes); the 8-byte-block legacy ciphers (TripleDES/3, CAST5/3, Blowfish/4) would need
+// the SEIP CFB framing generalized first (currently assumes a 16-byte block throughout), out of
+// scope here. Values match the OpenPGP registry directly, same convention as
+// PgpFileCompressionAlgorithm below.
+enum PgpSymmetricAlgorithm
+{
+    PGP_SYMMETRIC_AES128 = 7,
+    PGP_SYMMETRIC_AES192 = 8,
+    PGP_SYMMETRIC_AES256 = 9
+};
+
 // The two negative sentinel values GetCompression() writes into its compressionAlgorithm
 // out-parameter when there is no Compressed Data packet octet to report. See CPgpEngine's own
 // GetCompression doc comment (Pgp/PgpEngine.h) for the full "not present" vs. "unknown, needs
@@ -94,6 +107,20 @@ public:
                                  const unsigned char reasonCode, const char* reasonText, const int reasonTextSize,
                                  const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
 
+    // Reads back the Reason for Revocation (RFC 4880 5.2.3.23) out of a STANDALONE armored
+    // revocation certificate -- i.e. exactly the "-----BEGIN PGP PUBLIC KEY BLOCK-----" text
+    // RevokeKeyArmored above produces (this engine's own, or one received from a peer who
+    // pre-generated theirs) -- not an already-embedded revocation inside a full exported key
+    // block. No password needed: the reason is public, unencrypted signature-subpacket data, not
+    // secret-key material. *reasonCode is set to 0 ("no reason specified", same as gpg's own
+    // default) and reasonTextOutputBuffer to an empty string when the certificate is well-formed
+    // but simply carries no Reason for Revocation subpacket at all (legal per RFC 4880 -- the
+    // subpacket is optional) -- INVALID_DATA is reserved for input that isn't a parseable
+    // revocation signature at all.
+    virtual int GetRevocationReason( const char* revocationCertArmored, const int revocationCertArmoredSize,
+                                    unsigned char* reasonCode,
+                                    const int reasonTextOutputBufferCapacity, char* reasonTextOutputBuffer, int* reasonTextOutputBufferSize) const = 0;
+
     // -- Own-identity UID management (multi-UID support, gpg --edit-key adduid/deluid/primary parity) --
     virtual int AddUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize, const bool makePrimary) = 0;
 
@@ -149,6 +176,15 @@ public:
 
     virtual int ImportAdditionalRecipientPublicKey(const unsigned char* keyBlockBuffer, const int keyBlockBufferSize) = 0;
 
+    // Selects which symmetric cipher EncryptBuffer/EncryptStringArmored/EncryptFile/
+    // EncryptFileCompressed/EncryptAndSignBuffer/EncryptAndSignStringArmored use from this point on
+    // (persists on the instance; default is PGP_SYMMETRIC_AES256, this engine's original fixed
+    // behavior). Decrypt*/DecryptAndVerify* never need this -- they already dispatch on whatever
+    // algorithm octet the message itself carries (RFC 4880 section 5.1), including AES-128/192/256
+    // produced by a real foreign sender (verified against GnuPG's own default of AES-128).
+    virtual int SetSymmetricCipherPreference(const PgpSymmetricAlgorithm algorithm) = 0;
+    virtual PgpSymmetricAlgorithm GetSymmetricCipherPreference(void) const = 0;
+
     virtual int EncryptBuffer( const unsigned char* inputBuffer, const int inputBufferSize,
                               const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize) = 0;
 
@@ -202,6 +238,13 @@ public:
                                 const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) = 0;
 
     virtual int VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid) = 0;
+
+    // Ergonomic companion to VerifyClearSignedString -- returns the same canonical signed-body
+    // text that method hashes (dash-unescaped, trailing whitespace stripped, CRLF-joined), without
+    // needing a peer key imported or checking any signature at all. For a caller that only wants
+    // the original message back, not an authenticity check.
+    virtual int ExtractClearSignedText( const char* clearSignedString, const int clearSignedStringSize,
+                                       const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const = 0;
 
     virtual int EncryptFile( const char* inputFilePath, const char* outputFilePath,
                             ProgressCallback onProgress, void* progressUserData) = 0;

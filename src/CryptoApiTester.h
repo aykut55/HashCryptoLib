@@ -954,6 +954,21 @@ public:
     // Ed25519-family engine still returns NOT_IMPLEMENTED (unchanged, intentionally out of scope).
     int RunPgpNativeSignSubkeyTest(void) override;
 
+    // Internal-only: AES-128/192/256 all selected via SetSymmetricCipherPreference and round-
+    // tripped through EncryptBuffer/DecryptBuffer, EncryptAndSignBuffer/DecryptAndVerifyBuffer, and
+    // EncryptFile/DecryptFile; also checks an out-of-range preference value is rejected.
+    int RunPgpSymmetricCipherPreferenceTest(void) override;
+
+    // Internal-only: a specific reason code+text round-tripped through RevokeKeyArmored's
+    // standalone armored certificate output and the new GetRevocationReason reader; also checks
+    // garbage input is rejected with INVALID_DATA.
+    int RunPgpRevocationReasonReadTest(void) override;
+
+    // Internal-only: ExtractClearSignedText returns the exact canonical text VerifyClearSignedString
+    // itself hashes, without needing a peer key imported or any signature checked at all; also
+    // checks garbage input is rejected with INVALID_DATA.
+    int RunPgpExtractClearSignedTextTest(void) override;
+
     // ============================================================================================
     // 4a (multi-UID/multi-subkey -- gpg --edit-key adduid/deluid/addkey/expire/primary/passwd
     // parity), WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side. Each delegates to one of

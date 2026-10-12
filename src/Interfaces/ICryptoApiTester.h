@@ -363,6 +363,11 @@ public:
     // SignBuffer/ClearSignString/EncryptAndSignBuffer over the master key; see CryptoApiTester.h.
     virtual int RunPgpNativeSignSubkeyTest(void) = 0;
 
+    // Small independent PGP gaps (sdk-known-limitations.md) -- see CryptoApiTester.h for each.
+    virtual int RunPgpSymmetricCipherPreferenceTest(void) = 0;
+    virtual int RunPgpRevocationReasonReadTest(void) = 0;
+    virtual int RunPgpExtractClearSignedTextTest(void) = 0;
+
     // 4a, WRAPPER (CPgpEngineWrapper, real gpg.exe subprocess) side -- see CryptoApiTester.h's own
     // doc comments for what each exercises.
     virtual int RunPgpWrapperQuickAddUidTest(void) = 0;

@@ -1398,6 +1398,11 @@ int runAllTests()
                         // master key, native side only.
                         pCryptoApiTester->RunPgpNativeSignSubkeyTest();
 
+                        // Small independent PGP gaps (sdk-known-limitations.md).
+                        pCryptoApiTester->RunPgpSymmetricCipherPreferenceTest();
+                        pCryptoApiTester->RunPgpRevocationReasonReadTest();
+                        pCryptoApiTester->RunPgpExtractClearSignedTextTest();
+
                         pCryptoApiTester->RunCertificateSelfSignedTest();
 
                         pCryptoApiTester->RunCertificateDerPemRoundtripTest();

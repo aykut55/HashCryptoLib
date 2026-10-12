@@ -3032,6 +3032,11 @@ int runAllTests()
         // 4a takip: real Ed25519 sign-subkey (not X25519) + sign-subkey actually preferred by
         // SignBuffer/ClearSignString/EncryptAndSignBuffer over the master key, native side only.
         cryptoApiTester.RunPgpNativeSignSubkeyTest();
+
+        // Small independent PGP gaps (sdk-known-limitations.md).
+        cryptoApiTester.RunPgpSymmetricCipherPreferenceTest();
+        cryptoApiTester.RunPgpRevocationReasonReadTest();
+        cryptoApiTester.RunPgpExtractClearSignedTextTest();
 #endif
 
 #if 1

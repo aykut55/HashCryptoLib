@@ -200,6 +200,7 @@ struct CPgpEngine::Impl
     unsigned char passwordCheckHash[32];
     std::uint32_t keyCreationTime;   // seconds since epoch, as embedded in the exported public key packet -- reused by RevokeKeyArmored so its recomputed public-key-packet body byte-matches the one already exported (and therefore fingerprints/Key-IDs the same).
     std::uint32_t keyExpirationSeconds; // 0 = never expires; otherwise seconds after keyCreationTime, as set by GenerateKeyPair's expiration overload.
+    PgpSymmetricAlgorithm symmetricCipherPreference; // see SetSymmetricCipherPreference's own doc comment.
 
     bool peerKeyImported;
     PgpKeyAlgorithm peerMasterAlgorithm; // algorithm of the imported peer's MASTER (verify) key.
@@ -232,6 +233,7 @@ struct CPgpEngine::Impl
     std::vector<unsigned char> ownMasterSecretPacketBody;
 
     Impl() : keyAlgorithm(PGP_KEY_ALGORITHM_RSA), rsaKeyBits(2048), ownKeyGenerated(false), keyCreationTime(0), keyExpirationSeconds(0),
+             symmetricCipherPreference(PGP_SYMMETRIC_AES256),
              peerKeyImported(false), peerMasterAlgorithm(PGP_KEY_ALGORITHM_RSA), peerSubkeyAlgorithm(PGP_KEY_ALGORITHM_RSA)
     {
         std::memset(ownEd25519PrivateKey, 0, 32);
@@ -2203,17 +2205,35 @@ std::vector<std::string> splitAndCanonicalizeLines(const std::string& text)
 // Data, Sym. Encrypted Integrity Protected Data (AES-256-CFB, zero IV, SHA-1 MDC).
 // ================================================================================================
 
+// Session key length (16/24/32 octets) for one of SetSymmetricCipherPreference's RFC 4880 section
+// 9.3 cipher algorithm octets -- 7/8/9 are AES-128/192/256; any other value (not currently
+// reachable from CPgpEngine's own encrypt paths, which only ever pass 7/8/9) falls back to 32,
+// this engine's original fixed size.
+std::size_t pgpSymmetricSessionKeyLength(const unsigned char cipherAlgorithmOctet)
+{
+    switch (cipherAlgorithmOctet)
+    {
+        case 7: return 16;
+        case 8: return 24;
+        default: return 32;
+    }
+}
+// -----------------------------------------------------------------------------
+
 // Builds a single PKESK packet (header+body) for one recipient, RSA-PKCS#1v1.5 or ECDH per
 // recipient.algorithm -- shared by buildEncryptedMessageMultiRecipient below and
-// encryptFileStreaming further down.
-std::vector<unsigned char> buildPkeskPacketForRecipient(const PgpEncryptionRecipient& recipient, const unsigned char* sessionKey, const std::size_t sessionKeyLength)
+// encryptFileStreaming further down. cipherAlgorithmOctet is the RFC 4880 section 9.3 symmetric
+// algorithm this session key is actually for (see SetSymmetricCipherPreference) -- embedded
+// plaintext-side-by-side with the key itself inside the PKESK's own encrypted blob (RFC 4880
+// section 5.1), so the recipient's decrypt path can select the matching cipher/key length.
+std::vector<unsigned char> buildPkeskPacketForRecipient(const PgpEncryptionRecipient& recipient, const unsigned char* sessionKey, const std::size_t sessionKeyLength, const unsigned char cipherAlgorithmOctet)
 {
     try
     {
         CryptoPP::AutoSeededRandomPool rng;
 
         std::vector<unsigned char> sessionKeyPlain;
-        sessionKeyPlain.push_back(9); // AES-256 -- this engine always generates a 32-byte session key.
+        sessionKeyPlain.push_back(cipherAlgorithmOctet);
         sessionKeyPlain.insert(sessionKeyPlain.end(), sessionKey, sessionKey + sessionKeyLength);
         {
             unsigned int checksum = 0;
@@ -2296,8 +2316,11 @@ std::vector<unsigned char> buildPkeskPacketForRecipient(const PgpEncryptionRecip
 // One PKESK packet per entry in `recipients` (all wrapping the SAME randomly generated session
 // key), followed by one shared SEIP packet -- the multi-recipient extension of what used to be
 // buildEncryptedMessage(single RSA recipient); recipients.size()==1 with a single RSA entry
-// reproduces that exact original single-recipient wire format byte-for-byte.
-bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipient>& recipients, const unsigned char* plaintext, const std::size_t plaintextSize, std::vector<unsigned char>& out)
+// reproduces that exact original single-recipient wire format byte-for-byte. cipherAlgorithmOctet
+// selects the symmetric cipher per SetSymmetricCipherPreference (default 9/AES-256, this engine's
+// original fixed behavior); CryptoPP::AES itself already covers all three AES key sizes via
+// SetKeyWithIV's keyLength argument, so only the session key length actually varies here.
+bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipient>& recipients, const unsigned char cipherAlgorithmOctet, const unsigned char* plaintext, const std::size_t plaintextSize, std::vector<unsigned char>& out)
 {
     try
     {
@@ -2306,6 +2329,7 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
             return false;
         }
         CryptoPP::AutoSeededRandomPool rng;
+        const std::size_t sessionKeyLength = pgpSymmetricSessionKeyLength(cipherAlgorithmOctet);
 
         std::vector<unsigned char> literalBody;
         literalBody.push_back('b');
@@ -2329,7 +2353,7 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
         const std::vector<unsigned char> compressedPacket = writePacket(PGP_TAG_COMPRESSED_DATA, compressedBody);
 
         unsigned char sessionKey[32];
-        rng.GenerateBlock(sessionKey, 32);
+        rng.GenerateBlock(sessionKey, sessionKeyLength);
 
         unsigned char prefix[18];
         rng.GenerateBlock(prefix, 16);
@@ -2356,7 +2380,7 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
             unsigned char zeroIv[16];
             std::memset(zeroIv, 0, 16);
             CryptoPP::CFB_Mode<CryptoPP::AES>::Encryption enc;
-            enc.SetKeyWithIV(sessionKey, 32, zeroIv, 16);
+            enc.SetKeyWithIV(sessionKey, sessionKeyLength, zeroIv, 16);
             enc.ProcessData(cfbCiphertext.data(), plainForCfb.data(), plainForCfb.size());
         }
 
@@ -2368,7 +2392,7 @@ bool buildEncryptedMessageMultiRecipient(const std::vector<PgpEncryptionRecipien
         out.clear();
         for (std::size_t i = 0; i < recipients.size(); ++i)
         {
-            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[i], sessionKey, 32);
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[i], sessionKey, sessionKeyLength, cipherAlgorithmOctet);
             if (pkeskPacket.empty())
             {
                 return false;
@@ -2428,11 +2452,13 @@ void selectActiveSigningKeyMaterial(const std::vector<PgpOwnSubkey>& ownSubkeys,
 // signingKeyAlgorithm selects which of rsaSigningKey/ed25519SigningKey is actually used (the other
 // is ignored) -- same dual-parameter convention buildSignaturePacket/buildEd25519SignaturePacket's
 // callers already use elsewhere in this file (e.g. GenerateKeyPair's own RSA-vs-EdDSA branch).
+// cipherAlgorithmOctet -- see buildEncryptedMessageMultiRecipient's own comment above.
 bool buildEncryptedSignedMessageMultiRecipient( const std::vector<PgpEncryptionRecipient>& recipients,
                                                 const PgpKeyAlgorithm signingKeyAlgorithm,
                                                 const CryptoPP::RSA::PrivateKey& rsaSigningKey,
                                                 const unsigned char ed25519SigningKey[32],
                                                 const unsigned char signingKeyId[8],
+                                                const unsigned char cipherAlgorithmOctet,
                                                 const unsigned char* plaintext, const std::size_t plaintextSize,
                                                 std::vector<unsigned char>& out)
 {
@@ -2443,6 +2469,7 @@ bool buildEncryptedSignedMessageMultiRecipient( const std::vector<PgpEncryptionR
             return false;
         }
         CryptoPP::AutoSeededRandomPool rng;
+        const std::size_t sessionKeyLength = pgpSymmetricSessionKeyLength(cipherAlgorithmOctet);
 
         const std::vector<unsigned char> documentData(plaintext, plaintext + plaintextSize);
 
@@ -2490,7 +2517,7 @@ bool buildEncryptedSignedMessageMultiRecipient( const std::vector<PgpEncryptionR
         const std::vector<unsigned char> compressedPacket = writePacket(PGP_TAG_COMPRESSED_DATA, compressedBody);
 
         unsigned char sessionKey[32];
-        rng.GenerateBlock(sessionKey, 32);
+        rng.GenerateBlock(sessionKey, sessionKeyLength);
 
         unsigned char prefix[18];
         rng.GenerateBlock(prefix, 16);
@@ -2517,7 +2544,7 @@ bool buildEncryptedSignedMessageMultiRecipient( const std::vector<PgpEncryptionR
             unsigned char zeroIv[16];
             std::memset(zeroIv, 0, 16);
             CryptoPP::CFB_Mode<CryptoPP::AES>::Encryption enc;
-            enc.SetKeyWithIV(sessionKey, 32, zeroIv, 16);
+            enc.SetKeyWithIV(sessionKey, sessionKeyLength, zeroIv, 16);
             enc.ProcessData(cfbCiphertext.data(), plainForCfb.data(), plainForCfb.size());
         }
 
@@ -2529,7 +2556,7 @@ bool buildEncryptedSignedMessageMultiRecipient( const std::vector<PgpEncryptionR
         out.clear();
         for (std::size_t i = 0; i < recipients.size(); ++i)
         {
-            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[i], sessionKey, 32);
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[i], sessionKey, sessionKeyLength, cipherAlgorithmOctet);
             if (pkeskPacket.empty())
             {
                 return false;
@@ -2911,7 +2938,7 @@ bool parseAndDecryptMessage(const PgpKeyAlgorithm ownAlgorithm, const CryptoPP::
 // upfront; DecryptFile writes to a temp file and only keeps it if the trailing MDC check passes).
 // ================================================================================================
 
-int encryptFileStreaming(const std::vector<PgpEncryptionRecipient>& recipients, HANDLE inputFileHandle, const unsigned long long fileSize, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+int encryptFileStreaming(const std::vector<PgpEncryptionRecipient>& recipients, const unsigned char cipherAlgorithmOctet, HANDLE inputFileHandle, const unsigned long long fileSize, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
 {
     try
     {
@@ -2920,12 +2947,13 @@ int encryptFileStreaming(const std::vector<PgpEncryptionRecipient>& recipients, 
             return INVALID_ARGUMENT;
         }
         CryptoPP::AutoSeededRandomPool rng;
+        const std::size_t sessionKeyLength = pgpSymmetricSessionKeyLength(cipherAlgorithmOctet);
 
         unsigned char sessionKey[32];
-        rng.GenerateBlock(sessionKey, 32);
+        rng.GenerateBlock(sessionKey, sessionKeyLength);
         for (std::size_t r = 0; r < recipients.size(); ++r)
         {
-            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[r], sessionKey, 32);
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[r], sessionKey, sessionKeyLength, cipherAlgorithmOctet);
             if (pkeskPacket.empty())
             {
                 return UNEXPECTED_ERROR;
@@ -2968,7 +2996,7 @@ int encryptFileStreaming(const std::vector<PgpEncryptionRecipient>& recipients, 
         unsigned char zeroIv[16];
         std::memset(zeroIv, 0, 16);
         CryptoPP::CFB_Mode<CryptoPP::AES>::Encryption cfb;
-        cfb.SetKeyWithIV(sessionKey, 32, zeroIv, 16);
+        cfb.SetKeyWithIV(sessionKey, sessionKeyLength, zeroIv, 16);
         CryptoPP::SHA1 mdc;
 
         unsigned char prefix[18];
@@ -3204,7 +3232,7 @@ int compressLiteralToTempFile(HANDLE inputFileHandle, const unsigned long long f
 // long -- produced by compressLiteralToTempFile above) instead of wrapping the Literal Data packet
 // directly. compressedSize is exact by the time this runs, so -- exactly like encryptFileStreaming
 // -- every packet length here is still fully known before a single output byte is written.
-int encryptFileStreamingCompressed(const std::vector<PgpEncryptionRecipient>& recipients, const std::wstring& tempFilePath, const unsigned long long compressedSize, const unsigned char compressionAlgorithmOctet, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
+int encryptFileStreamingCompressed(const std::vector<PgpEncryptionRecipient>& recipients, const unsigned char cipherAlgorithmOctet, const std::wstring& tempFilePath, const unsigned long long compressedSize, const unsigned char compressionAlgorithmOctet, HANDLE outputFileHandle, ProgressCallback onProgress, void* progressUserData)
 {
     try
     {
@@ -3213,12 +3241,13 @@ int encryptFileStreamingCompressed(const std::vector<PgpEncryptionRecipient>& re
             return INVALID_ARGUMENT;
         }
         CryptoPP::AutoSeededRandomPool rng;
+        const std::size_t sessionKeyLength = pgpSymmetricSessionKeyLength(cipherAlgorithmOctet);
 
         unsigned char sessionKey[32];
-        rng.GenerateBlock(sessionKey, 32);
+        rng.GenerateBlock(sessionKey, sessionKeyLength);
         for (std::size_t r = 0; r < recipients.size(); ++r)
         {
-            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[r], sessionKey, 32);
+            const std::vector<unsigned char> pkeskPacket = buildPkeskPacketForRecipient(recipients[r], sessionKey, sessionKeyLength, cipherAlgorithmOctet);
             if (pkeskPacket.empty())
             {
                 return UNEXPECTED_ERROR;
@@ -3254,7 +3283,7 @@ int encryptFileStreamingCompressed(const std::vector<PgpEncryptionRecipient>& re
         unsigned char zeroIv[16];
         std::memset(zeroIv, 0, 16);
         CryptoPP::CFB_Mode<CryptoPP::AES>::Encryption cfb;
-        cfb.SetKeyWithIV(sessionKey, 32, zeroIv, 16);
+        cfb.SetKeyWithIV(sessionKey, sessionKeyLength, zeroIv, 16);
         CryptoPP::SHA1 mdc;
 
         unsigned char prefix[18];
@@ -5742,6 +5771,81 @@ bool findIssuerKeyIdInSubpackets(const std::vector<unsigned char>& data, const s
 }
 // -----------------------------------------------------------------------------
 
+// Scans one signature subpacket area for the Reason for Revocation subpacket (RFC 4880 5.2.3.23,
+// type 29: 1-octet machine-readable reason code followed by an optional UTF-8 human-readable
+// text) -- counterpart to buildRevocationReasonSubpacket, which only ever builds one; this is what
+// lets GetRevocationReason read back what a Revoke*/RevokeKeyArmored call (or a peer's own
+// revocation) already produced.
+bool findRevocationReasonInSubpackets(const std::vector<unsigned char>& data, const std::size_t begin, const std::size_t end, unsigned char& reasonCodeOut, std::string& reasonTextOut)
+{
+    try
+    {
+        std::size_t pos = begin;
+        while (pos < end)
+        {
+            std::size_t subpacketLength = 0;
+            if (!readSignatureSubpacketLength(data, pos, end, subpacketLength) || subpacketLength == 0 || pos + subpacketLength > end)
+            {
+                break;
+            }
+            const unsigned char subpacketType = static_cast<unsigned char>(data[pos] & 0x7F);
+            const std::size_t bodyBegin = pos + 1;
+            const std::size_t bodyLength = subpacketLength - 1;
+
+            if (subpacketType == 29 && bodyLength >= 1)
+            {
+                reasonCodeOut = data[bodyBegin];
+                reasonTextOut.assign(reinterpret_cast<const char*>(&data[bodyBegin + 1]), bodyLength - 1);
+                return true;
+            }
+
+            pos += subpacketLength;
+        }
+        return false;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+// Packet-framed wrapper over findRevocationReasonInSubpackets above, for call sites holding a full
+// tag-2 packet (header+body) -- same relationship findIssuerKeyIdOfSignaturePacket below has to
+// findIssuerKeyIdInSubpackets. v4-signature-only (this engine's own format); returns false for a
+// v3 signature or one that simply carries no Reason for Revocation subpacket at all.
+bool findRevocationReasonInSignaturePacket(const std::vector<unsigned char>& signaturePacketBytes, unsigned char& reasonCodeOut, std::string& reasonTextOut)
+{
+    try
+    {
+        std::size_t pos = 0;
+        unsigned char tag = 0;
+        std::size_t bodyLength = 0;
+        if (!readPacketHeader(signaturePacketBytes, pos, tag, bodyLength) || tag != PGP_TAG_SIGNATURE || pos + bodyLength > signaturePacketBytes.size())
+        {
+            return false;
+        }
+        if (bodyLength < 6 || signaturePacketBytes[pos] != 4)
+        {
+            return false;
+        }
+        std::size_t p = pos + 4;
+        const std::size_t hashedLength = readBigEndian16(signaturePacketBytes, p);
+        p += 2;
+        const std::size_t hashedEnd = p + hashedLength;
+        if (hashedEnd > pos + bodyLength)
+        {
+            return false;
+        }
+        return findRevocationReasonInSubpackets(signaturePacketBytes, p, hashedEnd, reasonCodeOut, reasonTextOut);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
 // Version-tolerant, algorithm-agnostic signature-packet reader for inspection only -- unlike
 // parseSignaturePacketBody above (which exists to VERIFY, and therefore rejects anything outside
 // this engine's own two supported RSA/SHA-256 and EdDSA/SHA-512 combinations), this one reports
@@ -6785,6 +6889,57 @@ int CPgpEngine::RevokeKeyArmored(const char* password, const int passwordSize, c
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngine::GetRevocationReason(const char* revocationCertArmored, const int revocationCertArmoredSize, unsigned char* reasonCode, const int reasonTextOutputBufferCapacity, char* reasonTextOutputBuffer, int* reasonTextOutputBufferSize) const
+{
+    try
+    {
+        if (revocationCertArmored == nullptr || revocationCertArmoredSize <= 0 || reasonCode == nullptr || reasonTextOutputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::string armored(revocationCertArmored, static_cast<std::size_t>(revocationCertArmoredSize));
+        std::string blockType;
+        std::vector<unsigned char> signaturePacketBytes;
+        if (!armorDecode(armored, blockType, signaturePacketBytes))
+        {
+            return INVALID_DATA;
+        }
+
+        std::size_t checkPos = 0;
+        unsigned char checkTag = 0;
+        std::size_t checkBodyLength = 0;
+        if (!readPacketHeader(signaturePacketBytes, checkPos, checkTag, checkBodyLength) || checkTag != PGP_TAG_SIGNATURE)
+        {
+            return INVALID_DATA;
+        }
+
+        unsigned char foundReasonCode = 0;
+        std::string foundReasonText;
+        if (!findRevocationReasonInSignaturePacket(signaturePacketBytes, foundReasonCode, foundReasonText))
+        {
+            foundReasonCode = 0;
+            foundReasonText.clear();
+        }
+
+        *reasonCode = foundReasonCode;
+        if (reasonTextOutputBuffer == nullptr || reasonTextOutputBufferCapacity < static_cast<int>(foundReasonText.size() + 1))
+        {
+            *reasonTextOutputBufferSize = static_cast<int>(foundReasonText.size() + 1);
+            return BUFFER_TOO_SMALL;
+        }
+        std::memcpy(reasonTextOutputBuffer, foundReasonText.data(), foundReasonText.size());
+        reasonTextOutputBuffer[foundReasonText.size()] = '\0';
+        *reasonTextOutputBufferSize = static_cast<int>(foundReasonText.size() + 1);
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngine::AddUserId(const char* password, const int passwordSize, const char* userId, const int userIdSize, const bool makePrimary)
 {
     try
@@ -7629,6 +7784,37 @@ int CPgpEngine::ImportAdditionalRecipientPublicKey(const unsigned char* keyBlock
 }
 // -----------------------------------------------------------------------------
 
+int CPgpEngine::SetSymmetricCipherPreference(const PgpSymmetricAlgorithm algorithm)
+{
+    try
+    {
+        if (!impl_ || (algorithm != PGP_SYMMETRIC_AES128 && algorithm != PGP_SYMMETRIC_AES192 && algorithm != PGP_SYMMETRIC_AES256))
+        {
+            return INVALID_ARGUMENT;
+        }
+        impl_->symmetricCipherPreference = algorithm;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+PgpSymmetricAlgorithm CPgpEngine::GetSymmetricCipherPreference(void) const
+{
+    try
+    {
+        return impl_ ? impl_->symmetricCipherPreference : PGP_SYMMETRIC_AES256;
+    }
+    catch (...)
+    {
+        return PGP_SYMMETRIC_AES256;
+    }
+}
+// -----------------------------------------------------------------------------
+
 int CPgpEngine::EncryptBuffer(const unsigned char* inputBuffer, const int inputBufferSize, const int outputBufferCapacity, unsigned char* outputBuffer, int* outputBufferSize)
 {
     try
@@ -7661,7 +7847,7 @@ int CPgpEngine::EncryptBuffer(const unsigned char* inputBuffer, const int inputB
         }
 
         std::vector<unsigned char> message;
-        if (!buildEncryptedMessageMultiRecipient(recipients, inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
+        if (!buildEncryptedMessageMultiRecipient(recipients, static_cast<unsigned char>(impl_->symmetricCipherPreference), inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -7726,7 +7912,7 @@ int CPgpEngine::EncryptStringArmored(const char* inputString, const int inputStr
 
         const unsigned char* inputBytes = reinterpret_cast<const unsigned char*>(inputString);
         std::vector<unsigned char> message;
-        if (!buildEncryptedMessageMultiRecipient(recipients, inputBytes, static_cast<std::size_t>(inputStringSize), message))
+        if (!buildEncryptedMessageMultiRecipient(recipients, static_cast<unsigned char>(impl_->symmetricCipherPreference), inputBytes, static_cast<std::size_t>(inputStringSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -7801,7 +7987,7 @@ int CPgpEngine::EncryptAndSignBuffer(const char* password, const int passwordSiz
 
         std::vector<unsigned char> message;
         if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, signingRsaKey, signingEd25519Key,
-                                                        signingKeyId, inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
+                                                        signingKeyId, static_cast<unsigned char>(impl_->symmetricCipherPreference), inputBuffer, static_cast<std::size_t>(inputBufferSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -7869,7 +8055,7 @@ int CPgpEngine::EncryptAndSignStringArmored(const char* password, const int pass
         const unsigned char* inputBytes = reinterpret_cast<const unsigned char*>(inputString);
         std::vector<unsigned char> message;
         if (!buildEncryptedSignedMessageMultiRecipient( recipients, impl_->keyAlgorithm, signingRsaKey, signingEd25519Key,
-                                                        signingKeyId, inputBytes, static_cast<std::size_t>(inputStringSize), message))
+                                                        signingKeyId, static_cast<unsigned char>(impl_->symmetricCipherPreference), inputBytes, static_cast<std::size_t>(inputStringSize), message))
         {
             return UNEXPECTED_ERROR;
         }
@@ -8257,20 +8443,21 @@ int CPgpEngine::ClearSignString(const char* password, const int passwordSize, co
 }
 // -----------------------------------------------------------------------------
 
-int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid)
+// Parses the canonical signed body text out of a clear-signed ("-----BEGIN PGP SIGNED MESSAGE-----")
+// block -- dash-unescapes each line and strips trailing spaces/tabs (RFC 4880 section 7.1's own
+// canonicalization), then CRLF-joins them (no trailing line ending after the last line). Shared by
+// VerifyClearSignedString (which goes on to hash outDocumentData) and ExtractClearSignedText (which
+// just returns it) -- both need the exact same bytes. outSigPacketBytes == nullptr (
+// ExtractClearSignedText's case) skips armor-decoding the trailing "-----BEGIN PGP SIGNATURE-----"
+// block entirely, since that caller doesn't need it.
+bool parseClearSignedBody(const std::string& text, std::vector<unsigned char>& outDocumentData, std::vector<unsigned char>* outSigPacketBytes)
 {
     try
     {
-        if (!impl_ || !impl_->peerKeyImported || clearSignedString == nullptr || clearSignedStringSize <= 0 || isValid == nullptr)
-        {
-            return INVALID_ARGUMENT;
-        }
-
-        const std::string text(clearSignedString, static_cast<std::size_t>(clearSignedStringSize));
         const std::size_t beginPos = text.find("-----BEGIN PGP SIGNED MESSAGE-----");
         if (beginPos == std::string::npos)
         {
-            return INVALID_DATA;
+            return false;
         }
 
         const std::size_t blankLf = text.find("\n\n", beginPos);
@@ -8286,13 +8473,13 @@ int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int
         }
         else
         {
-            return INVALID_DATA;
+            return false;
         }
 
         const std::size_t sigBeginPos = text.find("-----BEGIN PGP SIGNATURE-----", bodyStart);
         if (sigBeginPos == std::string::npos)
         {
-            return INVALID_DATA;
+            return false;
         }
 
         const std::string bodySection = text.substr(bodyStart, sigBeginPos - bodyStart);
@@ -8322,7 +8509,7 @@ int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int
             rawLines.pop_back();
         }
 
-        std::vector<unsigned char> documentData;
+        outDocumentData.clear();
         for (std::size_t i = 0; i < rawLines.size(); ++i)
         {
             std::string line = rawLines[i];
@@ -8334,18 +8521,45 @@ int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int
             {
                 line.erase(line.size() - 1);
             }
-            documentData.insert(documentData.end(), line.begin(), line.end());
+            outDocumentData.insert(outDocumentData.end(), line.begin(), line.end());
             if (i + 1 < rawLines.size())
             {
-                documentData.push_back('\r');
-                documentData.push_back('\n');
+                outDocumentData.push_back('\r');
+                outDocumentData.push_back('\n');
             }
         }
 
-        const std::string sigSection = text.substr(sigBeginPos);
-        std::string blockType;
+        if (outSigPacketBytes != nullptr)
+        {
+            const std::string sigSection = text.substr(sigBeginPos);
+            std::string blockType;
+            if (!armorDecode(sigSection, blockType, *outSigPacketBytes))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int clearSignedStringSize, bool* isValid)
+{
+    try
+    {
+        if (!impl_ || !impl_->peerKeyImported || clearSignedString == nullptr || clearSignedStringSize <= 0 || isValid == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::string text(clearSignedString, static_cast<std::size_t>(clearSignedStringSize));
+        std::vector<unsigned char> documentData;
         std::vector<unsigned char> sigPacketBytes;
-        if (!armorDecode(sigSection, blockType, sigPacketBytes))
+        if (!parseClearSignedBody(text, documentData, &sigPacketBytes))
         {
             return INVALID_DATA;
         }
@@ -8366,6 +8580,41 @@ int CPgpEngine::VerifyClearSignedString(const char* clearSignedString, const int
         }
 
         *isValid = verified;
+        return NO_ERROR;
+    }
+    catch (...)
+    {
+        return UNEXPECTED_ERROR;
+    }
+}
+// -----------------------------------------------------------------------------
+
+int CPgpEngine::ExtractClearSignedText(const char* clearSignedString, const int clearSignedStringSize, const int outputBufferCapacity, char* outputBuffer, int* outputBufferSize) const
+{
+    try
+    {
+        if (clearSignedString == nullptr || clearSignedStringSize <= 0 || outputBufferSize == nullptr)
+        {
+            return INVALID_ARGUMENT;
+        }
+
+        const std::string text(clearSignedString, static_cast<std::size_t>(clearSignedStringSize));
+        std::vector<unsigned char> documentData;
+        if (!parseClearSignedBody(text, documentData, nullptr))
+        {
+            return INVALID_DATA;
+        }
+
+        if (outputBuffer == nullptr || outputBufferCapacity < static_cast<int>(documentData.size()))
+        {
+            *outputBufferSize = static_cast<int>(documentData.size());
+            return BUFFER_TOO_SMALL;
+        }
+        if (!documentData.empty())
+        {
+            std::memcpy(outputBuffer, documentData.data(), documentData.size());
+        }
+        *outputBufferSize = static_cast<int>(documentData.size());
         return NO_ERROR;
     }
     catch (...)
@@ -8434,7 +8683,7 @@ int CPgpEngine::EncryptFile(const char* inputFilePath, const char* outputFilePat
         }
         std::unique_ptr<void, decltype(&CloseHandle)> outputHandle(rawOutputHandle, &CloseHandle);
 
-        const int status = encryptFileStreaming(recipients, rawInputHandle, fileSize, rawOutputHandle, onProgress, progressUserData);
+        const int status = encryptFileStreaming(recipients, static_cast<unsigned char>(impl_->symmetricCipherPreference), rawInputHandle, fileSize, rawOutputHandle, onProgress, progressUserData);
         if (status != NO_ERROR)
         {
             outputHandle.reset();
@@ -8523,7 +8772,7 @@ int CPgpEngine::EncryptFileCompressed(const char* inputFilePath, const char* out
         }
         std::unique_ptr<void, decltype(&CloseHandle)> outputHandle(rawOutputHandle, &CloseHandle);
 
-        const int status = encryptFileStreamingCompressed(recipients, wideTempPath, compressedSize, compressionAlgorithmOctet, rawOutputHandle, onProgress, progressUserData);
+        const int status = encryptFileStreamingCompressed(recipients, static_cast<unsigned char>(impl_->symmetricCipherPreference), wideTempPath, compressedSize, compressionAlgorithmOctet, rawOutputHandle, onProgress, progressUserData);
         DeleteFileW(wideTempPath.c_str());
         if (status != NO_ERROR)
         {
